@@ -348,6 +348,8 @@ class ResponseBuilder:
     def _serialize_for_size_check(self, data: Any) -> str:
         """Serialize data to JSON string for size calculation.
         
+        Handles DataFrames by converting to dict first.
+        
         Args:
             data: Data to serialize
             
@@ -355,6 +357,10 @@ class ResponseBuilder:
             str: JSON string representation
         """
         import json
+        
+        # Handle DataFrames by converting to dict first
+        if hasattr(data, 'to_dict'):  # DataFrame-like object
+            data = data.to_dict('records')
         
         # Use compact JSON (no spaces) for accurate size measurement
         return json.dumps(data, default=str, separators=(',', ':'))

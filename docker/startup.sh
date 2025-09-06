@@ -36,13 +36,15 @@ is_path_mounted() {
   if mountpoint -q "$mount_dir" 2>/dev/null; then
     return 0
   fi
-  # Strategy 2: scan /proc/mounts
-  if grep -q " $mount_dir " /proc/mounts 2>/dev/null; then
+  # Strategy 2: scan /proc/mounts for an exact target match
+  if awk -v m="$mount_dir" '$2==m {found=1} END{exit(found?0:1)}' /proc/mounts 2>/dev/null; then
     return 0
   fi
-  # Strategy 3: findmnt if available
+  # Strategy 3: findmnt only if TARGET equals the queried path (avoid false positives on Ubuntu)
   if command -v findmnt >/dev/null 2>&1; then
-    if findmnt -n -T "$mount_dir" >/dev/null 2>&1; then
+    local target
+    target=$(findmnt -n -o TARGET --target "$mount_dir" 2>/dev/null || true)
+    if [ "$target" = "$mount_dir" ] && [ -n "$target" ]; then
       return 0
     fi
   fi
@@ -53,7 +55,7 @@ is_path_mounted() {
 describe_mount() {
   local mount_dir="$1"
   if command -v findmnt >/dev/null 2>&1; then
-    local mount_info=$(findmnt -n -o FSTYPE,SOURCE,TARGET -T "$mount_dir" 2>/dev/null || true)
+    local mount_info=$(findmnt -n -o FSTYPE,SOURCE,TARGET,OPTIONS --target "$mount_dir" 2>/dev/null || true)
     if [ -n "$mount_info" ]; then
       info "findmnt: $mount_info"
     fi
@@ -61,6 +63,14 @@ describe_mount() {
   local mount_line=$(mount | grep " $mount_dir " || true)
   if [ -n "$mount_line" ]; then
     info "mount: $mount_line"
+  fi
+}
+
+# Return filesystem type of a target (empty if unknown)
+get_mount_fstype() {
+  local mount_dir="$1"
+  if command -v findmnt >/dev/null 2>&1; then
+    findmnt -n -o FSTYPE --target "$mount_dir" 2>/dev/null || true
   fi
 }
 
@@ -119,11 +129,13 @@ mount_s3_with_goofys() {
 
   local GOOFYS_ARGS=("${GOOFYS_EXTRA_ARGS:-}" "${bucket}" "${mount_dir}")
   info "Running: goofys ${GOOFYS_ARGS[*]}"
-  goofys ${GOOFYS_EXTRA_ARGS:-} "${bucket}" "${mount_dir}" &
+  goofys --stat-cache-ttl=1s --type-cache-ttl=1s --dir-mode=0755 --file-mode=0644 ${GOOFYS_EXTRA_ARGS:-} "${bucket}" "${mount_dir}" &
 
   # Ensure mount succeeded
   sleep 2
-  mountpoint -q "${mount_dir}" || error_exit "Goofys mount failed for ${mount_dir}"
+  if ! mountpoint -q "${mount_dir}"; then
+    error_exit "Goofys mount failed for ${mount_dir}. If running in Docker, ensure the container has /dev/fuse, cap SYS_ADMIN, and apparmor disabled (devices: [/dev/fuse], cap_add: [SYS_ADMIN], security_opt: [apparmor:unconfined])."
+  fi
 
   # Verify correctness
   if ! verify_bucket_mount "${mount_dir}" "${bucket}"; then
@@ -146,31 +158,31 @@ if [[ "${S3_MOUNT_ENABLED}" == "true" ]]; then
     info "Detected existing mount at ${S3_MOUNT_DIR}"
     describe_mount "${S3_MOUNT_DIR}"
     
-    # Check if this looks like a host bind mount
-    if mount | grep -q "${S3_MOUNT_DIR}.*fakeowner"; then
-      info "Host bind mount detected - assuming host has mounted S3"
-      
-      # Verify the mount content if possible
-      if verify_bucket_mount "${S3_MOUNT_DIR}" "${S3_BUCKET_NAME}"; then
-        info "Host S3 mount verified for bucket s3://${S3_BUCKET_NAME}"
-      else
-        info "Host mount exists - proceeding (verification may fail for bind mounts)"
-      fi
-      
-      # List contents to confirm accessibility
-      if ls "${S3_MOUNT_DIR}" >/dev/null 2>&1; then
-        file_count=$(ls -1 "${S3_MOUNT_DIR}" | wc -l)
-        info "S3 directory accessible with ${file_count} items"
-      fi
-      
-    else
-      # This might be a container-mounted S3, verify it
-      if verify_bucket_mount "${S3_MOUNT_DIR}" "${S3_BUCKET_NAME}"; then
-        info "Existing S3 mount verified for bucket s3://${S3_BUCKET_NAME}"
-      else
-        info "Existing mount verification failed - may need remounting"
-      fi
-    fi
+    # Classify filesystem type
+    fstype=$(get_mount_fstype "${S3_MOUNT_DIR}")
+    case "$fstype" in
+      fuse*|fuse.goofys|fuse.s3fs)
+        # Likely an S3 FUSE mount (inside container)
+        if verify_bucket_mount "${S3_MOUNT_DIR}" "${S3_BUCKET_NAME}"; then
+          info "Existing S3 mount verified for bucket s3://${S3_BUCKET_NAME}"
+        else
+          info "Existing FUSE mount could not be verified; continuing"
+        fi
+        ;;
+      *)
+        # Most likely a bind mount from host (ext4/xfs/overlay)
+        if [[ "${S3_HOST_BIND:-false}" == "true" ]]; then
+          info "Treating existing mount as host bind-mount. Skipping verification."
+        else
+          if verify_bucket_mount "${S3_MOUNT_DIR}" "${S3_BUCKET_NAME}"; then
+            info "Host bind mount appears to reflect s3://${S3_BUCKET_NAME}"
+          else
+            info "Bind mount detected but no S3 data found. Mounting S3 internally."
+            mount_s3_with_goofys "${S3_BUCKET_NAME}" "${S3_MOUNT_DIR}"
+          fi
+        fi
+        ;;
+    esac
     
   else
     info "No existing mount detected at ${S3_MOUNT_DIR}"
@@ -192,4 +204,3 @@ fi
 
 # Hand over control to the CMD provided in Dockerfile / docker-compose
 exec "$@"
-

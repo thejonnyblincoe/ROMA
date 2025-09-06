@@ -291,10 +291,33 @@ safe_env_extract() {
 # LOCAL S3 MOUNTING FUNCTIONS
 # ============================================
 
+# Validate that all required environment variables are present
+validate_s3_environment() {
+    local missing_vars=()
+    
+    # Check required S3 variables
+    local required_vars=("S3_BUCKET_NAME" "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY")
+    
+    for var in "${required_vars[@]}"; do
+        local value=$(safe_env_extract ".env" "$var" "")
+        if [ -z "$value" ] || [[ "$value" =~ ^your.*$ ]]; then
+            missing_vars+=("$var")
+        fi
+    done
+    
+    if [ ${#missing_vars[@]} -gt 0 ]; then
+        print_error "Missing required S3 environment variables: ${missing_vars[*]}"
+        print_info "Please configure these in your .env file"
+        return 1
+    fi
+    
+    return 0
+}
+
 check_fuse_support() {
     print_info "Checking FUSE support..."
     
-    if [[ "$OS_TYPE" == "macos" ]]; then
+    if [[ "$OS_FAMILY" == "macos" ]]; then
         # Check for macFUSE (formerly osxfuse)
         if [ ! -e /Library/Filesystems/macfuse.fs ]; then
             print_warning "macFUSE is not installed"
@@ -321,7 +344,7 @@ check_fuse_support() {
             print_success "macFUSE detected"
         fi
         
-    elif [[ "$OS_TYPE" == "linux" ]]; then
+    elif [[ "$OS_FAMILY" == "linux" ]] || [[ "$OS_FAMILY" == "debian" ]]; then
         # Check for FUSE kernel module
         if ! lsmod | grep -q fuse; then
             print_warning "FUSE module not loaded, attempting to load..."
@@ -437,8 +460,8 @@ install_goofys_binary() {
     # GitHub releases only provide Linux x86_64 binaries
     # Only attempt this for Linux x86_64 systems
     
-    if [[ "$OS_TYPE" != "linux" ]]; then
-        print_info "Method 1: Pre-built binaries only available for Linux, skipping for $OS_TYPE"
+    if [[ "$OS_FAMILY" != "linux" ]] && [[ "$OS_FAMILY" != "debian" ]]; then
+        print_info "Method 1: Pre-built binaries only available for Linux, skipping for $OS_FAMILY"
         return 1
     fi
     
@@ -598,7 +621,7 @@ install_go_and_build_goofys() {
         return 1
     fi
     
-    if [[ "$OS_TYPE" == "macos" ]]; then
+    if [[ "$OS_FAMILY" == "macos" ]]; then
         if command -v brew &> /dev/null; then
             print_info "Installing Go via Homebrew..."
             if brew install go; then
@@ -611,7 +634,7 @@ install_go_and_build_goofys() {
                 fi
             fi
         fi
-    elif [[ "$OS_TYPE" == "linux" ]]; then
+    elif [[ "$OS_FAMILY" == "linux" ]] || [[ "$OS_FAMILY" == "debian" ]]; then
         # Try to install Go via package manager
         if command -v apt &> /dev/null; then
             print_info "Installing Go via apt..."
@@ -643,7 +666,7 @@ setup_persistent_mount() {
     
     print_info "Setting up persistent S3 mount using goofys..."
     
-    if [[ "$OS_TYPE" == "macos" ]]; then
+    if [[ "$OS_FAMILY" == "macos" ]]; then
         # Create launchd service for macOS
         local service_file="$HOME/Library/LaunchAgents/com.sentient.mount.plist"
         cat > "$service_file" << EOF
@@ -671,9 +694,9 @@ EOF
         launchctl load "$service_file" 2>/dev/null || true
         print_success "launchd service created for persistent mounting"
         
-    elif [[ "$OS_TYPE" == "linux" ]]; then
+    elif [[ "$OS_FAMILY" == "linux" ]] || [[ "$OS_FAMILY" == "debian" ]]; then
         # Create systemd service for Linux
-        local service_file="/etc/systemd/system/opt/sentient-mount.service"
+        local service_file="/etc/systemd/system/sentient-mount.service"
         sudo tee "$service_file" > /dev/null << EOF
 [Unit]
 Description=Sentient S3 Mount
@@ -725,9 +748,16 @@ validate_aws_credentials() {
     # Check if aws CLI is available
     if ! command -v aws &> /dev/null; then
         print_error "AWS CLI not found. Installing..."
-        if [[ "$OS_TYPE" == "macos" ]]; then
-            brew install awscli
-        elif [[ "$OS_TYPE" == "linux" ]]; then
+        # Ensure OS is detected
+        detect_os
+        if [[ "$OS_FAMILY" == "macos" ]]; then
+            if command -v brew &> /dev/null; then
+                brew install awscli
+            else
+                print_error "Homebrew not found. Please install AWS CLI manually"
+                return 1
+            fi
+        elif [[ "$OS_FAMILY" == "linux" ]] || [[ "$OS_FAMILY" == "debian" ]]; then
             # Install via package manager or pip
             if command -v apt &> /dev/null; then
                 sudo apt update && sudo apt install -y awscli
@@ -832,6 +862,11 @@ verify_s3_mount() {
 setup_local_s3_mounting() {
     print_info "Setting up local S3 mounting..."
     
+    # Validate S3 environment first
+    if ! validate_s3_environment; then
+        return 1
+    fi
+    
     # Use safe environment extraction
     S3_BUCKET_NAME=$(safe_env_extract ".env" "S3_BUCKET_NAME" "")
     S3_MOUNT_DIR=$(safe_env_extract ".env" "S3_MOUNT_DIR" "/opt/sentient")
@@ -845,16 +880,6 @@ setup_local_s3_mounting() {
     export AWS_ACCESS_KEY_ID
     export AWS_SECRET_ACCESS_KEY  
     export AWS_REGION
-    
-    if [ -z "$S3_BUCKET_NAME" ] || [ "$S3_BUCKET_NAME" = "your-s3-bucket-name" ]; then
-        print_error "S3_BUCKET_NAME not configured in .env"
-        return 1
-    fi
-    
-    if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-        print_error "AWS credentials not configured in .env"
-        return 1
-    fi
     
     # Validate mount directory path
     if ! validate_mount_path "$S3_MOUNT_DIR" "S3 mount directory"; then
@@ -885,18 +910,10 @@ setup_local_s3_mounting() {
         return 1
     fi
     
-    # Create mount directory with proper permissions
-    if [ ! -d "$S3_MOUNT_DIR" ]; then
-        if [[ "$S3_MOUNT_DIR" == /* ]]; then
-            # Absolute path, might need sudo
-            if ! mkdir -p "$S3_MOUNT_DIR" 2>/dev/null; then
-                sudo mkdir -p "$S3_MOUNT_DIR"
-                sudo chown $USER:$(id -gn) "$S3_MOUNT_DIR"
-            fi
-        else
-            # Relative path
-            mkdir -p "$S3_MOUNT_DIR"
-        fi
+    # Create mount directory with proper permissions using dedicated function
+    if ! create_mount_directory "$S3_MOUNT_DIR"; then
+        print_error "Failed to create mount directory: $S3_MOUNT_DIR"
+        return 1
     fi
     
     print_info "Mounting S3 bucket '$S3_BUCKET_NAME' to '$S3_MOUNT_DIR'..."
@@ -927,13 +944,16 @@ setup_local_s3_mounting() {
         if verify_s3_mount "$S3_MOUNT_DIR"; then
             print_success "S3 mount verification passed"
             
-            # Update .env if not already set
-            if ! grep -q "S3_MOUNT_ENABLED=true" .env; then
-                echo "S3_MOUNT_ENABLED=true" >> .env
-            fi
-            if ! grep -q "S3_MOUNT_DIR=" .env; then
+            # Update .env with host S3 mounting settings
+            # Remove any existing entries to avoid conflicts
+            sed -i.bak '/^S3_MOUNT_ENABLED=/d; /^S3_HOST_BIND=/d; /^S3_STRICT_VERIFY=/d' .env 2>/dev/null || true
+            if ! grep -q "^S3_MOUNT_DIR=" .env; then
                 echo "S3_MOUNT_DIR=$S3_MOUNT_DIR" >> .env
             fi
+            # Add updated settings
+            echo "S3_MOUNT_ENABLED=true" >> .env
+            echo "S3_HOST_BIND=true" >> .env
+            echo "S3_STRICT_VERIFY=false" >> .env
             
             # Setup persistent mounting
             setup_persistent_mount "$S3_BUCKET_NAME" "$S3_MOUNT_DIR"
@@ -961,8 +981,8 @@ ask_for_s3_mounting() {
             mount_dir=$(safe_env_extract ".env" "S3_MOUNT_DIR" "/opt/sentient")
             print_info "Using S3 mount directory from .env: $mount_dir"
             
-            # Update .env with mount directory if not already present
-            if ! grep -q "S3_MOUNT_DIR=" .env; then
+            # Update .env with mount directory
+            if ! grep -q "^S3_MOUNT_DIR=" .env; then
                 echo "S3_MOUNT_DIR=$mount_dir" >> .env
                 print_info "Added S3_MOUNT_DIR=$mount_dir to .env"
             fi
@@ -1120,6 +1140,13 @@ docker_check_requirements() {
         return 1
     fi
     
+    # Check if Docker daemon is running
+    if ! docker info &> /dev/null; then
+        print_error "Docker daemon is not running"
+        echo "Please start Docker and try again"
+        return 1
+    fi
+    
     if ! docker compose version &> /dev/null 2>&1; then
         if ! command -v docker-compose &> /dev/null; then
             print_error "Docker Compose is not installed"
@@ -1132,6 +1159,53 @@ docker_check_requirements() {
     fi
     
     print_success "Docker and Docker Compose found"
+    return 0
+}
+
+# Common function to determine compose files with S3 configuration
+# Sets the global variable COMPOSE_FILES_RESULT
+# Must be called from the docker directory
+get_docker_compose_files() {
+    COMPOSE_FILES_RESULT="-f docker-compose.yml"
+    
+    # Ensure OS is detected
+    detect_os
+    
+    # Check if we're in the docker directory
+    if [ ! -f "docker-compose.yml" ]; then
+        print_error "docker-compose.yml not found. Are you in the docker directory?"
+        return 1
+    fi
+    
+    if [ -f "../.env" ]; then
+        S3_MOUNT_ENABLED=$(safe_env_extract "../.env" "S3_MOUNT_ENABLED" "false")
+        S3_MOUNT_DIR=$(safe_env_extract "../.env" "S3_MOUNT_DIR" "/opt/sentient")
+        # Expand $HOME variable if present
+        S3_MOUNT_DIR=$(eval echo "$S3_MOUNT_DIR")
+        
+        # Use flexible boolean parsing for S3_MOUNT_ENABLED
+        s3_mount_env=$(echo "$S3_MOUNT_ENABLED" | tr '[:upper:]' '[:lower:]' | xargs)
+        if [[ "$s3_mount_env" =~ ^(true|yes|1|on|enabled)$ ]] && [ -n "$S3_MOUNT_DIR" ]; then
+            if [[ "$OS_FAMILY" == "macos" ]]; then
+                # macOS: Check if directory exists and is valid
+                if validate_mount_path "$S3_MOUNT_DIR" "S3 mount directory" && [ -d "$S3_MOUNT_DIR" ]; then
+                    COMPOSE_FILES_RESULT="$COMPOSE_FILES_RESULT -f docker-compose.s3.yml"
+                    print_info "Including S3 mount configuration for directory: $S3_MOUNT_DIR"
+                else
+                    print_warning "S3 mount directory invalid or not present; skipping S3 compose override"
+                fi
+            else
+                # Ubuntu/Linux: Always include S3 compose file if S3 is enabled (directory will be created)
+                if validate_mount_path "$S3_MOUNT_DIR" "S3 mount directory"; then
+                    COMPOSE_FILES_RESULT="$COMPOSE_FILES_RESULT -f docker-compose.s3.yml"
+                    print_info "Including S3 mount configuration for directory: $S3_MOUNT_DIR (Linux: directory will be created)"
+                else
+                    print_warning "S3 mount directory path invalid; skipping S3 compose override"
+                fi
+            fi
+        fi
+    fi
+    
     return 0
 }
 
@@ -1173,26 +1247,8 @@ docker_build() {
     print_info "Building Docker images..."
     
     cd docker
-    
-    # Use same compose file selection logic as docker_start
-    local compose_files="-f docker-compose.yml"
-    if [ -f "../.env" ]; then
-        S3_MOUNT_ENABLED=$(safe_env_extract "../.env" "S3_MOUNT_ENABLED" "false")
-        S3_MOUNT_DIR=$(safe_env_extract "../.env" "S3_MOUNT_DIR" "/opt/sentient")
-        # Expand $HOME variable if present
-        S3_MOUNT_DIR=$(eval echo "$S3_MOUNT_DIR")
-        
-        # Use flexible boolean parsing for S3_MOUNT_ENABLED
-        s3_mount_env=$(echo "$S3_MOUNT_ENABLED" | tr '[:upper:]' '[:lower:]' | xargs)
-        if [[ "$s3_mount_env" =~ ^(true|yes|1|on|enabled)$ ]] && [ -n "$S3_MOUNT_DIR" ]; then
-            if validate_mount_path "$S3_MOUNT_DIR" "S3 mount directory" && [ -d "$S3_MOUNT_DIR" ]; then
-                compose_files="$compose_files -f docker-compose.s3.yml"
-                print_info "Building with S3 mount configuration for directory: $S3_MOUNT_DIR"
-            fi
-        fi
-    fi
-    
-    $COMPOSE_CMD $compose_files build --no-cache
+    get_docker_compose_files
+    $COMPOSE_CMD $COMPOSE_FILES_RESULT build --no-cache
     cd ..
     
     print_success "Docker images built successfully"
@@ -1202,29 +1258,8 @@ docker_start() {
     print_info "Starting Docker services..."
     
     cd docker
-    
-    # Check if S3 mounting is enabled and validated
-    local compose_files="-f docker-compose.yml"
-    if [ -f "../.env" ]; then
-        S3_MOUNT_ENABLED=$(safe_env_extract "../.env" "S3_MOUNT_ENABLED" "false")
-        S3_MOUNT_DIR=$(safe_env_extract "../.env" "S3_MOUNT_DIR" "/opt/sentient")
-        # Expand $HOME variable if present
-        S3_MOUNT_DIR=$(eval echo "$S3_MOUNT_DIR")
-        
-        # Use flexible boolean parsing for S3_MOUNT_ENABLED
-        s3_mount_env=$(echo "$S3_MOUNT_ENABLED" | tr '[:upper:]' '[:lower:]' | xargs)
-        if [[ "$s3_mount_env" =~ ^(true|yes|1|on|enabled)$ ]] && [ -n "$S3_MOUNT_DIR" ]; then
-            # Validate the mount path before using it
-            if validate_mount_path "$S3_MOUNT_DIR" "S3 mount directory" && [ -d "$S3_MOUNT_DIR" ]; then
-                compose_files="$compose_files -f docker-compose.s3.yml"
-                print_info "Including S3 mount configuration for directory: $S3_MOUNT_DIR"
-            else
-                print_warning "S3 mount directory invalid or not mounted, skipping S3 compose override"
-            fi
-        fi
-    fi
-    
-    $COMPOSE_CMD $compose_files up -d
+    get_docker_compose_files
+    $COMPOSE_CMD $COMPOSE_FILES_RESULT up -d
     
     # Wait for services
     print_info "Waiting for services to start..."
@@ -1251,43 +1286,139 @@ docker_start() {
     cd ..
 }
 
+ubuntu_docker_s3_mount() {
+    print_info "Setting up Ubuntu-compatible Docker S3 mounting..."
+    
+    # Determine if we're in docker directory or project root
+    local env_file=".env"
+    local docker_dir="."
+    
+    if [ -f ".env" ] && [ -d "docker" ]; then
+        # We're in project root
+        env_file=".env"
+        docker_dir="docker"
+        print_info "Detected: In project root directory"
+    elif [ -f "../.env" ] && [ -f "docker-compose.yml" ]; then
+        # We're in docker directory
+        env_file="../.env"
+        docker_dir="."
+        print_info "Detected: In docker directory"
+    else
+        print_error "Cannot determine location or find .env file"
+        print_error "Current directory: $(pwd)"
+        print_error "Contents: $(ls -la)"
+        return 1
+    fi
+    
+    # Get S3_MOUNT_DIR from .env file
+    local mount_dir=$(safe_env_extract "$env_file" "S3_MOUNT_DIR" "/opt/sentient")
+    mount_dir=$(eval echo "$mount_dir")
+    
+    print_info "Using S3 mount directory: $mount_dir (container-internal mounting)"
+    
+    # 1. Clean any existing host mounts/processes to avoid conflicts
+    sudo umount "$mount_dir" 2>/dev/null || true
+    sudo fusermount -u "$mount_dir" 2>/dev/null || true
+    sudo pkill -f goofys 2>/dev/null || true
+    
+    # 2. Remove directory completely so Docker can create it fresh
+    sudo rm -rf "$mount_dir"
+    
+    # 3. Create directory with proper permissions for Docker bind mount
+    sudo mkdir -p "$mount_dir"
+    sudo chown $USER:docker "$mount_dir"
+    sudo chmod 755 "$mount_dir"
+    
+    print_info "Starting containers - S3 will be mounted internally by container startup script"
+    
+    # 4. Ensure S3_HOST_BIND=false for container-internal mounting
+    if ! grep -q "^S3_HOST_BIND=false" "$env_file" 2>/dev/null; then
+        # Remove any existing S3_HOST_BIND setting and add false
+        sed -i.bak '/^S3_HOST_BIND=/d' "$env_file" 2>/dev/null || true
+        echo "S3_HOST_BIND=false" >> "$env_file"
+        print_info "Set S3_HOST_BIND=false for container-internal S3 mounting"
+    fi
+    
+    # 5. Start containers - they will handle S3 mounting internally
+    if [ "$docker_dir" != "." ]; then
+        cd "$docker_dir"
+    fi
+    
+    get_docker_compose_files
+    $COMPOSE_CMD $COMPOSE_FILES_RESULT up -d
+    
+    print_success "Ubuntu Docker S3 setup complete - S3 mounting handled internally by containers"
+    
+    # Return to original directory if we changed
+    if [ "$docker_dir" != "." ]; then
+        cd ..
+    fi
+}
+
 # Rebuild Docker services from scratch: stop, remove volumes, no-cache build, force recreate
 docker_from_scratch() {
     print_info "Rebuilding Docker services from scratch..."
     
+    # Ensure OS is detected
+    detect_os
+    
     if ! docker_check_requirements; then
         return 1
     fi
-    
-    cd docker
-    
-    # Compute compose files like docker_start
-    local compose_files="-f docker-compose.yml"
-    if [ -f "../.env" ]; then
-        S3_MOUNT_ENABLED=$(safe_env_extract "../.env" "S3_MOUNT_ENABLED" "false")
-        S3_MOUNT_DIR=$(safe_env_extract "../.env" "S3_MOUNT_DIR" "/opt/sentient")
+
+    # If S3 mounting is enabled, ensure host mount is prepared before rebuild
+    if [ -f .env ]; then
+        S3_MOUNT_ENABLED=$(safe_env_extract ".env" "S3_MOUNT_ENABLED" "false")
+        S3_MOUNT_DIR=$(safe_env_extract ".env" "S3_MOUNT_DIR" "/opt/sentient")
         # Expand $HOME variable if present
         S3_MOUNT_DIR=$(eval echo "$S3_MOUNT_DIR")
-        
         s3_mount_env=$(echo "$S3_MOUNT_ENABLED" | tr '[:upper:]' '[:lower:]' | xargs)
         if [[ "$s3_mount_env" =~ ^(true|yes|1|on|enabled)$ ]] && [ -n "$S3_MOUNT_DIR" ]; then
-            if validate_mount_path "$S3_MOUNT_DIR" "S3 mount directory" && [ -d "$S3_MOUNT_DIR" ]; then
-                compose_files="$compose_files -f docker-compose.s3.yml"
-                print_info "Including S3 mount configuration for directory: $S3_MOUNT_DIR"
+            if [[ "$OS_FAMILY" == "macos" ]]; then
+                print_info "macOS: Setting up host S3 mount before Docker"
+                setup_local_s3_mounting || print_warning "Host S3 mounting failed; continuing without host S3 bind"
             else
-                print_warning "S3 mount directory invalid or not present; skipping S3 compose override"
+                print_info "Ubuntu: Will setup S3 mount after Docker creates directory"
+                # Skip host mounting here - will be done in ubuntu_docker_s3_mount
             fi
         fi
     fi
     
+    cd docker
+    
+    # Get compose files using helper function
+    get_docker_compose_files
+    
+    # Re-extract S3 variables for conditional logic below
+    if [ -f "../.env" ]; then
+        S3_MOUNT_ENABLED=$(safe_env_extract "../.env" "S3_MOUNT_ENABLED" "false")
+        S3_MOUNT_DIR=$(safe_env_extract "../.env" "S3_MOUNT_DIR" "/opt/sentient")
+        S3_MOUNT_DIR=$(eval echo "$S3_MOUNT_DIR")
+        s3_mount_env=$(echo "$S3_MOUNT_ENABLED" | tr '[:upper:]' '[:lower:]' | xargs)
+    fi
+    
     # Stop and remove containers and volumes
-    $COMPOSE_CMD $compose_files down -v --remove-orphans
+    $COMPOSE_CMD $COMPOSE_FILES_RESULT down -v --remove-orphans
     
     # Build with no cache and pull latest bases
-    $COMPOSE_CMD $compose_files build --no-cache --pull
+    $COMPOSE_CMD $COMPOSE_FILES_RESULT build --no-cache --pull
     
-    # Start fresh containers, force recreate
-    $COMPOSE_CMD $compose_files up -d --force-recreate
+    # Handle startup differently for macOS vs Ubuntu
+    if [[ "$OS_FAMILY" == "macos" ]]; then
+        # Original Docker startup flow for macOS
+        $COMPOSE_CMD $COMPOSE_FILES_RESULT up -d --force-recreate
+    else
+        # Ubuntu-specific flow that handles S3 mounting properly
+        if [[ "$s3_mount_env" =~ ^(true|yes|1|on|enabled)$ ]] && [ -n "$S3_MOUNT_DIR" ]; then
+            # Use special Ubuntu S3 mount function
+            cd ..
+            ubuntu_docker_s3_mount
+            cd docker
+        else
+            # No S3, use normal startup
+            $COMPOSE_CMD $COMPOSE_FILES_RESULT up -d --force-recreate
+        fi
+    fi
     
     # Wait for services
     print_info "Waiting for services to start..."
@@ -1324,30 +1455,10 @@ docker_compose_run() {
     fi
     
     cd docker
+    get_docker_compose_files
     
-    # Check if S3 mounting is enabled and validated
-    local compose_files="-f docker-compose.yml"
-    if [ -f "../.env" ]; then
-        S3_MOUNT_ENABLED=$(safe_env_extract "../.env" "S3_MOUNT_ENABLED" "false")
-        S3_MOUNT_DIR=$(safe_env_extract "../.env" "S3_MOUNT_DIR" "/opt/sentient")
-        # Expand $HOME variable if present
-        S3_MOUNT_DIR=$(eval echo "$S3_MOUNT_DIR")
-        
-        # Use flexible boolean parsing for S3_MOUNT_ENABLED
-        s3_mount_env=$(echo "$S3_MOUNT_ENABLED" | tr '[:upper:]' '[:lower:]' | xargs)
-        if [[ "$s3_mount_env" =~ ^(true|yes|1|on|enabled)$ ]] && [ -n "$S3_MOUNT_DIR" ]; then
-            # Validate the mount path before using it
-            if validate_mount_path "$S3_MOUNT_DIR" "S3 mount directory" && [ -d "$S3_MOUNT_DIR" ]; then
-                compose_files="$compose_files -f docker-compose.s3.yml"
-                print_info "Including S3 mount configuration for directory: $S3_MOUNT_DIR"
-            else
-                print_warning "S3 mount directory invalid or not mounted, skipping S3 compose override"
-            fi
-        fi
-    fi
-    
-    print_info "Running: $COMPOSE_CMD $compose_files up"
-    $COMPOSE_CMD $compose_files up -d
+    print_info "Running: $COMPOSE_CMD $COMPOSE_FILES_RESULT up"
+    $COMPOSE_CMD $COMPOSE_FILES_RESULT up -d
     
     # Wait for services
     print_info "Waiting for services to start..."
@@ -1379,13 +1490,16 @@ docker_compose_run() {
 docker_setup() {
     print_info "Starting Docker setup..."
     
+    # Ensure OS is detected
+    detect_os
+    
     if ! docker_check_requirements; then
         return 1
     fi
     
     docker_setup_environment
     
-    # macOS: Host-based S3 mounting for Docker (container FUSE not supported on Desktop)
+    # OS-specific S3 mounting for Docker
     if [ -f .env ]; then
         S3_MOUNT_ENABLED=$(safe_env_extract ".env" "S3_MOUNT_ENABLED" "false")
         S3_MOUNT_DIR=$(safe_env_extract ".env" "S3_MOUNT_DIR" "/opt/sentient")
@@ -1393,10 +1507,18 @@ docker_setup() {
         S3_MOUNT_DIR=$(eval echo "$S3_MOUNT_DIR")
         s3_mount_env=$(echo "$S3_MOUNT_ENABLED" | tr '[:upper:]' '[:lower:]' | xargs)
         if [[ "$s3_mount_env" =~ ^(true|yes|1|on|enabled)$ ]] && [ -n "$S3_MOUNT_DIR" ]; then
-            print_info "S3 mounting enabled - performing host-based S3 mounting for Docker"
-            print_info "S3 mount directory: $S3_MOUNT_DIR"
-            # Perform host-based S3 mounting for reliable host visibility
-            setup_local_s3_mounting || print_warning "Host S3 mounting failed"
+            if [[ "$OS_FAMILY" == "macos" ]]; then
+                print_info "macOS: Host-based S3 mounting for Docker"
+                print_info "S3 mount directory: $S3_MOUNT_DIR"
+                # Perform host-based S3 mounting for reliable host visibility
+                setup_local_s3_mounting || print_warning "Host S3 mounting failed"
+            else
+                print_info "Ubuntu: Container-based S3 mounting"
+                print_info "S3 mount directory: $S3_MOUNT_DIR"
+                # Ubuntu uses container-internal S3 mounting
+                ubuntu_docker_s3_mount
+                return 0  # ubuntu_docker_s3_mount handles build and start
+            fi
         fi
     fi
     
@@ -1533,7 +1655,7 @@ native_setup_project() {
     
     # Activate virtual environment
     print_info "Activating virtual environment..."
-    if [[ "$OS_TYPE" == "macos" ]] || [[ "$SHELL" =~ "zsh" ]]; then
+    if [[ "$OS_FAMILY" == "macos" ]] || [[ "$SHELL" =~ "zsh" ]]; then
         source .venv/bin/activate
     else
         source .venv/bin/activate
@@ -1819,12 +1941,12 @@ native_setup() {
             print_info "Starting native macOS setup..."
             native_setup_macos
             ;;
-        debian)
-            print_info "Starting native Ubuntu/Debian setup..."
+        debian|linux)
+            print_info "Starting native Linux setup..."
             native_setup_debian
             ;;
         *)
-            print_error "Unsupported system detected. This script supports macOS and Ubuntu/Debian."
+            print_error "Unsupported system detected. This script supports macOS and Linux."
             echo "Please install dependencies manually (Python 3.12, PDM, UV, NVM/Node, npm) and rerun."
             return 1
             ;;

@@ -77,7 +77,7 @@ class BaseDataToolkit:
         
         Args:
             data_dir: Base directory path for storing parquet files (used as fallback)
-            parquet_threshold: Minimum size to trigger parquet storage
+            parquet_threshold: Minimum JSON payload size in KB to trigger parquet storage
             file_prefix: Optional prefix for all generated files
             toolkit_name: Name of the toolkit (used for folder organization)
         """
@@ -384,31 +384,32 @@ class BaseDataToolkit:
         file_path = storage_path / filename
         
         try:
-            # Try direct write first (works for local filesystems)
-            df.to_parquet(file_path, compression='snappy', index=False)
-            
-            file_path_str = str(file_path)
+            # Always use atomic buffer method for S3 mounts to avoid goofys issues
             if self._s3_available:
-                logger.info(f"Stored {len(df)} records to S3-synced path: {file_path_str}")
-            else:
-                logger.info(f"Stored {len(df)} records to local path: {file_path_str}")
-            
-            return file_path_str
-            
-        except Exception as e:
-            # Check if this is the "Operation not supported" error from S3 filesystem
-            if "Operation not supported" in str(e) or "errno 45" in str(e).lower():
-                logger.warning(f"Direct parquet write failed, using BytesIO buffer method: {e}")
+                logger.debug(f"Using atomic write method for S3-mounted storage")
                 return self._store_parquet_via_buffer(df, file_path)
             else:
-                logger.error(f"Failed to write parquet file {file_path}: {e}")
-                raise IOError(f"Cannot write parquet file: {e}")
+                # Try direct write first for local filesystems
+                df.to_parquet(file_path, compression='snappy', index=False)
+                
+                file_path_str = str(file_path)
+                logger.info(f"Stored {len(df)} records to local path: {file_path_str}")
+                
+                return file_path_str
+            
+        except Exception as e:
+            # Fallback to atomic buffer method if direct write fails
+            logger.warning(f"Direct parquet write failed, using atomic buffer method: {e}")
+            return self._store_parquet_via_buffer(df, file_path)
 
     def _store_parquet_via_buffer(self, df: _pd.DataFrame, file_path: Path) -> str:
-        """Store parquet file using BytesIO buffer to avoid random write issues with goofys.
+        """Store parquet file using goofys-compatible direct write approach.
         
-        Creates the parquet file in memory first, then writes it as a single sequential 
-        operation to avoid random write issues with S3 filesystem mounts.
+        Creates the parquet file in memory first, then writes it directly to the final location.
+        This approach works with goofys limitations:
+        - No random writes (avoided by writing complete buffer)
+        - fsync ignored (relies on file close for flush)
+        - Sequential write only (single write operation)
         
         Args:
             df: DataFrame to store
@@ -417,66 +418,105 @@ class BaseDataToolkit:
         Returns:
             str: Path to the stored file
         """
+        import os
         from io import BytesIO
         
         try:
+            logger.debug(f"Starting goofys-compatible parquet write for {len(df)} records to {file_path}")
+            
             # Create parquet file in memory to avoid random writes
             buffer = BytesIO()
             df.to_parquet(buffer, engine='pyarrow', compression='snappy', index=False)
-            
-            # Write complete file in single sequential operation
-            with open(file_path, 'wb') as f:
-                f.write(buffer.getvalue())
-            
+            buffer_data = buffer.getvalue()
+            buffer_size = len(buffer_data)
             buffer.close()
+            
+            logger.debug(f"Created parquet buffer with {buffer_size} bytes")
+            
+            # Ensure parent directory exists
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Write directly to final location in single operation (goofys compatible)
+            logger.debug(f"Writing buffer directly to final location: {file_path}")
+            with open(file_path, 'wb') as final_file:
+                final_file.write(buffer_data)
+                final_file.flush()  # Standard flush to OS buffer
+                # NOTE: goofys ignores fsync, file is flushed automatically on close
+            
+            # Verify the file was written correctly
+            if not file_path.exists():
+                raise IOError(f"Direct write failed - destination file does not exist: {file_path}")
+            
+            final_size = file_path.stat().st_size
+            if final_size == 0:
+                raise IOError(f"Direct write verification failed - destination file is empty: {file_path}")
+            
+            if final_size != buffer_size:
+                raise IOError(f"Direct write size mismatch - expected {buffer_size}, got {final_size}: {file_path}")
+            
+            logger.debug(f"Successfully written to final location: {file_path} ({final_size} bytes)")
             
             file_path_str = str(file_path)
             if self._s3_available:
-                logger.info(f"Stored {len(df)} records to S3-synced path via buffer: {file_path_str}")
+                logger.info(f"Stored {len(df)} records to S3-synced path via goofys-compatible write: {file_path_str}")
             else:
-                logger.info(f"Stored {len(df)} records to local path via buffer: {file_path_str}")
+                logger.info(f"Stored {len(df)} records to local path via direct write: {file_path_str}")
             
             return file_path_str
             
         except Exception as e:
-            logger.error(f"Failed to write parquet file via buffer {file_path}: {e}")
-            raise IOError(f"Buffer parquet storage failed: {e}")
+            logger.error(f"Failed to write parquet file via goofys-compatible buffer {file_path}: {e}")
+            raise IOError(f"Goofys-compatible parquet storage failed: {e}")
 
     def _should_store_as_parquet(
         self, 
         data: Union[List, _pd.DataFrame, Dict[str, Any]]
     ) -> bool:
-        """Check if data should be stored as parquet based on size threshold.
+        """Check if data should be stored as parquet based on JSON payload size threshold.
+        
+        Uses JSON serialization to calculate the actual response size in KB,
+        ensuring consistent behavior with ResponseBuilder's storage logic.
         
         Args:
-            data: Data to check (list, DataFrame, or dict with length info)
+            data: Data to check (any JSON-serializable data)
             
         Returns:
-            bool: True if data should be stored as parquet, False otherwise
+            bool: True if JSON payload size > threshold_kb, False otherwise
             
         Example:
             ```python
-            large_data = [{"id": i} for i in range(5000)]
-            should_store = self._should_store_as_parquet(large_data)  # True
+            # Large data that serializes to > threshold KB
+            large_data = [{"id": i, "data": "x" * 100} for i in range(100)]
+            should_store = self._should_store_as_parquet(large_data)  # True if > threshold
             
+            # Small data that serializes to < threshold KB  
             small_data = [{"id": 1}, {"id": 2}]
-            should_store = self._should_store_as_parquet(small_data)  # False
+            should_store = self._should_store_as_parquet(small_data)  # False if < threshold
             ```
         """
-        if isinstance(data, list):
-            return len(data) > self._parquet_threshold
-        elif isinstance(data, _pd.DataFrame):
-            return len(data) > self._parquet_threshold
-        elif isinstance(data, dict):
-            # For response dicts that might contain data arrays
-            if 'data' in data and isinstance(data['data'], (list, _pd.DataFrame)):
-                return self._should_store_as_parquet(data['data'])
-            # Check if dict has length-like fields
-            for key in ['count', 'size', 'length', 'total']:
-                if key in data and isinstance(data[key], int):
-                    return data[key] > self._parquet_threshold
-        
-        return False
+        # Use the same size-based logic as ResponseBuilder for consistency
+        try:
+            import json
+            
+            # Calculate JSON payload size in KB
+            json_str = json.dumps(data, default=str, ensure_ascii=False)
+            size_bytes = len(json_str.encode('utf-8'))
+            size_kb = size_bytes / 1024
+            should_store = size_kb > self._parquet_threshold
+            
+            logger.debug(f"Parquet threshold check - Size-based: size_kb={size_kb:.2f}, threshold_kb={self._parquet_threshold}, should_store={should_store}, data_type={type(data).__name__}")
+            return should_store
+            
+        except (TypeError, ValueError, MemoryError) as e:
+            # Fallback for non-serializable data
+            logger.debug(f"Parquet threshold check failed with {e}, using conservative fallback")
+            if isinstance(data, (list, _pd.DataFrame)):
+                # For large collections, assume they should be stored
+                data_size = len(data) if hasattr(data, '__len__') else 0
+                should_store = data_size > 10  # Conservative fallback: > 10 items
+                logger.debug(f"Fallback check - Record count: size={data_size}, should_store={should_store}")
+                return should_store
+            return False
 
     def _convert_to_dataframe(
         self, 
