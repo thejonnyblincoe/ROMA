@@ -1,0 +1,218 @@
+# Level 2: Aggregator Agent Configurations
+# All aggregators that combine results from subtasks
+
+
+# ============================================
+# AGGREGATORS FOR ALL TASK TYPES
+# ============================================
+
+# RETRIEVE Aggregators (evolved from SEARCH in v1)
+retrieve_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "RetrieveAggregator"
+  type: "aggregator"
+  task_type: "RETRIEVE"
+  description: "Aggregates retrieval results from multiple sources"
+
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "aggregator/retrieve.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    deduplication: true
+    ranking_strategy: "relevance_score"
+    synthesis_mode: "comprehensive"
+    max_results: 20
+
+crypto_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "CryptoAggregator"
+  type: "aggregator"
+  task_type: "RETRIEVE"
+  description: "Specialized aggregator for cryptocurrency data"
+
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "aggregator/crypto.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    merge_price_data: true
+    reconcile_conflicts: true
+    time_alignment: true
+    weighted_average: true
+
+# WRITE Aggregators
+write_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "WriteAggregator"
+  type: "aggregator"
+  task_type: "WRITE"
+  description: "Combines document sections into cohesive output"
+
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "aggregator/write.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    maintain_style: true
+    ensure_coherence: true
+    remove_redundancy: true
+    format_output: true
+
+document_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "DocumentAggregator"
+  type: "aggregator"
+  task_type: "WRITE"
+  description: "Advanced document section aggregation"
+
+  model: ${models.gpt_4o}
+  prompt_template: "aggregator/document.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    section_ordering: "logical"
+    citation_management: true
+    toc_generation: true
+    formatting_preservation: true
+
+# THINK Aggregators
+think_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ThinkAggregator"
+  type: "aggregator"
+  task_type: "THINK"
+  description: "Synthesizes analytical results"
+
+  model: ${models.o1_preview}
+  prompt_template: "aggregator/think.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    reasoning_synthesis: true
+    confidence_scoring: true
+    contradiction_resolution: true
+    conclusion_generation: true
+
+analysis_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "AnalysisAggregator"
+  type: "aggregator"
+  task_type: "THINK"
+  description: "Combines multiple analyses into insights"
+
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "aggregator/analysis.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    pattern_detection: true
+    trend_analysis: true
+    outlier_handling: true
+    summary_generation: true
+
+# CODE_INTERPRET Aggregators
+code_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "CodeAggregator"
+  type: "aggregator"
+  task_type: "CODE_INTERPRET"
+  description: "Aggregates code execution results"
+
+  model: ${models.gpt_4o}
+  prompt_template: "aggregator/code.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    merge_outputs: true
+    combine_logs: true
+    error_aggregation: true
+    performance_summary: true
+
+test_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "TestAggregator"
+  type: "aggregator"
+  task_type: "CODE_INTERPRET"
+  description: "Aggregates test results and coverage"
+
+  model: ${models.gpt_4o}
+  prompt_template: "aggregator/test.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    coverage_calculation: true
+    failure_analysis: true
+    test_summary: true
+    recommendations: true
+
+# IMAGE_GENERATION Aggregators
+image_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ImageAggregator"
+  type: "aggregator"
+  task_type: "IMAGE_GENERATION"
+  description: "Aggregates multiple image generation results"
+
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "aggregator/image.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    selection_criteria: "quality_and_relevance"
+    collage_generation: false
+    metadata_preservation: true
+    format_standardization: true
+
+# AGGREGATE-specific Aggregators (meta-aggregation)
+research_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ResearchAggregator"
+  type: "aggregator"
+  task_type: null
+  description: "High-level research synthesis across all results"
+
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "aggregator/research.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    cross_reference: true
+    knowledge_synthesis: true
+    insight_extraction: true
+    report_generation: true
+    confidence_assessment: true
+
+meta_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "MetaAggregator"
+  type: "aggregator"
+  task_type: null
+  description: "Aggregates heterogeneous results from different task types"
+
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "aggregator/meta.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    type_aware_synthesis: true
+    format_normalization: true
+    priority_weighting: true
+    comprehensive_summary: true
+
+# Default fallback aggregator
+default_aggregator:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "DefaultAggregator"
+  type: "aggregator"
+  task_type: null  # Can handle any task type
+  description: "Generic aggregator for any task type"
+
+  model: ${models.claude_3_5_haiku}
+  prompt_template: "aggregator/default.jinja2"
+  output_schema: "AggregatorResult"
+
+  config:
+    simple_concatenation: false
+    basic_synthesis: true
+    format_preservation: true

@@ -1,0 +1,226 @@
+# Level 4: Development Environment Infrastructure Configuration
+
+environment: "development"
+
+# Database configuration
+database:
+  type: "postgresql"
+  host: "localhost"
+  port: 5432
+  name: "roma_dev"
+  user: "roma"
+  password: "roma_dev_password"
+  
+  # Connection pool
+  pool:
+    min_size: 2
+    max_size: 10
+    
+  # Development features
+  echo_sql: true  # Log all SQL
+  create_tables: true  # Auto-create schema
+  seed_data: true  # Load test data
+
+# Cache configuration
+cache:
+  type: "redis"
+  host: "localhost"
+  port: 6379
+  db: 0
+  
+  # Development settings
+  ttl: 300  # 5 minutes (shorter for dev)
+  flush_on_start: true  # Clear cache on startup
+  
+# Storage configuration
+storage:
+  # Use local filesystem in development
+  type: "local"
+  base_path: "./data/artifacts"
+  
+  # Development settings
+  auto_create_dirs: true
+  max_size_mb: 1000
+  cleanup_on_start: false
+  
+  # Fallback to MinIO for S3 compatibility testing
+  minio:
+    enabled: true
+    endpoint: "http://localhost:9000"
+    access_key: "minioadmin"
+    secret_key: "minioadmin"
+    bucket: "roma-dev"
+
+# Message queue configuration
+message_queue:
+  # Use in-memory queue for development
+  type: "memory"
+  
+  # Alternative: RabbitMQ for testing
+  rabbitmq:
+    enabled: false
+    host: "localhost"
+    port: 5672
+    user: "guest"
+    password: "guest"
+
+# Observability configuration
+observability:
+  # Enhanced logging for development
+  logging:
+    level: "DEBUG"
+    format: "detailed"
+    
+    # Log to console and file
+    handlers:
+      - type: "console"
+        colorized: true
+      - type: "file"
+        path: "./logs/roma_dev.log"
+        rotation: "daily"
+        
+  # Local tracing
+  tracing:
+    enabled: true
+    sample_rate: 1.0  # Trace everything in dev
+    
+    # Use Jaeger for local tracing
+    jaeger:
+      enabled: true
+      host: "localhost"
+      port: 6831
+      
+  # Metrics
+  metrics:
+    enabled: true
+    
+    # Use Prometheus for local metrics
+    prometheus:
+      enabled: true
+      port: 9090
+      path: "/metrics"
+
+# Security configuration (relaxed for development)
+security:
+  # Disable in development
+  encryption:
+    enabled: false
+    
+  # Use simple auth for development
+  authentication:
+    type: "basic"
+    users:
+      - username: "dev"
+        password: "dev123"
+        
+  # CORS settings for development
+  cors:
+    enabled: true
+    allow_origins: ["*"]
+    allow_methods: ["*"]
+    allow_headers: ["*"]
+
+# Feature flags for development
+features:
+  # Enable all features in development
+  hot_reload: true
+  debug_mode: true
+  profiling: true
+  
+  # UI features
+  ui:
+    graph_visualization: true
+    live_updates: true
+    debug_panel: true
+    
+  # Experimental features
+  experimental:
+    semantic_search: true
+    auto_scaling: false  # Not needed locally
+    distributed_execution: false
+
+# Development tools
+dev_tools:
+  # API documentation
+  swagger:
+    enabled: true
+    path: "/docs"
+    
+  # GraphQL playground
+  graphql:
+    enabled: true
+    path: "/graphql"
+    
+  # Admin panel
+  admin:
+    enabled: true
+    path: "/admin"
+    
+  # Performance profiling
+  profiler:
+    enabled: true
+    path: "/profiler"
+
+# Resource limits (generous for development)
+resources:
+  # Memory limits
+  memory:
+    max_heap: "2G"
+    max_cache: "512M"
+    
+  # CPU limits
+  cpu:
+    max_workers: 4
+    
+  # Disk limits
+  disk:
+    max_temp: "10G"
+    max_logs: "1G"
+
+# Development-specific settings
+development:
+  # Auto-reload on file changes
+  auto_reload:
+    enabled: true
+    watch_paths:
+      - "./src"
+      - "./config"
+      - "./templates"
+    ignore_paths:
+      - "./.git"
+      - "./data"
+      - "./logs"
+      
+  # Mock services
+  mocks:
+    enabled: true
+    services:
+      - expensive_llm_calls
+      - external_apis
+      
+  # Test data generation
+  test_data:
+    enabled: true
+    seed_file: "./tests/fixtures/seed_data.yaml"
+    
+  # Debugging
+  debug:
+    breakpoints: true
+    step_through: true
+    variable_inspection: true
+    
+# Local service URLs
+services:
+  frontend: "http://localhost:3000"
+  backend: "http://localhost:8000"
+  websocket: "ws://localhost:8000/ws"
+  
+# Health checks
+health:
+  enabled: true
+  path: "/health"
+  checks:
+    - database
+    - cache
+    - storage
+  interval: 30  # seconds

@@ -1,0 +1,121 @@
+# Level 2: Atomizer Agent Configurations
+# All atomizers that decide if tasks need decomposition
+
+
+# ============================================
+# ATOMIZERS FOR ALL TASK TYPES
+# ============================================
+
+retrieve_atomizer:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "RetrieveAtomizer"
+  type: "atomizer"
+  task_type: "RETRIEVE"
+  description: "Determines if retrieval task needs planning or direct execution"
+
+  model: ${models.claude_3_5_haiku}
+  prompt_template: "atomizer/retrieve.jinja2"
+  output_schema: "AtomizerResult"
+
+  config:
+    complexity_threshold: 3
+    check_data_sources: true
+    check_time_range: true
+
+write_atomizer:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "WriteAtomizer"
+  type: "atomizer"
+  task_type: "WRITE"
+  description: "Determines if writing task needs planning or direct execution"
+
+  model: ${models.claude_3_5_haiku}
+  prompt_template: "atomizer/write.jinja2"
+  output_schema: "AtomizerResult"
+
+  config:
+    length_threshold: 1000  # Words
+    check_research_needed: true
+    check_structure_complexity: true
+
+think_atomizer:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ThinkAtomizer"
+  type: "atomizer"
+  task_type: "THINK"
+  description: "Determines if reasoning task needs decomposition"
+  
+  model: ${models.claude_3_5_haiku}
+  prompt_template: "atomizer/think.jinja2"
+  output_schema: "AtomizerResult"
+  
+  config:
+    complexity_indicators:
+      - multi_step_reasoning
+      - comparative_analysis
+      - hypothesis_testing
+      - mathematical_proof
+
+code_atomizer:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "CodeAtomizer"
+  type: "atomizer"
+  task_type: "CODE_INTERPRET"
+  description: "Determines if code task needs decomposition"
+  
+  model: ${models.gpt_4o_mini}
+  prompt_template: "atomizer/code.jinja2"
+  output_schema: "AtomizerResult"
+  
+  config:
+    check_dependencies: true
+    check_complexity: true
+    max_lines_for_atomic: 100
+
+image_atomizer:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ImageAtomizer"
+  type: "atomizer"
+  task_type: "IMAGE_GENERATION"
+  description: "Determines if image task needs decomposition"
+  
+  model: ${models.gpt_4o_mini}
+  prompt_template: "atomizer/image.jinja2"
+  output_schema: "AtomizerResult"
+  
+  config:
+    check_multi_image: true
+    check_style_complexity: true
+    check_composition: true
+
+aggregate_atomizer:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "AggregateAtomizer"
+  type: "atomizer"
+  task_type: null
+  description: "Determines if aggregation needs decomposition"
+  
+  model: ${models.claude_3_5_haiku}
+  prompt_template: "atomizer/aggregate.jinja2"
+  output_schema: "AtomizerResult"
+  
+  config:
+    check_source_count: true
+    check_heterogeneity: true
+    complexity_threshold: 5
+
+# Smart atomizer that can handle any task type
+smart_atomizer:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "SmartAtomizer"
+  type: "atomizer"
+  task_type: null  # Can handle any task type
+  description: "Universal atomizer that adapts to any task type"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "atomizer/smart.jinja2"
+  output_schema: "AtomizerResult"
+  
+  config:
+    adaptive: true
+    learn_from_context: true

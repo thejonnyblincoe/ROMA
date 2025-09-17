@@ -1,0 +1,327 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "roma"
+version = "2.0.0"
+description = "Research-Oriented Multi-Agent Architecture - Advanced Hierarchical Agent Framework"
+authors = [
+    { name = "ROMA Development Team" },
+]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+keywords = [
+    "ai",
+    "agents", 
+    "hierarchical",
+    "task-orchestration",
+    "immutable",
+    "event-sourcing",
+    "clean-architecture"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+# Core dependencies
+dependencies = [
+    # Async and concurrency
+    "asyncio",
+    # Data structures and validation
+    "pydantic>=2.0.0",
+    # Graph algorithms and data structures
+    "networkx>=3.0.0",
+    # Logging
+    "loguru>=0.7.0",
+    # Date and time handling
+    "python-dateutil>=2.8.0",
+    # Type hints
+    "typing-extensions>=4.8.0",
+    # Configuration management
+    "hydra-core>=1.3.2",
+    "omegaconf>=2.3.0",
+    # CLI interface
+    "click>=8.0.0",
+    # Web API
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    # Agent framework integration
+    "agno>=2.0",
+]
+
+# Optional dependencies for different use cases
+[project.optional-dependencies]
+# Development dependencies
+dev = [
+    # Testing
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.11.0",
+    "pytest-watch>=4.2.0",
+    
+    # Code quality
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    
+    # Documentation
+    "sphinx>=7.1.0",
+    "sphinx-rtd-theme>=1.3.0",
+    "myst-parser>=2.0.0",
+    
+    # Development tools
+    "pre-commit>=3.4.0",
+    "tox>=4.11.0",
+]
+
+# Performance and monitoring
+performance = [
+    "memory-profiler>=0.61.0",
+    "line-profiler>=4.1.0",
+    "py-spy>=0.3.0",
+]
+
+# Integration with legacy systems
+integration = [
+    # Will be populated based on specific integration needs
+    "requests>=2.31.0",
+    "aiohttp>=3.8.0",
+]
+
+# Full installation (all optional dependencies)
+all = [
+    "roma[dev,performance,integration]"
+]
+
+# Entry points for CLI and API
+[project.scripts]
+roma = "src.roma.presentation.cli.main:cli"
+roma-api = "src.roma.presentation.api.main:app"
+roma-hydra = "src.roma.framework_entry:hydra_main"
+
+[project.urls]
+Homepage = "https://github.com/your-org/roma-v2"
+Documentation = "https://roma-v2.readthedocs.io"
+Repository = "https://github.com/your-org/roma-v2"
+"Bug Tracker" = "https://github.com/your-org/roma-v2/issues"
+Changelog = "https://github.com/your-org/roma-v2/blob/main/CHANGELOG.md"
+
+# Package discovery
+[tool.hatchling.build.targets.wheel]
+packages = ["src/roma"]
+
+[tool.hatchling.build.targets.sdist]
+include = [
+    "src/",
+    "tests/",
+    "README.md",
+    "ARCHITECTURE_SUMMARY.md",
+]
+
+# UV configuration
+[tool.uv]
+# Development dependencies
+dev-dependencies = [
+    # Testing framework
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.11.0",
+    "pytest-watch>=4.2.0",
+    "coverage[toml]>=7.3.0",
+    # Code quality and formatting
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "types-networkx>=3.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    # Graph visualization
+    "graphviz>=0.20.0",
+    "matplotlib>=3.7.0",
+    # Pre-commit hooks
+    "pre-commit>=3.4.0",
+    # Documentation
+    "sphinx>=7.1.0",
+    "sphinx-rtd-theme>=1.3.0",
+    # Performance profiling
+    "memory-profiler>=0.61.0",
+]
+
+# Testing configuration
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html:coverage_html",
+    "--cov-report=xml",
+    "--cov-fail-under=85",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "performance: Performance tests",
+    "slow: Slow running tests",
+    "asyncio: Async tests",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["src"]
+branch = true
+parallel = true
+context = '${CONTEXT}'
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+    "TYPE_CHECKING",
+]
+
+[tool.coverage.html]
+directory = "coverage_html"
+
+# Ruff configuration (linting and formatting)
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+select = [
+    # pycodestyle
+    "E",
+    "W",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # flake8-comprehensions
+    "C4",
+    # flake8-pie
+    "PIE",
+    # flake8-unused-arguments
+    "ARG",
+    # flake8-use-pathlib
+    "PTH",
+    # flake8-async
+    "ASYNC",
+]
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+    "B008",  # Do not perform function calls in argument defaults (common in FastAPI)
+    "B905",  # `zip()` without an explicit `strict=` parameter
+]
+
+# Ruff formatting
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# Ruff per-file ignores
+[tool.ruff.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002", "S101", "S106"]  # Allow unused args and asserts in tests
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+
+# MyPy configuration
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+no_implicit_optional = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+strict_equality = true
+
+# Per-module configuration
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+strict_optional = false
+
+[[tool.mypy.overrides]]
+module = [
+    "loguru",
+    "memory_profiler",
+    "line_profiler",
+]
+ignore_missing_imports = true
+
+# Black configuration (backup formatter)
+[tool.black]
+line-length = 100
+target-version = ['py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+# isort configuration 
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+src_paths = ["src", "tests"]
+
+# Known first party modules
+known_first_party = ["src"]
+known_local_folder = ["tests"]

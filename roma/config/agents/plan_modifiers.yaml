@@ -1,0 +1,130 @@
+# Level 2: Plan Modifier Agent Configurations
+# All plan modifiers that adjust existing plans based on feedback
+
+
+# ============================================
+# PLAN MODIFIER AGENTS
+# ============================================
+
+default_plan_modifier:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "DefaultPlanModifier"
+  type: "plan_modifier"
+  task_type: null  # Can handle any task type
+  description: "Modifies existing plans based on user feedback"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "plan_modifier/default.jinja2"
+  output_schema: "PlanModifierResult"
+  
+  config:
+    preserve_completed_tasks: true
+    reorder_allowed: true
+    merge_similar_tasks: true
+    max_plan_size: 20
+
+hitl_plan_modifier:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "HITLPlanModifier"
+  type: "plan_modifier"
+  task_type: null
+  description: "Human-in-the-loop plan modifier for interactive refinement"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "plan_modifier/hitl.jinja2"
+  output_schema: "PlanModifierResult"
+  
+  config:
+    explain_changes: true
+    suggest_alternatives: true
+    track_feedback_history: true
+    interactive_mode: true
+
+error_recovery_plan_modifier:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ErrorRecoveryPlanModifier"
+  type: "plan_modifier"
+  task_type: null
+  description: "Modifies plans to recover from failures and errors"
+  
+  model: ${models.gpt_4o}
+  prompt_template: "plan_modifier/error_recovery.jinja2"
+  output_schema: "PlanModifierResult"
+  
+  config:
+    retry_strategy: "exponential_backoff"
+    max_retries: 3
+    alternative_approaches: true
+    simplification_allowed: true
+    force_atomic_on_repeated_failure: true
+
+optimization_plan_modifier:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "OptimizationPlanModifier"
+  type: "plan_modifier"
+  task_type: null
+  description: "Optimizes plans for efficiency and parallelization"
+  
+  model: ${models.gpt_4o}
+  prompt_template: "plan_modifier/optimization.jinja2"
+  output_schema: "PlanModifierResult"
+  
+  config:
+    identify_parallelizable_tasks: true
+    remove_redundant_tasks: true
+    batch_similar_operations: true
+    optimize_tool_usage: true
+    cost_optimization: true
+
+constraint_plan_modifier:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ConstraintPlanModifier"
+  type: "plan_modifier"
+  task_type: null
+  description: "Modifies plans to meet specific constraints (time, cost, resources)"
+  
+  model: ${models.claude_3_5_haiku}
+  prompt_template: "plan_modifier/constraint.jinja2"
+  output_schema: "PlanModifierResult"
+  
+  config:
+    constraint_types:
+      - time_limit
+      - budget_limit
+      - resource_availability
+      - priority_ordering
+    enforcement_strategy: "strict"  # strict, best_effort, advisory
+
+adaptive_plan_modifier:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "AdaptivePlanModifier"
+  type: "plan_modifier"
+  task_type: null
+  description: "Learns from execution history to improve plan modifications"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "plan_modifier/adaptive.jinja2"
+  output_schema: "PlanModifierResult"
+  
+  config:
+    use_historical_data: true
+    pattern_recognition: true
+    success_rate_tracking: true
+    continuous_improvement: true
+
+replan_modifier:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ReplanModifier"
+  type: "plan_modifier"
+  task_type: null
+  description: "Handles NEEDS_REPLAN status by creating alternative plans"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "plan_modifier/replan.jinja2"
+  output_schema: "PlanModifierResult"
+  
+  config:
+    analyze_failure_reasons: true
+    generate_alternatives: 3
+    risk_assessment: true
+    fallback_strategies: true

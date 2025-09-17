@@ -1,0 +1,151 @@
+# Level 3: Deep Research Multi-Agent Profile (Simplified)
+# Composes agents from Level 2 into a complete multi-agent system
+
+defaults:
+  # Import entities (Level 1)
+  - /entities/models/providers@models
+  - /entities/tools/definitions@tools
+  # Import all agent-type configurations (Level 2)
+  - /agents/atomizers
+  - /agents/planners
+  - /agents/executors
+  - /agents/aggregators
+  - /agents/plan_modifiers
+  - _self_
+
+# Profile metadata
+name: "DeepResearchProfile"
+description: "Comprehensive research profile with advanced decomposition and multi-source search"
+version: "2.0.0"
+
+# Agent mapping by task type and action
+agents:
+  # Atomizers by task type
+  atomizers:
+    RETRIEVE: ${retrieve_atomizer}
+    WRITE: ${write_atomizer}
+    THINK: ${think_atomizer}
+    CODE_INTERPRET: ${code_atomizer}
+    IMAGE_GENERATION: ${image_atomizer}
+    AGGREGATE: ${aggregate_atomizer}
+    
+  # Planners by task type
+  planners:
+    RETRIEVE: ${enhanced_retrieve_planner}
+    WRITE: ${write_planner}
+    THINK: ${think_planner}
+    CODE_INTERPRET: ${code_planner}
+    IMAGE_GENERATION: ${image_planner}
+    AGGREGATE: ${aggregate_planner}
+    
+  # Executors by task type
+  executors:
+    RETRIEVE: ${retrieve_executor}
+    WRITE: ${write_executor}
+    THINK: ${think_executor}
+    CODE_INTERPRET: ${code_executor}
+    IMAGE_GENERATION: ${image_executor}
+    
+  # Aggregators by task type
+  aggregators:
+    RETRIEVE: ${retrieve_aggregator}
+    WRITE: ${write_aggregator}
+    THINK: ${think_aggregator}
+    CODE_INTERPRET: ${code_aggregator}
+    IMAGE_GENERATION: ${image_aggregator}
+    AGGREGATE: ${research_aggregator}
+    default: ${default_aggregator}
+  
+  # Plan modifiers
+  plan_modifiers:
+    default: ${default_plan_modifier}
+    hitl: ${hitl_plan_modifier}
+    error_recovery: ${error_recovery_plan_modifier}
+
+# Core execution settings
+settings:
+  # Task execution limits
+  max_depth: 5                # Maximum recursion depth
+  max_parallel_tasks: 10       # Concurrent task limit
+  max_tasks_per_level: 20      # Tasks per decomposition level
+  
+  # Timeouts
+  task_timeout: 300            # 5 minutes per task
+  total_timeout: 3600          # 1 hour total
+  
+  # Caching
+  enable_caching: true
+  cache_ttl: 3600              # 1 hour
+  
+  # Checkpointing
+  checkpoint_enabled: true
+  checkpoint_frequency: 5      # Every 5 tasks
+  
+  # Error handling
+  retry_on_failure: true
+  max_retries: 3
+  fallback_to_simpler: true
+
+# Multimodal configuration
+multimodal:
+  enabled: true
+  storage_backend: "s3"
+  
+  supported_types:
+    - text
+    - image
+    - audio
+    - video
+    - document
+    
+  processing:
+    image:
+      max_size_mb: 10
+      formats: ["jpg", "png", "webp", "gif"]
+      ocr_enabled: true
+    audio:
+      max_duration_seconds: 300
+      transcription_enabled: true
+    video:
+      max_size_mb: 100
+      extract_frames: true
+
+# Observability configuration
+observability:
+  trace_all: true
+  log_level: "INFO"
+  metrics_enabled: true
+  
+  trace_config:
+    capture_inputs: true
+    capture_outputs: true
+    capture_errors: true
+    capture_tool_calls: true
+    
+  metrics:
+    - task_count
+    - execution_time
+    - token_usage
+    - tool_calls
+    - cache_hits
+    - error_rate
+
+# Human-in-the-Loop (HITL) configuration
+hitl:
+  enabled: true
+  
+  checkpoints:
+    - before_plan_execution
+    - after_plan_creation
+    - before_aggregation
+    - on_error
+    
+  approval_required:
+    plan_changes: true
+    tool_execution: false
+    final_output: false
+    
+  ui_config:
+    show_graph: true
+    show_progress: true
+    allow_intervention: true

@@ -1,0 +1,191 @@
+# Level 2: Planner Agent Configurations
+# All planners that decompose complex tasks
+
+
+# ============================================
+# PLANNERS FOR ALL TASK TYPES
+# ============================================
+
+# RETRIEVE Planners (evolved from SEARCH in v1)
+retrieve_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "RetrievePlanner"
+  type: "planner"
+  task_type: "RETRIEVE"
+  description: "Decomposes complex retrieval tasks into subtasks"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "planner/retrieve.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    max_subtasks: 10
+    parallel_execution: true
+    depth_limit: 3
+    decomposition_strategy: "breadth_first"
+
+enhanced_retrieve_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "EnhancedRetrievePlanner"
+  type: "planner"
+  task_type: "RETRIEVE"
+  description: "Advanced planner for comprehensive data retrieval tasks"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "planner/enhanced_retrieve.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    max_subtasks: 15
+    parallel_execution: true
+    depth_limit: 4
+    include_verification_tasks: true
+    time_aware: true
+    multi_source_strategy: true
+
+crypto_retrieve_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "CryptoRetrievePlanner"
+  type: "planner"
+  task_type: "RETRIEVE"
+  description: "Specialized planner for cryptocurrency data retrieval"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "planner/crypto_retrieve.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    max_subtasks: 12
+    data_sources: ["binance", "coingecko", "defillama", "dune"]
+    include_onchain_analysis: true
+    include_price_analysis: true
+
+# WRITE Planners
+write_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "WritePlanner"
+  type: "planner"
+  task_type: "WRITE"
+  description: "Plans document structure and content generation"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "planner/write.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    max_subtasks: 8
+    outline_first: true
+    include_research_phase: true
+    formats: ["markdown", "html", "latex", "plain"]
+
+enhanced_write_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "EnhancedWritePlanner"
+  type: "planner"
+  task_type: "WRITE"
+  description: "Advanced planner for complex document creation"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "planner/enhanced_write.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    max_subtasks: 12
+    multi_phase_planning: true
+    include_review_phase: true
+    collaborative_sections: true
+    version_control: true
+
+# THINK Planners
+think_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ThinkPlanner"
+  type: "planner"
+  task_type: "THINK"
+  description: "Plans analytical and reasoning tasks"
+  
+  model: ${models.o1_preview}
+  prompt_template: "planner/think.jinja2"
+  output_schema: "PlannerResult"
+
+  tools:
+    - ${tools.reasoning.logic_analyzer}
+    - ${tools.reasoning.hypothesis_tester}
+
+  config:
+    chain_of_thought: true
+    step_by_step: true
+    include_verification: true
+    reasoning_depth: "deep"
+    max_subtasks: 8
+
+strategic_think_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "StrategicThinkPlanner"
+  type: "planner"
+  task_type: "THINK"
+  description: "Plans strategic and business analysis"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "planner/strategic_think.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    frameworks:
+      - swot_analysis
+      - porter_five_forces
+      - pestel_analysis
+    include_scenarios: true
+    risk_assessment: true
+
+# CODE_INTERPRET Planners
+code_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "CodePlanner"
+  type: "planner"
+  task_type: "CODE_INTERPRET"
+  description: "Plans code implementation and analysis"
+  
+  model: ${models.gpt_4o}
+  prompt_template: "planner/code.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    max_subtasks: 10
+    include_tests: true
+    languages: ["python", "javascript", "typescript", "rust", "go"]
+    execution_order: "dependency_based"
+
+# IMAGE_GENERATION Planners
+image_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "ImagePlanner"
+  type: "planner"
+  task_type: "IMAGE_GENERATION"
+  description: "Plans image generation tasks"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "planner/image.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    max_subtasks: 5
+    include_prompt_engineering: true
+    styles: ["photorealistic", "artistic", "technical", "cartoon", "abstract"]
+
+# AGGREGATE Planners
+aggregate_planner:
+  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  name: "AggregatePlanner"
+  type: "planner"
+  task_type: null
+  description: "Plans complex aggregation strategies"
+  
+  model: ${models.claude_3_5_sonnet}
+  prompt_template: "planner/aggregate.jinja2"
+  output_schema: "PlannerResult"
+
+  config:
+    max_subtasks: 5
+    aggregation_strategies: ["summarize", "synthesize", "compare", "merge"]
+    output_structure: "hierarchical"

@@ -1,0 +1,108 @@
+# Level 3: General Purpose Multi-Agent Profile (Simplified)
+# Basic profile for general tasks with balanced performance
+
+defaults:
+  # Import entities (Level 1)
+  - /entities/models/providers@models
+  - /entities/tools/definitions@tools
+  # Import all agent-type configurations (Level 2)
+  - /agents/atomizers
+  - /agents/planners
+  - /agents/executors
+  - /agents/aggregators
+  - /agents/plan_modifiers
+  - _self_
+
+# Profile metadata
+name: "GeneralProfile"
+description: "General purpose profile for balanced performance across all task types"
+version: "2.0.0"
+
+# Agent mapping - using simpler/faster agents for general tasks
+agent_mapping:
+  # Atomizers by task type
+  atomizers:
+    RETRIEVE: ${profiles.agents.retrieve_atomizer}
+    WRITE: ${profiles.agents.write_atomizer}
+    THINK: ${profiles.agents.think_atomizer}
+    CODE_INTERPRET: ${profiles.agents.code_atomizer}
+    IMAGE_GENERATION: ${profiles.agents.image_atomizer}
+
+  # Planners by task type (using basic planners)
+  planners:
+    RETRIEVE: ${retrieve_planner}       # Basic retrieve planner
+    WRITE: ${write_planner}
+    THINK: ${think_planner}
+    CODE_INTERPRET: ${code_planner}
+    IMAGE_GENERATION: ${image_planner}
+    AGGREGATE: ${aggregate_planner}
+
+  # Executors by task type (using fast executors)
+  executors:
+    RETRIEVE: ${fast_retrieve_executor}  # Fast retrieval
+    WRITE: ${write_executor}
+    THINK: ${think_executor}
+    CODE_INTERPRET: ${code_executor}
+    IMAGE_GENERATION: ${image_executor}
+
+  # Aggregators by task type
+  aggregators:
+    RETRIEVE: ${retrieve_aggregator}
+    WRITE: ${write_aggregator}
+    THINK: ${think_aggregator}
+    CODE_INTERPRET: ${code_aggregator}
+    IMAGE_GENERATION: ${image_aggregator}
+    default: ${default_aggregator}
+
+  # Plan modifiers
+  plan_modifiers:
+    default: ${default_plan_modifier}
+    error_recovery: ${error_recovery_plan_modifier}
+
+# Basic execution settings
+settings:
+  # Task execution limits (more conservative)
+  max_depth: 3                 # Shallower recursion
+  max_parallel_tasks: 5        # Less parallelism
+  max_tasks_per_level: 10      # Fewer tasks per level
+  
+  # Timeouts (shorter)
+  task_timeout: 120            # 2 minutes per task
+  total_timeout: 600           # 10 minutes total
+  
+  # Caching
+  enable_caching: true
+  cache_ttl: 1800              # 30 minutes
+  
+  # Checkpointing (less frequent)
+  checkpoint_enabled: false    # Disabled for speed
+  
+  # Error handling
+  retry_on_failure: true
+  max_retries: 2
+  fallback_to_simpler: true
+
+# Simplified multimodal configuration
+multimodal:
+  enabled: false               # Disabled by default for speed
+  storage_backend: "local"     # Use local storage
+  
+  supported_types:
+    - text
+    - image
+
+# Minimal observability
+observability:
+  trace_all: false             # Only trace errors
+  log_level: "WARNING"
+  metrics_enabled: false       # Disabled for performance
+  
+  trace_config:
+    capture_inputs: false
+    capture_outputs: false
+    capture_errors: true       # Only capture errors
+    capture_tool_calls: false
+
+# HITL disabled for automation
+hitl:
+  enabled: false               # No human intervention

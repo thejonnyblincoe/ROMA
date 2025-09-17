@@ -1,0 +1,338 @@
+# Level 4: Production Environment Infrastructure Configuration
+
+environment: "production"
+
+# Database configuration
+database:
+  type: "postgresql"
+  host: "${oc.env:DB_HOST}"
+  port: ${oc.env:DB_PORT,5432}
+  name: "${oc.env:DB_NAME}"
+  user: "${oc.env:DB_USER}"
+  password: "${oc.env:DB_PASSWORD}"
+  
+  # Connection pool
+  pool:
+    min_size: 10
+    max_size: 50
+    max_overflow: 20
+    pool_recycle: 3600
+    
+  # Production settings
+  echo_sql: false
+  ssl_mode: "require"
+  statement_timeout: 30000  # 30 seconds
+  
+  # Read replicas
+  read_replicas:
+    enabled: true
+    hosts:
+      - "${oc.env:DB_READ_REPLICA_1}"
+      - "${oc.env:DB_READ_REPLICA_2}"
+
+# Cache configuration
+cache:
+  type: "redis"
+  
+  # Redis cluster
+  cluster:
+    enabled: true
+    nodes:
+      - "${oc.env:REDIS_NODE_1}"
+      - "${oc.env:REDIS_NODE_2}"
+      - "${oc.env:REDIS_NODE_3}"
+    
+  # Production settings
+  password: "${oc.env:REDIS_PASSWORD}"
+  ssl: true
+  ttl: 3600  # 1 hour
+  max_connections: 100
+  
+  # Persistence
+  persistence:
+    enabled: true
+    save_intervals:
+      - [900, 1]    # 15 min, 1 key change
+      - [300, 10]   # 5 min, 10 key changes
+      - [60, 10000] # 1 min, 10000 key changes
+
+# Storage configuration
+storage:
+  type: "s3"
+  
+  # S3 configuration
+  s3:
+    bucket: "${oc.env:S3_BUCKET}"
+    region: "${oc.env:AWS_REGION}"
+    access_key: "${oc.env:AWS_ACCESS_KEY_ID}"
+    secret_key: "${oc.env:AWS_SECRET_ACCESS_KEY}"
+    
+    # Production settings
+    encryption: "AES256"
+    versioning: true
+    lifecycle_rules:
+      - id: "delete_old_artifacts"
+        expiration_days: 90
+      - id: "archive_to_glacier"
+        transition_days: 30
+        storage_class: "GLACIER"
+    
+  # CDN configuration
+  cdn:
+    enabled: true
+    provider: "cloudfront"
+    distribution_id: "${oc.env:CDN_DISTRIBUTION_ID}"
+    
+# Message queue configuration
+message_queue:
+  type: "rabbitmq"
+  
+  # RabbitMQ cluster
+  cluster:
+    enabled: true
+    nodes:
+      - "${oc.env:RABBITMQ_NODE_1}"
+      - "${oc.env:RABBITMQ_NODE_2}"
+      - "${oc.env:RABBITMQ_NODE_3}"
+    
+  # Authentication
+  user: "${oc.env:RABBITMQ_USER}"
+  password: "${oc.env:RABBITMQ_PASSWORD}"
+  vhost: "roma"
+  
+  # Production settings
+  ssl: true
+  heartbeat: 60
+  connection_timeout: 30
+  
+  # Queue configuration
+  queues:
+    default:
+      durable: true
+      max_priority: 10
+    high_priority:
+      durable: true
+      max_priority: 255
+
+# Observability configuration
+observability:
+  # Production logging
+  logging:
+    level: "WARNING"
+    format: "json"
+    
+    # Centralized logging
+    handlers:
+      - type: "cloudwatch"
+        group: "/aws/ecs/roma"
+        stream: "${oc.env:HOSTNAME}"
+      - type: "sentry"
+        dsn: "${oc.env:SENTRY_DSN}"
+        
+  # Distributed tracing
+  tracing:
+    enabled: true
+    sample_rate: 0.1  # Sample 10% in production
+    
+    # AWS X-Ray
+    xray:
+      enabled: true
+      daemon: "${oc.env:XRAY_DAEMON_ADDRESS}"
+      
+  # Metrics
+  metrics:
+    enabled: true
+    
+    # CloudWatch metrics
+    cloudwatch:
+      enabled: true
+      namespace: "ROMA/Production"
+      
+    # Datadog
+    datadog:
+      enabled: true
+      api_key: "${oc.env:DATADOG_API_KEY}"
+      
+  # Alerting
+  alerts:
+    enabled: true
+    
+    # PagerDuty
+    pagerduty:
+      enabled: true
+      routing_key: "${oc.env:PAGERDUTY_KEY}"
+      
+    # Slack
+    slack:
+      enabled: true
+      webhook: "${oc.env:SLACK_WEBHOOK}"
+
+# Security configuration
+security:
+  # Encryption at rest
+  encryption:
+    enabled: true
+    kms_key: "${oc.env:KMS_KEY_ID}"
+    algorithm: "AES-256-GCM"
+    key_rotation: true
+    rotation_period: 90  # days
+    
+  # Authentication
+  authentication:
+    type: "oauth2"
+    provider: "auth0"
+    domain: "${oc.env:AUTH0_DOMAIN}"
+    client_id: "${oc.env:AUTH0_CLIENT_ID}"
+    client_secret: "${oc.env:AUTH0_CLIENT_SECRET}"
+    
+  # Rate limiting
+  rate_limiting:
+    enabled: true
+    provider: "redis"
+    
+    limits:
+      - path: "/api/*"
+        max_requests: 1000
+        window: 60  # seconds
+      - path: "/api/execute"
+        max_requests: 100
+        window: 60
+        
+  # WAF
+  waf:
+    enabled: true
+    provider: "cloudflare"
+    
+  # CORS settings
+  cors:
+    enabled: true
+    allow_origins: 
+      - "https://app.roma.ai"
+      - "https://www.roma.ai"
+    allow_methods: ["GET", "POST", "PUT", "DELETE"]
+    allow_headers: ["Content-Type", "Authorization"]
+
+# High availability configuration
+high_availability:
+  # Load balancing
+  load_balancer:
+    type: "alb"  # Application Load Balancer
+    health_check:
+      path: "/health"
+      interval: 30
+      timeout: 5
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+      
+  # Auto scaling
+  auto_scaling:
+    enabled: true
+    min_instances: 3
+    max_instances: 20
+    
+    # Scaling policies
+    policies:
+      - metric: "cpu_utilization"
+        target: 70
+      - metric: "memory_utilization"
+        target: 80
+      - metric: "request_count"
+        target: 1000
+        
+  # Multi-region
+  multi_region:
+    enabled: true
+    regions:
+      primary: "us-east-1"
+      secondary:
+        - "eu-west-1"
+        - "ap-southeast-1"
+
+# Backup and disaster recovery
+backup:
+  # Database backups
+  database:
+    enabled: true
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    retention_days: 30
+    
+  # S3 backups
+  storage:
+    enabled: true
+    cross_region_replication: true
+    target_region: "us-west-2"
+    
+  # Configuration backups
+  config:
+    enabled: true
+    git_repo: "${oc.env:CONFIG_BACKUP_REPO}"
+
+# Resource limits
+resources:
+  # Container resources
+  container:
+    cpu: "4000m"  # 4 CPUs
+    memory: "8Gi"
+    
+  # Database connections
+  database:
+    max_connections: 100
+    
+  # API limits
+  api:
+    max_request_size: "10MB"
+    max_response_size: "50MB"
+    timeout: 60  # seconds
+
+# Feature flags
+features:
+  hot_reload: false  # Disabled in production
+  debug_mode: false
+  profiling: false
+  
+  # Production features
+  caching: true
+  compression: true
+  
+  # Experimental features (gradual rollout)
+  experimental:
+    semantic_search: false
+    auto_scaling: true
+    distributed_execution: true
+
+# Service discovery
+service_discovery:
+  type: "consul"
+  
+  consul:
+    host: "${oc.env:CONSUL_HOST}"
+    port: 8500
+    datacenter: "us-east-1"
+    
+  # Service registration
+  services:
+    - name: "roma-api"
+      port: 8000
+      health_check: "/health"
+    - name: "roma-worker"
+      port: 8001
+      health_check: "/health"
+
+# Compliance and governance
+compliance:
+  # Data retention
+  data_retention:
+    execution_logs: 90  # days
+    user_data: 365  # days
+    
+  # GDPR compliance
+  gdpr:
+    enabled: true
+    data_export: true
+    right_to_forget: true
+    
+  # Audit logging
+  audit:
+    enabled: true
+    log_all_api_calls: true
+    log_all_data_access: true

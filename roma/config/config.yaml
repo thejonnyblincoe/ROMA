@@ -1,0 +1,99 @@
+# ROMA v2.0 - Main Hydra Configuration
+# Level 4: Application Configuration
+# This level only imports from Level 3 (profiles) - Clean Architecture
+
+defaults:
+  # Level 3: Profile selection (can be overridden via CLI)
+  - profiles: ${oc.env:ROMA_PROFILE,general_profile}
+  
+  # Infrastructure selection
+  - infrastructure: ${oc.env:ROMA_ENV,development}
+  
+  # Hydra configuration (basic launcher by default)
+  
+  # Self reference must be last
+  - _self_
+
+# Application metadata
+app:
+  name: "ROMA"
+  version: "2.0.0"
+  description: "Research-Oriented Multi-Agent Architecture"
+  environment: "${infrastructure.environment}"
+
+# Hydra configuration
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    name: ${app.name}
+    chdir: true
+  runtime:
+    output_dir: ${hydra:run.dir}
+
+# ============================================
+# LEVEL 4 SETTINGS ONLY
+# These settings are application-wide and not profile-specific
+# ============================================
+
+# Cache System
+cache:
+  enabled: true
+  cache_type: "file"
+  cache_dir: "./runtime/cache/agent"
+  ttl_seconds: 7200  # 2 hours
+  max_size: 500
+
+# Logging configuration
+logging:
+  level: "${oc.env:LOG_LEVEL,INFO}"
+  enable_console: true
+  enable_file: true
+  file_path: "./runtime/logs/sentient.log"
+  file_rotation: "10 MB"
+  file_retention: 3
+  console_style: "clean"  # clean, timestamp, detailed
+  
+  # Module-specific log levels
+  module_levels:
+    "roma.server.services.broadcast_service": "WARNING"
+    "roma.server.services.project_service": "WARNING"
+    "roma.core.project_manager": "WARNING"
+    "roma.graph.graph_serializer": "WARNING"
+    "roma.orchestration": "INFO"
+    "roma.graph.cycle_manager": "INFO"
+    "roma.node": "INFO"
+    "roma.node_handlers": "INFO"
+
+# Experiment configuration
+experiment:
+  base_dir: "experiments"
+  results_dir: "results"
+  emergency_backup_dir: "emergency_backups"
+  configs_dir: "configs"
+  retention_days: 30
+  auto_cleanup: true
+  timestamp_format: "%Y%m%d_%H%M%S"
+
+# Security configuration
+security:
+  # API keys (environment variables)
+  api_keys:
+    openai: "${oc.env:OPENAI_API_KEY,}"
+    anthropic: "${oc.env:ANTHROPIC_API_KEY,}"
+    google: "${oc.env:GOOGLE_API_KEY,}"
+    exa: "${oc.env:EXA_API_KEY,}"
+    binance: "${oc.env:BINANCE_API_KEY,}"
+    coingecko: "${oc.env:COINGECKO_API_KEY,}"
+    
+  # Encryption settings
+  encryption:
+    enabled: ${oc.env:ENCRYPTION_ENABLED,false}
+    algorithm: "AES-256-GCM"
+    key_rotation: true
+    key: "${oc.env:ENCRYPTION_KEY,}"
+
+# Default profile (fallback)
+default_profile: "general_profile"

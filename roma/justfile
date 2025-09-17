@@ -1,0 +1,162 @@
+# ROMA Development Commands
+# Use `just` command runner: https://github.com/casey/just
+
+# Default recipe - show available commands
+default:
+    @just --list
+
+# Setup development environment
+setup:
+    @echo "🚀 Setting up ROMA development environment"
+    uv sync --dev
+    @echo "✅ Development environment ready!"
+
+# Run all tests
+test:
+    @echo "🧪 Running ROMA Test Suite"
+    @echo "=========================="
+    uv run python -m pytest tests/ -v --tb=short
+
+# Run domain tests only
+test-domain:
+    @echo "🏗️  Domain Layer Tests"
+    uv run python -m pytest tests/unit/domain/ -v
+
+# Run application tests only  
+test-app:
+    @echo "⚙️  Application Layer Tests"
+    uv run python -m pytest tests/unit/application/ -v
+
+# Run integration tests only
+test-integration:
+    @echo "🔗 Integration Tests"
+    uv run python -m pytest tests/integration/ -v
+
+# Run tests with coverage
+test-cov:
+    @echo "📊 Running tests with coverage"
+    uv run python -m pytest tests/ --cov=src --cov-report=html --cov-report=term-missing
+
+# Watch tests (requires pytest-watch)
+test-watch:
+    @echo "👀 Watching tests..."
+    uv run pytest-watch
+
+# Code quality checks
+lint:
+    @echo "🔍 ROMA Code Quality Checks"
+    @echo "=========================="
+    @just lint-ruff
+    @just lint-black
+    @just lint-isort
+    @just lint-mypy
+    @echo "🎉 All code quality checks passed!"
+
+# Run ruff linting
+lint-ruff:
+    @echo "🎨 Running Ruff linting..."
+    uv run ruff check src/ tests/
+
+# Check code formatting with black
+lint-black:
+    @echo "🔧 Checking Black formatting..."
+    uv run black --check src/ tests/
+
+# Check import sorting
+lint-isort:
+    @echo "📦 Checking import sorting..."
+    uv run isort --check-only src/ tests/
+
+# Type checking with mypy
+lint-mypy:
+    @echo "🔬 Running MyPy type checking..."
+    uv run mypy src/
+
+# Auto-fix code formatting
+format:
+    @echo "🎨 Auto-formatting code..."
+    uv run black src/ tests/
+    uv run isort src/ tests/
+    uv run ruff check --fix src/ tests/
+    @echo "✅ Code formatted!"
+
+# Clean build artifacts
+clean:
+    @echo "🧹 Cleaning build artifacts..."
+    rm -rf build/
+    rm -rf dist/
+    rm -rf *.egg-info/
+    rm -rf .pytest_cache/
+    rm -rf .coverage
+    rm -rf coverage_html/
+    find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    find . -type f -name "*.pyc" -delete 2>/dev/null || true
+    @echo "✅ Clean complete!"
+
+# Build package
+build:
+    @echo "📦 Building ROMA package..."
+    uv build
+    @echo "✅ Package built!"
+
+# Install package in development mode
+install-dev:
+    @echo "🔧 Installing ROMA in development mode..."
+    uv pip install -e .
+    @echo "✅ Development installation complete!"
+
+# Run performance profiling
+profile:
+    @echo "⚡ Running performance profiling..."
+    uv run python -m pytest tests/ -m performance --tb=short
+
+# Generate documentation
+docs:
+    @echo "📚 Generating documentation..."
+    uv run sphinx-build -b html docs/ docs/_build/html/
+    @echo "✅ Documentation generated in docs/_build/html/"
+
+# Serve documentation locally
+docs-serve: docs
+    @echo "🌐 Serving documentation at http://localhost:8000"
+    cd docs/_build/html && python -m http.server 8000
+
+# Run security checks
+security:
+    @echo "🔒 Running security checks..."
+    uv run pip-audit
+    @echo "✅ Security checks complete!"
+
+# Pre-commit checks (run before committing)
+pre-commit: lint test
+    @echo "🚀 Pre-commit checks complete! Ready to commit."
+
+# Full CI pipeline (lint, test, build)
+ci: clean lint test build
+    @echo "🎯 CI pipeline complete!"
+
+# Show project structure
+tree:
+    @echo "🌳 ROMA Project Structure"
+    @echo "========================"
+    tree -I '__pycache__|*.pyc|.git|.venv|*.egg-info|build|dist|coverage_html' -a
+
+# Interactive Python shell with ROMA imported
+shell:
+    @echo "🐍 Starting Python shell with ROMA..."
+    uv run python -c "import sys; sys.path.insert(0, 'src'); import roma; print('ROMA imported successfully!'); print(f'Version: {roma.__version__}'); exec(open('/dev/stdin').read())" -i
+
+# Quick development cycle (format, test domain)
+dev: format test-domain
+    @echo "🔄 Quick development cycle complete!"
+
+# Benchmark performance
+bench:
+    @echo "📈 Running performance benchmarks..."
+    uv run python -m pytest tests/ -m benchmark --benchmark-only
+
+# Version information
+version:
+    @echo "📋 ROMA Version Information"
+    @echo "=========================="
+    @uv run python -c "import sys; sys.path.insert(0, 'src'); import roma; print(f'ROMA Version: {roma.__version__}'); print(f'Python Version: {sys.version}'); import platform; print(f'Platform: {platform.platform()}')"

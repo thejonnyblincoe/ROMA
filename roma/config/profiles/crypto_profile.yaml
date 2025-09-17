@@ -1,0 +1,162 @@
+# Level 3: Crypto Analytics Multi-Agent Profile (Simplified)
+# Specialized profile for cryptocurrency and DeFi research
+
+defaults:
+  # Import entities (Level 1) - needed for overrides
+  - /entities/models/providers@models
+  - /entities/tools/definitions@tools
+  # Import all agent-type configurations (Level 2)
+  - /agents/atomizers
+  - /agents/planners
+  - /agents/executors
+  - /agents/aggregators
+  - /agents/plan_modifiers
+  # Inherit from research profile as base
+  - research_profile
+  # Override with this config
+  - _self_
+
+# Profile metadata
+name: "CryptoAnalyticsProfile"
+description: "Specialized profile for cryptocurrency, DeFi, and blockchain research"
+version: "2.0.0"
+
+# Override specific agents for crypto specialization
+agents:
+  # Override executors with crypto-specific ones
+  executors:
+    RETRIEVE: ${crypto_retrieve_executor}  # Use crypto-specificc executor
+    THINK: ${crypto_market_analyzer}       # Use crypto market analyzer
+    WRITE: ${crypto_research_writer}       # Use crypto research writer
+    # Other executors inherited from research profile
+    
+  # Override planners with crypto-specific ones
+  planners:
+    RETRIEVE: ${crypto_retrieve_planner}    # Use crypto-specific planner
+    # Other planners inherited from research profile
+    
+  # Override aggregators with crypto-specific ones
+  aggregators:
+    RETRIEVE: ${crypto_aggregator}       # Use crypto-specific aggregator
+    # Other aggregators inherited from research profile
+
+# Crypto-specific settings (extends base settings)
+settings:
+  # Task execution limits (inherited from research)
+  max_depth: 5
+  max_parallel_tasks: 10
+  max_tasks_per_level: 20
+  
+  # Timeouts
+  task_timeout: 300
+  total_timeout: 3600
+  
+  # Caching
+  enable_caching: true
+  cache_ttl: 3600
+  
+  # Checkpointing
+  checkpoint_enabled: true
+  checkpoint_frequency: 5
+  
+  # Error handling
+  retry_on_failure: true
+  max_retries: 3
+  fallback_to_simpler: true
+  
+  # Add crypto-specific settings
+  real_time_data: true
+  price_update_frequency: 60  # seconds
+  
+  # Blockchain analysis settings
+  blockchain_analysis:
+    enabled: true
+    depth: "deep"  # shallow, medium, deep
+    include_whale_tracking: true
+    include_smart_money: true
+
+# Crypto-specific configuration
+crypto_config:
+  # Supported networks
+  networks:
+    - ethereum
+    - bsc
+    - polygon
+    - arbitrum
+    - optimism
+    - avalanche
+    - solana
+    
+  # Data sources priority
+  data_sources:
+    market_data:
+      primary: binance
+      secondary: 
+        - coingecko
+        - coinmarketcap
+      
+    onchain_data:
+      primary: etherscan
+      secondary:
+        - blockscout
+        - dune
+        
+    defi_data:
+      primary: defillama
+      secondary:
+        - debank
+        - zapper
+        
+  # Analysis modules
+  analysis_modules:
+    technical_analysis:
+      enabled: true
+      indicators:
+        - rsi
+        - macd
+        - bollinger_bands
+        - volume_profile
+      timeframes:
+        - 1h
+        - 4h
+        - 1d
+        - 1w
+        
+    fundamental_analysis:
+      enabled: true
+      metrics:
+        - tvl
+        - market_cap
+        - fdv
+        - circulating_supply
+        - tokenomics
+        
+    sentiment_analysis:
+      enabled: true
+      sources:
+        - twitter
+        - reddit
+        - discord
+        
+    onchain_analysis:
+      enabled: true
+      metrics:
+        - active_addresses
+        - transaction_volume
+        - gas_usage
+        - smart_contract_interactions
+        - whale_movements
+        
+  # Alert configuration
+  alerts:
+    enabled: true
+    
+    price_alerts:
+      significant_move: 5  # percentage
+      
+    volume_alerts:
+      unusual_volume: 2  # x times average
+      
+    onchain_alerts:
+      whale_threshold: 1000000  # USD
+      smart_money_tracking: true
