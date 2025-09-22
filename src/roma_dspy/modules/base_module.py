@@ -142,6 +142,39 @@ class BaseModule(dspy.Module):
                 return await self._predictor.acall(goal=input_task, **filtered)
             # Fallback to sync if async not available
             return self._predictor(goal=input_task, **filtered)
+    
+    def get_model_config(self, *, redact_secrets: bool = True) -> Dict[str, Any]:
+        """
+        Return LM configuration from the underlying BaseLM/dspy.LM instance.
+        Fields: model, model_type, cache, kwargs (e.g., temperature, max_tokens, provider-specific args).
+        """
+        lm = self._lm
+        cfg: Dict[str, Any] = {}
+
+        model = getattr(lm, "model", None)
+        if model is not None:
+            cfg["model"] = model
+
+        model_type = getattr(lm, "model_type", None)
+        if model_type is not None:
+            cfg["model_type"] = model_type
+
+        cache = getattr(lm, "cache", None)
+        if cache is not None:
+            cfg["cache"] = cache
+
+        kwargs = getattr(lm, "kwargs", None)
+        if isinstance(kwargs, dict):
+            safe_kwargs = dict(kwargs)
+            if redact_secrets:
+                for k in list(safe_kwargs.keys()):
+                    if any(s in k.lower() for s in ("key", "token", "secret", "password")):
+                        safe_kwargs[k] = "****"
+            cfg["kwargs"] = safe_kwargs
+        else:
+            cfg["kwargs"] = {}
+
+        return cfg
 
     # ---------- Conveniences ----------
 

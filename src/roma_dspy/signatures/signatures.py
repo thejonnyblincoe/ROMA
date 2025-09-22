@@ -42,3 +42,12 @@ class AggregatorResult(dspy.Signature):
     original_goal: str = dspy.InputField(description="Original goal of the task")
     subtasks_results: List[SubTask] = dspy.InputField(description="List of subtask results to synthesize")
     synthesized_result: str = dspy.OutputField(description="Final synthesized output")
+
+
+class VerifierSignature(dspy.Signature):
+    """Signature for validating synthesized results against the goal."""
+
+    goal: str = dspy.InputField(description="Task goal the output should satisfy")
+    candidate_output: str = dspy.InputField(description="Output produced by previous modules")
+    verdict: bool = dspy.OutputField(description="True if the candidate output satisfies the goal")
+    feedback: Optional[str] = dspy.OutputField(default=None, description="Explanation or fixes when the verdict is False")
