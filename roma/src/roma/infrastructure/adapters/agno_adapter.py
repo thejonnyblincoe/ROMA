@@ -6,8 +6,8 @@ through the FrameworkAdapter interface.
 """
 
 from typing import Dict, Any, Optional, List
-from src.roma.domain.interfaces.framework_adapter import FrameworkAdapter
-from src.roma.domain.entities.task_node import TaskNode
+from roma.domain.interfaces.framework_adapter import FrameworkAdapter
+from roma.domain.entities.task_node import TaskNode
 import logging
 
 # Import Agno framework components
@@ -71,8 +71,8 @@ class AgnoFrameworkAdapter(FrameworkAdapter):
             raise RuntimeError("Agno framework is required but not available")
 
         from agno.agent import Agent
-        from src.roma.infrastructure.models.model_factory import ModelFactory
-        from src.roma.domain.value_objects.config.model_config import ModelConfig
+        from roma.infrastructure.models.model_factory import ModelFactory
+        from roma.domain.value_objects.config.model_config import ModelConfig
 
         # Create model using ModelFactory
         if model_config:
@@ -159,7 +159,7 @@ class AgnoFrameworkAdapter(FrameworkAdapter):
             result = {
                 "result": result_content,
                 "success": True,
-                "agent": getattr(agent, 'name', getattr(agent, 'agent_name', 'unknown')),
+                "agent": getattr(agent, 'name', 'unknown'),
                 "task_id": task.task_id,
                 "task_type": task.task_type.value
             }
@@ -181,7 +181,7 @@ class AgnoFrameworkAdapter(FrameworkAdapter):
             return {
                 "result": f"Error executing task: {str(e)}",
                 "success": False,
-                "agent": getattr(agent, 'name', getattr(agent, 'agent_name', 'unknown')),
+                "agent": getattr(agent, 'name', 'unknown'),
                 "task_id": task.task_id,
                 "error": str(e)
             }

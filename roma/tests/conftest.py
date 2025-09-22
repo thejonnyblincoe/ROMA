@@ -11,12 +11,12 @@ from datetime import datetime, timezone
 from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.domain.events.task_events import TaskCreatedEvent, TaskStatusChangedEvent
-from src.roma.application.services.event_store import InMemoryEventStore, get_event_store
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.events.task_events import TaskCreatedEvent, TaskStatusChangedEvent
+from roma.application.services.event_store import InMemoryEventStore, get_event_store
 
 
 @pytest.fixture(scope="session")

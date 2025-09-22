@@ -8,16 +8,16 @@ from typing import Dict, Any, Type, Optional, Union
 from pathlib import Path
 import logging
 
-from src.roma.infrastructure.agents.configurable_agent import ConfigurableAgent
-from src.roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
-from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
-from src.roma.infrastructure.prompts.prompt_template_manager import PromptTemplateManager
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.agent_type import AgentType
-from src.roma.domain.value_objects.config.roma_config import ROMAConfig
-from src.roma.domain.value_objects.config.agent_config import AgentConfig
-from src.roma.domain.value_objects.config.model_config import ModelConfig
-from src.roma.domain.value_objects.agent_responses import (
+from roma.infrastructure.agents.configurable_agent import ConfigurableAgent
+from roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
+from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+from roma.infrastructure.prompts.prompt_template_manager import PromptTemplateManager
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.domain.value_objects.config.agent_config import AgentConfig
+from roma.domain.value_objects.config.model_config import ModelConfig
+from roma.domain.value_objects.agent_responses import (
     AtomizerResult,
     PlannerResult,
     ExecutorResult,
@@ -123,6 +123,57 @@ class AgentFactory:
 
         return config_dict
 
+    def _resolve_prompt_template(self, agent_config: AgentConfig):
+        """
+        Resolve prompt template using fallback mechanism.
+
+        Resolution order:
+        1. Profile-specified template (agent_config.prompt_template)
+        2. Task-specific template ({agent_type}/{task_type}.jinja2)
+        3. Generic agent template ({agent_type}/{agent_type}.jinja2)
+        4. Raise error if none found
+
+        Args:
+            agent_config: Agent configuration
+
+        Returns:
+            Jinja2 Template instance
+
+        Raises:
+            ValueError: If no template can be resolved
+        """
+        template_paths_tried = []
+
+        # 1. Try profile-specified template first
+        if agent_config.prompt_template:
+            try:
+                return self.prompt_manager.load_template(agent_config.prompt_template)
+            except FileNotFoundError:
+                template_paths_tried.append(agent_config.prompt_template)
+                logger.warning(f"Profile-specified template not found: {agent_config.prompt_template}")
+
+        # 2. Try task-specific template
+        task_specific_path = f"{agent_config.type}/{agent_config.task_type.value.lower()}.jinja2"
+        try:
+            return self.prompt_manager.load_template(task_specific_path)
+        except FileNotFoundError:
+            template_paths_tried.append(task_specific_path)
+
+        # 3. Try generic agent type template
+        generic_path = f"{agent_config.type}/{agent_config.type}.jinja2"
+        try:
+            template = self.prompt_manager.load_template(generic_path)
+            logger.info(f"Using generic template fallback: {generic_path} for agent {agent_config.name}")
+            return template
+        except FileNotFoundError:
+            template_paths_tried.append(generic_path)
+
+        # 4. All paths failed - raise error
+        raise ValueError(
+            f"No prompt template found for agent {agent_config.name}. "
+            f"Tried paths: {', '.join(template_paths_tried)}"
+        )
+
     def get_output_schema(self, schema_name: str) -> Type:
         """
         Get output schema class by name.
@@ -161,31 +212,11 @@ class AgentFactory:
         if not self._initialized:
             await self.initialize()
 
-        # Get prompt template
-        template_path = agent_config.prompt_template
-        if not template_path:
-            # Default path pattern
-            template_path = f"{agent_config.type}/{agent_config.task_type.value.lower()}.jinja2"
-
-        try:
-            prompt_template = self.prompt_manager.load_template(template_path)
-        except FileNotFoundError as e:
-            logger.warning(f"Template not found for agent {agent_config.name}: {e}")
-            # For test scenarios, provide a minimal default template
-            from jinja2 import Template
-            default_template_content = """You are a {{agent_type}} agent for {{task_type}} tasks.
-
-Task: {{task.goal}}
-
-Please analyze this task and provide your response."""
-            prompt_template = Template(default_template_content)
-
         # Get output schema - prioritize config.output_schema over parameter
         schema_name = agent_config.output_schema or output_schema_name
         if not schema_name:
-            # Default schema based on agent type - handle underscores properly
-            agent_type_clean = agent_config.type.replace("_", "").title()
-            schema_name = f"{agent_type_clean}Result"
+            # Default schema based on agent type - proper camelization
+            schema_name = "".join(p.title() for p in agent_config.type.split("_")) + "Result"
 
         try:
             output_schema = self.get_output_schema(schema_name)
@@ -198,7 +229,7 @@ Please analyze this task and provide your response."""
             config=agent_config,
             framework_adapter=self.adapter,
             output_schema=output_schema,
-            prompt_template=prompt_template
+            prompt_template_manager=self.prompt_manager
         )
 
         # Inject toolkit manager

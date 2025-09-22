@@ -17,7 +17,7 @@ from .base_agno_toolkit import (
     BaseAgnoToolkit,
     DefaultAgnoToolkitWrapper
 )
-from src.roma.domain.value_objects.config.tool_config import ToolConfig
+from roma.domain.value_objects.config.tool_config import ToolConfig
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,124 @@
+{# Helper macros for output schema and examples #}
+
+{# Display response schema in readable format #}
+{% macro display_schema(schema, title="Output Schema") -%}
+{% if schema %}
+## {{ title }}
+
+Your response must be valid JSON matching this exact structure:
+
+```json
+{
+{% for field, details in schema.properties.items() %}
+  "{{ field }}": {% if details.type == "string" %}"<{{ details.description | truncate(50) }}>"
+{%- elif details.type == "boolean" %}true/false
+{%- elif details.type == "integer" %}0
+{%- elif details.type == "number" %}0.0
+{%- elif details.type == "array" %}[]
+{%- elif details.type == "object" %}{}
+{%- else %}"<value>"
+{%- endif %}{% if not loop.last %},{% endif %}{% if field in schema.required %} // REQUIRED{% endif %}
+
+{% endfor %}
+}
+```
+
+### Field Descriptions:
+{% for field, details in schema.properties.items() %}
+- **{{ field }}**{% if field in schema.required %} (REQUIRED){% endif %}: {{ details.description }}
+{% endfor %}
+{% endif %}
+{%- endmacro %}
+
+{# Display relevant examples for few-shot learning #}
+{% macro display_examples(examples, title="Response Examples", max_examples=3) -%}
+{% if examples %}
+## {{ title }}
+
+Here are {{ max_examples }} examples of correct responses:
+
+{% for example in examples[:max_examples] %}
+### Example {{ loop.index }}
+```json
+{{ example | tojson(indent=2) }}
+```
+{% if not loop.last %}
+
+---
+
+{% endif %}
+{% endfor %}
+{% endif %}
+{%- endmacro %}
+
+{# Display compact schema reference #}
+{% macro schema_reference(schema) -%}
+{% if schema and schema.required %}
+**Required fields**: {{ schema.required | join(", ") }}
+{% endif %}
+{%- endmacro %}
+
+{# Simple examples display without complex filtering #}
+{% macro display_simple_examples(examples, title="Examples", max_count=2) -%}
+{% if examples %}
+## {{ title }}
+
+{% for example in examples[:max_count] %}
+### Example {{ loop.index }}
+```json
+{{ example | tojson(indent=2) }}
+```
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}
+{% endif %}
+{%- endmacro %}
+
+{# Simplified output format section #}
+{% macro output_format_section(schema, examples, agent_type, current_task_type=None) -%}
+# Output Format
+
+You must respond with a valid {{ agent_type }}Result JSON object.
+
+{{ display_schema(schema, agent_type + " Output Schema") }}
+
+{{ display_simple_examples(examples, agent_type + " Examples", 2) }}
+
+## Validation Requirements
+
+1. **JSON Format**: Response must be valid JSON
+2. **Required Fields**: All required fields must be present
+3. **Field Types**: All fields must match the specified types
+4. **Field Descriptions**: Follow the field descriptions precisely
+
+{{ schema_reference(schema) }}
+{%- endmacro %}
+
+{# Compact output reminder for use in instructions #}
+{% macro output_reminder(schema) -%}
+{% if schema %}
+**Output Format**: Valid JSON with required fields: {{ schema.required | join(", ") if schema.required else "as specified" }}
+{% endif %}
+{%- endmacro %}
+
+{# Display SubTask schema specifically for planners #}
+{% macro subtask_schema_section(subtask_schema, subtask_examples) -%}
+## SubTask Structure
+
+Each subtask in your plan must follow this structure:
+
+{{ display_schema(subtask_schema, "SubTask Schema") }}
+
+### SubTask Examples:
+{% if subtask_examples %}
+{% for example in subtask_examples[:2] %}
+```json
+{{ example | tojson(indent=2) }}
+```
+{% if not loop.last %}
+
+{% endif %}
+{% endfor %}
+{% endif %}
+{%- endmacro %}

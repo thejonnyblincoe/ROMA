@@ -2,6 +2,9 @@
 # Level 4: Application Configuration
 # This level only imports from Level 3 (profiles) - Clean Architecture
 
+# Target for automatic instantiation to ROMAConfig object
+_target_: roma.domain.value_objects.config.roma_config.ROMAConfig
+
 defaults:
   # Level 3: Profile selection (can be overridden via CLI)
   - profiles: ${oc.env:ROMA_PROFILE,general_profile}
@@ -16,10 +19,14 @@ defaults:
 
 # Application metadata
 app:
+  _target_: roma.domain.value_objects.config.app_config.AppConfig
   name: "ROMA"
   version: "2.0.0"
   description: "Research-Oriented Multi-Agent Architecture"
   environment: "${infrastructure.environment}"
+
+# Profile reference - use the instantiated profile from defaults
+profile: ${profiles}
 
 # Hydra configuration
 hydra:
@@ -40,6 +47,7 @@ hydra:
 
 # Cache System
 cache:
+  _target_: roma.domain.value_objects.config.app_config.CacheConfig
   enabled: true
   cache_type: "file"
   cache_dir: "./runtime/cache/agent"
@@ -48,6 +56,7 @@ cache:
 
 # Logging configuration
 logging:
+  _target_: roma.domain.value_objects.config.app_config.LoggingConfig
   level: "${oc.env:LOG_LEVEL,INFO}"
   enable_console: true
   enable_file: true
@@ -55,7 +64,7 @@ logging:
   file_rotation: "10 MB"
   file_retention: 3
   console_style: "clean"  # clean, timestamp, detailed
-  
+
   # Module-specific log levels
   module_levels:
     "roma.server.services.broadcast_service": "WARNING"
@@ -69,6 +78,7 @@ logging:
 
 # Experiment configuration
 experiment:
+  _target_: roma.domain.value_objects.config.app_config.ExperimentConfig
   base_dir: "experiments"
   results_dir: "results"
   emergency_backup_dir: "emergency_backups"
@@ -79,6 +89,7 @@ experiment:
 
 # Security configuration
 security:
+  _target_: roma.domain.value_objects.config.app_config.SecurityConfig
   # API keys (environment variables)
   api_keys:
     openai: "${oc.env:OPENAI_API_KEY,}"
@@ -87,13 +98,45 @@ security:
     exa: "${oc.env:EXA_API_KEY,}"
     binance: "${oc.env:BINANCE_API_KEY,}"
     coingecko: "${oc.env:COINGECKO_API_KEY,}"
-    
+
   # Encryption settings
   encryption:
     enabled: ${oc.env:ENCRYPTION_ENABLED,false}
     algorithm: "AES-256-GCM"
     key_rotation: true
     key: "${oc.env:ENCRYPTION_KEY,}"
+
+# Database configuration
+database:
+  _target_: roma.domain.value_objects.config.database_config.DatabaseConfig
+  host: "${oc.env:ROMA_DB_HOST,localhost}"
+  port: "${oc.env:ROMA_DB_PORT,5432}"
+  database: "${oc.env:ROMA_DB_DATABASE,roma_db}"
+  user: "${oc.env:ROMA_DB_USER,roma_user}"
+  password: "${oc.env:ROMA_DB_PASSWORD,roma_password}"
+  ssl_mode: "${oc.env:ROMA_DB_SSL_MODE,prefer}"
+
+  # Connection pool settings
+  pool:
+    _target_: roma.domain.value_objects.config.database_config.DatabasePoolConfig
+    min_size: "${oc.env:ROMA_DB_POOL_MIN_SIZE,10}"
+    max_size: "${oc.env:ROMA_DB_POOL_MAX_SIZE,50}"
+    command_timeout: "${oc.env:ROMA_DB_COMMAND_TIMEOUT,60.0}"
+    query_timeout: "${oc.env:ROMA_DB_QUERY_TIMEOUT,30.0}"
+    connection_timeout: "${oc.env:ROMA_DB_CONNECTION_TIMEOUT,10.0}"
+    max_cached_statement_lifetime: "${oc.env:ROMA_DB_CACHE_LIFETIME,300}"
+    max_cacheable_statement_size: "${oc.env:ROMA_DB_CACHE_SIZE,1024}"
+
+  # Performance settings
+  max_connections: "${oc.env:ROMA_DB_MAX_CONNECTIONS,100}"
+  statement_cache_size: "${oc.env:ROMA_DB_STATEMENT_CACHE,1024}"
+  health_check_interval: "${oc.env:ROMA_DB_HEALTH_INTERVAL,30.0}"
+  max_connection_age: "${oc.env:ROMA_DB_MAX_AGE,3600}"
+
+  # Event store settings
+  event_retention_days: "${oc.env:ROMA_DB_EVENT_RETENTION,90}"
+  checkpoint_retention_days: "${oc.env:ROMA_DB_CHECKPOINT_RETENTION,30}"
+  batch_size: "${oc.env:ROMA_DB_BATCH_SIZE,1000}"
 
 # Default profile (fallback)
 default_profile: "general_profile"

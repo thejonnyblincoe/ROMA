@@ -7,8 +7,8 @@ All agents follow the same interface with different response types.
 
 from typing import TypeVar, Generic, Protocol, Dict, Any
 from abc import abstractmethod
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.agent_responses import (
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.agent_responses import (
     AtomizerResult,
     PlannerResult,
     ExecutorResult,

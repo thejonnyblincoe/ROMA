@@ -12,8 +12,10 @@ import logging
 
 from pydantic import BaseModel, Field, ConfigDict
 
-from ...domain.entities.task_node import TaskNode
-from ...domain.value_objects.task_status import TaskStatus
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.child_evaluation_result import ChildEvaluationResult
+from roma.domain.value_objects.config.execution_config import ExecutionConfig
 
 
 logger = logging.getLogger(__name__)
@@ -123,16 +125,18 @@ class RecoveryManagerConfig(BaseModel):
 class RecoveryManager(BaseModel):
     """
     Centralized recovery manager with circuit breaker pattern.
-    
+
     Manages retry strategies and prevents infinite loops by:
     1. Tracking retry counts per task
-    2. Circuit breaker for system-wide failure protection  
+    2. Circuit breaker for system-wide failure protection
     3. Escalating to parent replanning when retries exhausted
     4. Permanent failure for critical errors
+    5. Evaluating child failures for parent replanning decisions
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    
+
     config: RecoveryManagerConfig = Field(default_factory=RecoveryManagerConfig)
+    execution_config: ExecutionConfig = Field(default_factory=ExecutionConfig)
     circuit_breaker: CircuitBreaker = Field(default_factory=CircuitBreaker)
     permanent_failures: Set[str] = Field(default_factory=set, description="Permanently failed task IDs")
     
@@ -334,3 +338,85 @@ class RecoveryManager(BaseModel):
         self.permanent_failures.clear()
         
         logger.warning(f"Cleared {failure_count} permanent failures")
+
+    def evaluate_terminal_children(
+        self,
+        parent_node: TaskNode,
+        child_nodes: list[TaskNode]
+    ) -> ChildEvaluationResult:
+        """
+        Evaluate terminal children to determine aggregation decision.
+
+        Args:
+            parent_node: The parent task node
+            child_nodes: List of child task nodes
+
+        Returns:
+            ChildEvaluationResult indicating the decision
+        """
+        if not child_nodes:
+            logger.debug(f"Parent {parent_node.task_id} has no children, proceeding with aggregation")
+            return ChildEvaluationResult.AGGREGATE_ALL
+
+        # Count terminal statuses
+        completed_count = sum(1 for child in child_nodes if child.status == TaskStatus.COMPLETED)
+        failed_count = sum(1 for child in child_nodes if child.status == TaskStatus.FAILED)
+        total_terminal = completed_count + failed_count
+        total_children = len(child_nodes)
+
+        # Check if all children are terminal (completed or failed)
+        if total_terminal < total_children:
+            # Not all children are terminal yet, continue waiting
+            logger.debug(
+                f"Parent {parent_node.task_id}: {total_terminal}/{total_children} children terminal, waiting"
+            )
+            return ChildEvaluationResult.AGGREGATE_ALL  # Will be filtered out by caller
+
+        logger.info(
+            f"Parent {parent_node.task_id}: All children terminal. "
+            f"Completed: {completed_count}, Failed: {failed_count}"
+        )
+
+        # All children are terminal, evaluate failure rate
+        if failed_count == 0:
+            # No failures, proceed with normal aggregation
+            logger.debug(f"Parent {parent_node.task_id}: No failures, proceeding with aggregation")
+            return ChildEvaluationResult.AGGREGATE_ALL
+
+        # If replanning is disabled, always aggregate (even with failures)
+        if not self.execution_config.replanning_enabled:
+            logger.debug(f"Parent {parent_node.task_id}: Replanning disabled, aggregating all")
+            return ChildEvaluationResult.AGGREGATE_ALL
+
+        # If partial aggregation is disabled and we have failures, we must replan
+        # (otherwise we'd be stuck - can't aggregate with failures, can't proceed)
+        if not self.execution_config.enable_partial_aggregation and failed_count > 0:
+            logger.warning(
+                f"Parent {parent_node.task_id}: Partial aggregation disabled with {failed_count} failures, "
+                f"must replan to proceed"
+            )
+            return ChildEvaluationResult.REPLAN
+
+        # Calculate failure rate and apply threshold logic
+        failure_rate = failed_count / total_children
+        threshold = self.execution_config.get_failure_threshold(parent_node.task_type)
+
+        logger.info(
+            f"Parent {parent_node.task_id}: Failure rate {failure_rate:.2%} "
+            f"vs threshold {threshold:.2%} for {parent_node.task_type}"
+        )
+
+        if failure_rate > threshold:
+            # Too many failures, trigger replanning
+            logger.warning(
+                f"Parent {parent_node.task_id}: Failure rate {failure_rate:.2%} exceeds "
+                f"threshold {threshold:.2%}, triggering replan"
+            )
+            return ChildEvaluationResult.REPLAN
+        else:
+            # Below threshold and partial aggregation is enabled, proceed with partial
+            logger.info(
+                f"Parent {parent_node.task_id}: Failure rate {failure_rate:.2%} below threshold, "
+                f"proceeding with partial aggregation"
+            )
+            return ChildEvaluationResult.AGGREGATE_PARTIAL

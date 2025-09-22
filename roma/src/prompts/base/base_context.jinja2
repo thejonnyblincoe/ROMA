@@ -1,0 +1,47 @@
+{# Base context template - common context display patterns #}
+{% if has_prior_work %}
+## Context from Previous Work
+
+{% if parent_results %}
+### Parent Task Results
+{% for result in parent_results %}
+**{{ result.goal }}** ({{ result.task_type | default("UNKNOWN") }})
+{% if result.result_summary %}
+Summary: {{ result.result_summary }}
+{% endif %}
+{% if result.content %}
+{{ result.content | truncate(300) }}
+{% endif %}
+{% if result.execution_time %}
+Completed in: {{ result.execution_time }}s
+{% endif %}
+---
+{% endfor %}
+{% endif %}
+
+{% if sibling_results %}
+### Related Task Results
+{% for result in sibling_results %}
+**{{ result.goal }}** ({{ result.task_type | default("UNKNOWN") }})
+{% if result.result_summary %}
+{{ result.result_summary }}
+{% elif result.content %}
+{{ result.content | truncate(200) }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if relevant_results %}
+### Additional Relevant Context
+{% for result in relevant_results %}
+- **{{ result.goal }}**: {{ result.content | truncate(150) }}
+{% endfor %}
+{% endif %}
+
+{% if knowledge_store %}
+### Knowledge Store
+{% for key, value in knowledge_store.items() %}
+**{{ key }}**: {{ value | truncate(200) }}
+{% endfor %}
+{% endif %}
+{% endif %}

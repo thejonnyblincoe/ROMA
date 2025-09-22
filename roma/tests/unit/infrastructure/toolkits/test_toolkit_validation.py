@@ -8,11 +8,11 @@ import pytest
 from unittest.mock import Mock, AsyncMock
 from typing import Tuple, Optional
 
-from src.roma.infrastructure.toolkits.base_agno_toolkit import (
+from roma.infrastructure.toolkits.base_agno_toolkit import (
     BaseAgnoToolkit,
     ToolkitValidationMixin
 )
-from src.roma.infrastructure.toolkits.custom.crypto.binance_toolkit import BinanceToolkit
+from roma.infrastructure.toolkits.custom.crypto.binance_toolkit import BinanceToolkit
 
 
 class TestToolkitValidationMixin:
@@ -242,7 +242,7 @@ class TestToolkitValidationIntegration:
     @pytest.mark.asyncio
     async def test_non_validating_toolkit(self):
         """Test toolkit that doesn't implement validation."""
-        from src.roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
+        from roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
         
         # Regular toolkit without validation mixin
         config = {"name": "simple_toolkit", "type": "test"}

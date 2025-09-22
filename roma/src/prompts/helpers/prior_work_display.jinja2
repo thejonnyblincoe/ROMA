@@ -1,0 +1,40 @@
+{# Prior work context display helper #}
+{% if has_prior_work %}
+{% if parent_results %}
+### Parent Task Context
+{% for result in parent_results %}
+**{{ result.goal }}** ({{ result.task_type | default("UNKNOWN") }})
+{% if result.result_summary %}
+Summary: {{ result.result_summary }}
+{% endif %}
+{% if result.content %}
+{{ result.content | truncate(400) }}
+{% endif %}
+{% if result.execution_time %}
+⏱️ Completed in {{ result.execution_time }}s
+{% endif %}
+---
+{% endfor %}
+{% endif %}
+
+{% if sibling_results %}
+### Related Task Context
+{% for result in sibling_results %}
+- **{{ result.goal }}** ({{ result.task_type | default("UNKNOWN") }}): {{ result.result_summary | default(result.content | truncate(150)) }}
+{% endfor %}
+{% endif %}
+
+{% if relevant_results %}
+### Additional Relevant Context
+{% for result in relevant_results %}
+- **{{ result.goal }}**: {{ result.content | truncate(200) }}
+{% endfor %}
+{% endif %}
+
+{% if knowledge_store %}
+### Accumulated Knowledge
+{% for key, value in knowledge_store.items() %}
+**{{ key | title }}**: {{ value | truncate(300) }}
+{% endfor %}
+{% endif %}
+{% endif %}

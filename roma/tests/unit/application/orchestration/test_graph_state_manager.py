@@ -11,12 +11,12 @@ import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from src.roma.application.services.event_store import InMemoryEventStore
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.application.services.event_store import InMemoryEventStore
 
 
 class TestGraphStateManager:
@@ -71,7 +71,7 @@ class TestGraphStateManager:
 
     def test_graph_state_manager_init(self, mock_event_store):
         """Test GraphStateManager initialization."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         graph = DynamicTaskGraph()
         manager = GraphStateManager(graph=graph, event_store=mock_event_store)
@@ -84,7 +84,7 @@ class TestGraphStateManager:
     @pytest.mark.asyncio
     async def test_transition_node_status_success(self, mock_event_store, sample_task_nodes):
         """Test successful node status transition."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         sample_graph = await self.create_sample_graph(sample_task_nodes)
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
@@ -113,7 +113,7 @@ class TestGraphStateManager:
     @pytest.mark.asyncio
     async def test_transition_node_status_invalid_node(self, mock_event_store, sample_task_nodes):
         """Test transition with invalid node ID."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         sample_graph = await self.create_sample_graph(sample_task_nodes)
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
@@ -124,7 +124,7 @@ class TestGraphStateManager:
     @pytest.mark.asyncio
     async def test_transition_node_status_invalid_transition(self, sample_graph, mock_event_store, sample_task_nodes):
         """Test transition with invalid status transition."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -137,7 +137,7 @@ class TestGraphStateManager:
     @pytest.mark.asyncio
     async def test_transition_node_status_concurrent_access(self, sample_graph, mock_event_store, sample_task_nodes):
         """Test concurrent node status transitions are serialized."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -162,7 +162,7 @@ class TestGraphStateManager:
     @pytest.mark.asyncio
     async def test_add_node_with_events(self, sample_graph, mock_event_store):
         """Test adding node with event emission."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -189,7 +189,7 @@ class TestGraphStateManager:
     @pytest.mark.asyncio
     async def test_add_node_with_dependencies(self, sample_graph, mock_event_store, sample_task_nodes):
         """Test adding node with dependency tracking."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -211,7 +211,7 @@ class TestGraphStateManager:
 
     def test_get_ready_nodes(self, sample_graph, mock_event_store):
         """Test getting ready nodes."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -223,7 +223,7 @@ class TestGraphStateManager:
 
     def test_get_node_by_id(self, sample_graph, mock_event_store, sample_task_nodes):
         """Test getting node by ID."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -235,7 +235,7 @@ class TestGraphStateManager:
 
     def test_get_node_by_id_not_found(self, sample_graph, mock_event_store):
         """Test getting nonexistent node by ID."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -244,7 +244,7 @@ class TestGraphStateManager:
 
     def test_get_all_nodes(self, sample_graph, mock_event_store, sample_task_nodes):
         """Test getting all nodes."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -257,7 +257,7 @@ class TestGraphStateManager:
 
     def test_has_cycles(self, sample_graph, mock_event_store):
         """Test cycle detection."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -267,7 +267,7 @@ class TestGraphStateManager:
     @pytest.mark.asyncio
     async def test_get_execution_statistics(self, sample_graph, mock_event_store, sample_task_nodes):
         """Test getting execution statistics."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         manager = GraphStateManager(graph=sample_graph, event_store=mock_event_store)
         
@@ -303,7 +303,7 @@ class TestGraphStateManagerConcurrency:
     @pytest.mark.asyncio
     async def test_high_concurrency_node_transitions(self, mock_event_store):
         """Test high concurrency node status transitions."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         graph = DynamicTaskGraph()
         manager = GraphStateManager(graph=graph, event_store=mock_event_store)
@@ -343,7 +343,7 @@ class TestGraphStateManagerConcurrency:
     @pytest.mark.asyncio
     async def test_concurrent_add_and_transition(self, mock_event_store):
         """Test concurrent node addition and status transitions."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         graph = DynamicTaskGraph()
         manager = GraphStateManager(graph=graph, event_store=mock_event_store)
@@ -407,7 +407,7 @@ class TestGraphStateManagerEventIntegration:
     @pytest.mark.asyncio
     async def test_event_emission_on_state_changes(self, real_event_store):
         """Test that events are emitted for all state changes."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         graph = DynamicTaskGraph()
         manager = GraphStateManager(graph=graph, event_store=real_event_store)
@@ -441,7 +441,7 @@ class TestGraphStateManagerEventIntegration:
     @pytest.mark.asyncio 
     async def test_event_timeline_generation(self, real_event_store):
         """Test event timeline generation from state changes."""
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         graph = DynamicTaskGraph()
         manager = GraphStateManager(graph=graph, event_store=real_event_store)

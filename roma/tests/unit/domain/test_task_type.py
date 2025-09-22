@@ -6,7 +6,7 @@ Tests the MECE task classification with RETRIEVE, WRITE, THINK.
 
 import pytest
 
-from src.roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestTaskTypeEnum:

@@ -11,6 +11,7 @@ from dataclasses import field
 from typing import Dict, Any, Optional
 import os
 from pathlib import Path
+from .database_config import DatabaseConfig
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,25 @@ class AppConfig:
         if v not in valid_envs:
             raise ValueError(f"environment must be one of {valid_envs}, got: {v}")
         return v
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "name": self.name,
+            "version": self.version,
+            "description": self.description,
+            "environment": self.environment,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AppConfig":
+        """Create from dictionary."""
+        return cls(
+            name=data.get("name", "ROMA"),
+            version=data.get("version", "2.0.0"),
+            description=data.get("description", "Research-Oriented Multi-Agent Architecture"),
+            environment=data.get("environment", "development"),
+        )
 
 
 @dataclass(frozen=True)
@@ -69,6 +89,27 @@ class CacheConfig:
         if not v or len(v.strip()) == 0:
             raise ValueError("cache_dir cannot be empty")
         return v.strip()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "enabled": self.enabled,
+            "cache_type": self.cache_type,
+            "cache_dir": self.cache_dir,
+            "ttl_seconds": self.ttl_seconds,
+            "max_size": self.max_size,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CacheConfig":
+        """Create from dictionary."""
+        return cls(
+            enabled=data.get("enabled", True),
+            cache_type=data.get("cache_type", "file"),
+            cache_dir=data.get("cache_dir", "./runtime/cache/agent"),
+            ttl_seconds=data.get("ttl_seconds", 7200),
+            max_size=data.get("max_size", 500),
+        )
 
 
 @dataclass(frozen=True)
@@ -118,6 +159,33 @@ class LoggingConfig:
         # Normalize levels to uppercase
         return {module: level.upper() for module, level in v.items()}
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "level": self.level,
+            "enable_console": self.enable_console,
+            "enable_file": self.enable_file,
+            "file_path": self.file_path,
+            "file_rotation": self.file_rotation,
+            "file_retention": self.file_retention,
+            "console_style": self.console_style,
+            "module_levels": dict(self.module_levels),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LoggingConfig":
+        """Create from dictionary."""
+        return cls(
+            level=data.get("level", "INFO"),
+            enable_console=data.get("enable_console", True),
+            enable_file=data.get("enable_file", True),
+            file_path=data.get("file_path", "./runtime/logs/roma.log"),
+            file_rotation=data.get("file_rotation", "10 MB"),
+            file_retention=data.get("file_retention", 3),
+            console_style=data.get("console_style", "clean"),
+            module_levels=data.get("module_levels", {}),
+        )
+
 
 @dataclass(frozen=True)
 class SecurityConfig:
@@ -158,9 +226,28 @@ class SecurityConfig:
         env_value = os.getenv(env_key)
         if env_value:
             return env_value
-        
+
         # Fall back to config value
         return self.api_keys.get(provider)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "api_keys": dict(self.api_keys),
+            "encryption_enabled": self.encryption_enabled,
+            "encryption_algorithm": self.encryption_algorithm,
+            "key_rotation": self.key_rotation,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SecurityConfig":
+        """Create from dictionary."""
+        return cls(
+            api_keys=data.get("api_keys", {}),
+            encryption_enabled=data.get("encryption_enabled", False),
+            encryption_algorithm=data.get("encryption_algorithm", "AES-256-GCM"),
+            key_rotation=data.get("key_rotation", True),
+        )
 
 
 @dataclass(frozen=True)
@@ -175,6 +262,19 @@ class StorageConfig:
         if not v or len(v.strip()) == 0:
             raise ValueError("mount_path cannot be empty")
         return v.strip()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "mount_path": self.mount_path,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "StorageConfig":
+        """Create from dictionary."""
+        return cls(
+            mount_path=data.get("mount_path", "/tmp/roma_storage"),
+        )
 
 
 @dataclass(frozen=True)
@@ -210,3 +310,28 @@ class ExperimentConfig:
     def get_results_path(self, experiment_id: str) -> Path:
         """Get full path for experiment results."""
         return self.get_experiment_path(experiment_id) / self.results_dir
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "base_dir": self.base_dir,
+            "results_dir": self.results_dir,
+            "emergency_backup_dir": self.emergency_backup_dir,
+            "configs_dir": self.configs_dir,
+            "retention_days": self.retention_days,
+            "auto_cleanup": self.auto_cleanup,
+            "timestamp_format": self.timestamp_format,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExperimentConfig":
+        """Create from dictionary."""
+        return cls(
+            base_dir=data.get("base_dir", "experiments"),
+            results_dir=data.get("results_dir", "results"),
+            emergency_backup_dir=data.get("emergency_backup_dir", "emergency_backups"),
+            configs_dir=data.get("configs_dir", "configs"),
+            retention_days=data.get("retention_days", 30),
+            auto_cleanup=data.get("auto_cleanup", True),
+            timestamp_format=data.get("timestamp_format", "%Y%m%d_%H%M%S"),
+        )

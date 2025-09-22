@@ -8,23 +8,23 @@
 
 # RETRIEVE Executors (evolved from SEARCH in v1)
 retrieve_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "RetrieveExecutor"
   type: "executor"
   task_type: "RETRIEVE"
   description: "Executes data retrieval tasks using available tools"
 
-  model: ${models.gpt_4o_mini}
+  model: ${profiles.models.gpt_4o_mini}
   prompt_template: "executor/retrieve.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.web_search.google}
-    - ${tools.web_search.exa}
-    - ${tools.web_search.arxiv}
-    - ${tools.web_search.wikipedia}
-    - ${tools.utilities.web_scraper}
-    - ${tools.utilities.pdf_reader}
+    - ${profiles.tools.web_search.google}
+    - ${profiles.tools.web_search.exa}
+    - ${profiles.tools.web_search.arxiv}
+    - ${profiles.tools.web_search.wikipedia}
+    - ${profiles.tools.utilities.web_scraper}
+    - ${profiles.tools.utilities.pdf_reader}
 
   config:
     parallel_search: true
@@ -34,13 +34,13 @@ retrieve_executor:
     max_results_per_source: 10
 
 openai_custom_retriever:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "OpenAICustomRetriever"
   type: "executor"
   task_type: "RETRIEVE"
   description: "Direct API-based retrieval using OpenAI's search capabilities"
 
-  model: ${models.gpt_4o}
+  model: ${profiles.models.gpt_4o}
   prompt_template: "executor/openai_retrieve.jinja2"
   output_schema: "ExecutorResult"
 
@@ -49,53 +49,53 @@ openai_custom_retriever:
     model_id: "openai/gpt-4o-search-preview"
 
 gemini_custom_retriever:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "GeminiCustomRetriever"
   type: "executor"
   task_type: "RETRIEVE"
   description: "Direct API-based retrieval using Google Gemini's capabilities"
 
-  model: ${models.gemini_1_5_flash}
+  model: ${profiles.models.gemini_1_5_flash}
   prompt_template: "executor/gemini_retrieve.jinja2"
   output_schema: "ExecutorResult"
 
 exa_comprehensive_retriever:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ExaComprehensiveRetriever"
   type: "executor"
   task_type: "RETRIEVE"
   description: "Comprehensive retrieval using Exa API with LLM processing"
 
-  model: ${models.gemini_1_5_pro}
+  model: ${profiles.models.gemini_1_5_pro}
   prompt_template: "executor/exa_retrieve.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.web_search.exa}
+    - ${profiles.tools.web_search.exa}
 
   config:
     num_results: 5
     prioritize_reliable_sources: true
 
 crypto_retrieve_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "CryptoRetrieveExecutor"
   type: "executor"
   task_type: "RETRIEVE"
   description: "Specialized executor for cryptocurrency and DeFi data retrieval"
 
-  model: ${models.gpt_4o_mini}
+  model: ${profiles.models.gpt_4o_mini}
   prompt_template: "executor/crypto_retrieve.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.web_search.google}
-    - ${tools.utilities.web_scraper}
-    - ${tools.data_apis.binance}
-    - ${tools.data_apis.coingecko}
-    - ${tools.data_apis.defillama}
-    - ${tools.data_apis.dune}
-    - ${tools.data_apis.arkham}
+    - ${profiles.tools.web_search.google}
+    - ${profiles.tools.utilities.web_scraper}
+    - ${profiles.tools.data_apis.binance}
+    - ${profiles.tools.data_apis.coingecko}
+    - ${profiles.tools.data_apis.defillama}
+    - ${profiles.tools.data_apis.dune}
+    - ${profiles.tools.data_apis.arkham}
 
   config:
     include_price_data: true
@@ -104,18 +104,18 @@ crypto_retrieve_executor:
     timeframes: ["1h", "4h", "1d", "1w"]
 
 fast_retrieve_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "FastRetrieveExecutor"
   type: "executor"
   task_type: "RETRIEVE"
   description: "Quick retrieval for simple queries"
 
-  model: ${models.gpt_4o_mini}
+  model: ${profiles.models.gpt_4o_mini}
   prompt_template: "executor/fast_retrieve.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.web_search.google}
+    - ${profiles.tools.web_search.google}
 
   config:
     timeout: 5
@@ -124,13 +124,13 @@ fast_retrieve_executor:
 
 # WRITE Executors
 write_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "WriteExecutor"
   type: "executor"
   task_type: "WRITE"
   description: "Executes writing tasks to create content"
 
-  model: ${models.claude_3_5_sonnet}
+  model: ${profiles.models.claude_3_5_sonnet}
   prompt_template: "executor/write.jinja2"
   output_schema: "ExecutorResult"
 
@@ -140,19 +140,19 @@ write_executor:
     style_adaptation: true
 
 report_writer:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ReportWriter"
   type: "executor"
   task_type: "WRITE"
   description: "Writes detailed reports based on provided context"
 
-  model: ${models.gemini_1_5_pro}
+  model: ${profiles.models.gemini_1_5_pro}
   prompt_template: "executor/report_writer.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.utilities.markdown_formatter}
-    - ${tools.utilities.citation_manager}
+    - ${profiles.tools.utilities.markdown_formatter}
+    - ${profiles.tools.utilities.citation_manager}
 
   config:
     structure: "executive_summary"
@@ -160,19 +160,19 @@ report_writer:
     formatting: "professional"
 
 crypto_research_writer:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "CryptoResearchWriter"
   type: "executor"
   task_type: "WRITE"
   description: "Comprehensive crypto research executor for blockchain and DeFi analysis"
 
-  model: ${models.gemini_1_5_flash}
+  model: ${profiles.models.gemini_1_5_flash}
   prompt_template: "executor/crypto_research_writer.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.utilities.markdown_formatter}
-    - ${tools.utilities.citation_manager}
+    - ${profiles.tools.utilities.markdown_formatter}
+    - ${profiles.tools.utilities.citation_manager}
 
   config:
     include_technical_analysis: true
@@ -181,19 +181,19 @@ crypto_research_writer:
 
 # THINK Executors
 think_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ThinkExecutor"
   type: "executor"
   task_type: "THINK"
   description: "Executes analytical and reasoning tasks"
 
-  model: ${models.o1_preview}
+  model: ${profiles.models.o1_preview}
   prompt_template: "executor/think.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.reasoning.logic_analyzer}
-    - ${tools.reasoning.hypothesis_tester}
+    - ${profiles.tools.reasoning.logic_analyzer}
+    - ${profiles.tools.reasoning.hypothesis_tester}
 
   config:
     chain_of_thought: true
@@ -201,42 +201,42 @@ think_executor:
     include_confidence: true
 
 reasoning_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ReasoningExecutor"
   type: "executor"
   task_type: "THINK"
   description: "Performs analysis and synthesis of information"
 
-  model: ${models.gemini_1_5_pro}
+  model: ${profiles.models.gemini_1_5_pro}
   prompt_template: "executor/reasoning.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.code_execution.python}
-    - ${tools.reasoning.logic_analyzer}
+    - ${profiles.tools.code_execution.python}
+    - ${profiles.tools.reasoning.logic_analyzer}
 
   config:
     save_and_run: false
     include_verification: true
 
 crypto_market_analyzer:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "CryptoMarketAnalyzer"
   type: "executor"
   task_type: "THINK"
   description: "Advanced crypto market analyst for technical analysis and on-chain metrics"
 
-  model: ${models.claude_3_5_sonnet}
+  model: ${profiles.models.claude_3_5_sonnet}
   prompt_template: "executor/crypto_market_analyzer.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.reasoning.logic_analyzer}
-    - ${tools.code_execution.e2b_sandbox}
-    - ${tools.data_apis.binance}
-    - ${tools.data_apis.coingecko}
-    - ${tools.data_apis.defillama}
-    - ${tools.data_apis.arkham}
+    - ${profiles.tools.reasoning.logic_analyzer}
+    - ${profiles.tools.code_execution.e2b_sandbox}
+    - ${profiles.tools.data_apis.binance}
+    - ${profiles.tools.data_apis.coingecko}
+    - ${profiles.tools.data_apis.defillama}
+    - ${profiles.tools.data_apis.arkham}
 
   config:
     analysis_modules:
@@ -247,19 +247,19 @@ crypto_market_analyzer:
 
 # CODE_INTERPRET Executors
 code_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "CodeExecutor"
   type: "executor"
   task_type: "CODE_INTERPRET"
   description: "Executes code interpretation and generation tasks"
 
-  model: ${models.gpt_4o}
+  model: ${profiles.models.gpt_4o}
   prompt_template: "executor/code.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.code_execution.python}
-    - ${tools.code_execution.e2b_sandbox}
+    - ${profiles.tools.code_execution.python}
+    - ${profiles.tools.code_execution.e2b_sandbox}
 
   config:
     languages: ["python", "javascript", "typescript", "rust", "go"]
@@ -267,19 +267,19 @@ code_executor:
     safety_checks: true
 
 data_analyst_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "DataAnalystExecutor"
   type: "executor"
   task_type: "CODE_INTERPRET"
   description: "Executes data analysis and visualization tasks"
 
-  model: ${models.gpt_4o}
+  model: ${profiles.models.gpt_4o}
   prompt_template: "executor/data_analyst.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.code_execution.python}
-    - ${tools.utilities.csv_analyzer}
+    - ${profiles.tools.code_execution.python}
+    - ${profiles.tools.utilities.csv_analyzer}
 
   config:
     libraries: ["pandas", "numpy", "matplotlib", "seaborn", "plotly"]
@@ -287,19 +287,19 @@ data_analyst_executor:
 
 # IMAGE_GENERATION Executors
 image_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ImageExecutor"
   type: "executor"
   task_type: "IMAGE_GENERATION"
   description: "Executes image generation tasks"
 
-  model: ${models.gpt_4o}
+  model: ${profiles.models.gpt_4o}
   prompt_template: "executor/image.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.image_generation.dalle}
-    - ${tools.image_generation.stability}
+    - ${profiles.tools.image_generation.dalle}
+    - ${profiles.tools.image_generation.stability}
 
   config:
     quality: "hd"
@@ -307,19 +307,19 @@ image_executor:
     n: 1
 
 visualization_executor:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "VisualizationExecutor"
   type: "executor"
   task_type: "IMAGE_GENERATION"
   description: "Creates data visualizations and diagrams"
 
-  model: ${models.gpt_4o}
+  model: ${profiles.models.gpt_4o}
   prompt_template: "executor/visualization.jinja2"
   output_schema: "ExecutorResult"
 
   tools:
-    - ${tools.code_execution.python}
-    - ${tools.visualization.mermaid}
+    - ${profiles.tools.code_execution.python}
+    - ${profiles.tools.visualization.mermaid}
 
   config:
     chart_types: ["bar", "line", "scatter", "pie", "heatmap", "flowchart"]

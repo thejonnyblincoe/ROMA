@@ -7,9 +7,9 @@ Focus on testing branches and edge cases that aren't covered by integration test
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
 
-from src.roma.infrastructure.agents.agent_factory import AgentFactory
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.agent_type import AgentType
+from roma.infrastructure.agents.agent_factory import AgentFactory
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.agent_type import AgentType
 
 
 class TestAgentFactorySimpleEdgeCases:
@@ -43,7 +43,7 @@ class TestAgentFactorySimpleEdgeCases:
 
     def test_get_output_schema_valid_schemas(self, agent_factory):
         """Test get_output_schema returns correct schemas for valid names."""
-        from src.roma.domain.value_objects.agent_responses import AtomizerResult, PlannerResult
+        from roma.domain.value_objects.agent_responses import AtomizerResult, PlannerResult
 
         atomizer_schema = agent_factory.get_output_schema("AtomizerResult")
         assert atomizer_schema == AtomizerResult
@@ -186,8 +186,8 @@ class TestAgentFactorySimpleEdgeCases:
     @pytest.mark.asyncio
     async def test_create_agent_auto_initialize(self, agent_factory):
         """Test create_agent calls initialize when not initialized."""
-        from src.roma.domain.value_objects.config.agent_config import AgentConfig
-        from src.roma.domain.value_objects.config.model_config import ModelConfig
+        from roma.domain.value_objects.config.agent_config import AgentConfig
+        from roma.domain.value_objects.config.model_config import ModelConfig
         from jinja2 import Template
 
         agent_config = AgentConfig(
@@ -215,8 +215,8 @@ class TestAgentFactorySimpleEdgeCases:
     @pytest.mark.asyncio
     async def test_create_agent_template_fallback(self, agent_factory):
         """Test create_agent uses fallback template when file not found."""
-        from src.roma.domain.value_objects.config.agent_config import AgentConfig
-        from src.roma.domain.value_objects.config.model_config import ModelConfig
+        from roma.domain.value_objects.config.agent_config import AgentConfig
+        from roma.domain.value_objects.config.model_config import ModelConfig
 
         agent_factory._initialized = True  # Skip auto-initialize
 
@@ -311,9 +311,9 @@ class TestAgentFactorySchemaNameGeneration:
     @pytest.mark.asyncio
     async def test_custom_output_schema_override(self, agent_factory):
         """Test custom output schema name can override default."""
-        from src.roma.domain.value_objects.config.agent_config import AgentConfig
-        from src.roma.domain.value_objects.config.model_config import ModelConfig
-        from src.roma.domain.value_objects.agent_responses import AtomizerResult
+        from roma.domain.value_objects.config.agent_config import AgentConfig
+        from roma.domain.value_objects.config.model_config import ModelConfig
+        from roma.domain.value_objects.agent_responses import AtomizerResult
         from jinja2 import Template
 
         agent_factory._initialized = True

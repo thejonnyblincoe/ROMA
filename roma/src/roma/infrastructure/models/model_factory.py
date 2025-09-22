@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 import os
 import logging
 
-from src.roma.domain.value_objects.config.model_config import ModelConfig
+from roma.domain.value_objects.config.model_config import ModelConfig
 
 # Import with error handling
 try:
@@ -83,14 +83,23 @@ class ModelFactory:
         if config.top_p is not None:
             params["top_p"] = config.top_p
 
-        # Handle API key
+        # Handle API key with better error messaging
         if config.api_key:
             params["api_key"] = config.api_key
+            logger.debug(f"Using API key from model config for {config.model_id}")
         else:
             # Try to get API key based on model prefix
-            api_key = self._get_api_key_for_model(config.model_id)
+            api_key, required_env_var = self._get_api_key_for_model(config.model_id)
             if api_key:
                 params["api_key"] = api_key
+                logger.debug(f"Using API key from environment for {config.model_id}")
+            elif required_env_var:
+                # API key is required but missing
+                logger.warning(
+                    f"API key required for model '{config.model_id}' but {required_env_var} not found in environment. "
+                    f"Model creation will proceed, but API calls may fail. "
+                    f"Set {required_env_var} in environment or provide api_key in model config."
+                )
 
         # Handle API base for custom endpoints (like Ollama)
         if config.api_base:
@@ -99,8 +108,15 @@ class ModelFactory:
         logger.debug(f"Creating LiteLLM model with params: {self._sanitize_params_for_log(params)}")
         return LiteLLM(**params)
 
-    def _get_api_key_for_model(self, model_id: str) -> Optional[str]:
-        """Get API key from environment based on model prefix."""
+    def _get_api_key_for_model(self, model_id: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Get API key from environment based on model prefix.
+
+        Returns:
+            Tuple of (api_key, required_env_var) where:
+            - api_key: The actual API key if found, None otherwise
+            - required_env_var: The environment variable name that should contain the key, None if no key needed
+        """
         # Extract provider from model_id prefix
         for provider, env_key in self._provider_env_keys.items():
             if model_id.startswith(f"{provider}/") or (provider == "openai" and "/" not in model_id):
@@ -108,11 +124,17 @@ class ModelFactory:
                     api_key = os.getenv(env_key)
                     if api_key:
                         logger.debug(f"Found API key for provider: {provider}")
-                        return api_key
-                return None  # No API key needed (e.g., Ollama)
+                        return api_key, env_key
+                    else:
+                        logger.debug(f"API key required but not found for provider: {provider} (env var: {env_key})")
+                        return None, env_key
+                else:
+                    # No API key needed (e.g., Ollama)
+                    logger.debug(f"No API key required for provider: {provider}")
+                    return None, None
 
         logger.debug(f"No API key mapping found for model: {model_id}")
-        return None
+        return None, None
 
     def _get_cache_key(self, config: ModelConfig) -> str:
         """Generate cache key for model configuration."""

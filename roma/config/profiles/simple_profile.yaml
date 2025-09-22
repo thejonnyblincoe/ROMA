@@ -1,5 +1,8 @@
 # Simple test profile to validate Hydra configuration
 
+# Target for automatic instantiation to ProfileConfig object
+_target_: roma.domain.value_objects.config.profile_config.ProfileConfig
+
 defaults:
   # Import entities (Level 1)
   - /entities/models/providers@models
@@ -22,40 +25,40 @@ version: "2.0.0"
 # The agents are available directly after import, we just organize them by task type
 agent_mapping:
   atomizers:
-    RETRIEVE: ${agents.retrieve_atomizer}
-    WRITE: ${agents.write_atomizer}
-    THINK: ${agents.think_atomizer}
-    CODE_INTERPRET: ${agents.code_atomizer}
-    IMAGE_GENERATION: ${agents.image_atomizer}
-    AGGREGATE: ${agents.aggregate_atomizer}
+    RETRIEVE: ${profiles.agents.retrieve_atomizer}
+    WRITE: ${profiles.agents.write_atomizer}
+    THINK: ${profiles.agents.think_atomizer}
+    CODE_INTERPRET: ${profiles.agents.code_atomizer}
+    IMAGE_GENERATION: ${profiles.agents.image_atomizer}
+    AGGREGATE: ${profiles.agents.aggregate_atomizer}
     
   planners:
-    RETRIEVE: ${agents.retrieve_planner}
-    WRITE: ${agents.write_planner}
-    THINK: ${agents.think_planner}
-    CODE_INTERPRET: ${agents.code_planner}
-    IMAGE_GENERATION: ${agents.image_planner}
-    AGGREGATE: ${agents.aggregate_planner}
+    RETRIEVE: ${profiles.agents.retrieve_planner}
+    WRITE: ${profiles.agents.write_planner}
+    THINK: ${profiles.agents.think_planner}
+    CODE_INTERPRET: ${profiles.agents.code_planner}
+    IMAGE_GENERATION: ${profiles.agents.image_planner}
+    AGGREGATE: ${profiles.agents.aggregate_planner}
     
   executors:
-    RETRIEVE: ${agents.retrieve_executor}
-    WRITE: ${agents.write_executor}
-    THINK: ${agents.think_executor}
-    CODE_INTERPRET: ${agents.code_executor}
-    IMAGE_GENERATION: ${agents.image_executor}
+    RETRIEVE: ${profiles.agents.retrieve_executor}
+    WRITE: ${profiles.agents.write_executor}
+    THINK: ${profiles.agents.think_executor}
+    CODE_INTERPRET: ${profiles.agents.code_executor}
+    IMAGE_GENERATION: ${profiles.agents.image_executor}
     
   aggregators:
-    RETRIEVE: ${agents.retrieve_aggregator}
-    WRITE: ${agents.write_aggregator}
-    THINK: ${agents.think_aggregator}
-    CODE_INTERPRET: ${agents.code_aggregator}
-    IMAGE_GENERATION: ${agents.image_aggregator}
-    AGGREGATE: ${agents.research_aggregator}
-    default: ${agents.default_aggregator}
+    RETRIEVE: ${profiles.agents.retrieve_aggregator}
+    WRITE: ${profiles.agents.write_aggregator}
+    THINK: ${profiles.agents.think_aggregator}
+    CODE_INTERPRET: ${profiles.agents.code_aggregator}
+    IMAGE_GENERATION: ${profiles.agents.image_aggregator}
+    AGGREGATE: ${profiles.agents.research_aggregator}
+    default: ${profiles.agents.default_aggregator}
   
   plan_modifiers:
-    default: ${agents.default_plan_modifier}
-    error_recovery: ${agents.error_recovery_plan_modifier}
+    default: ${profiles.agents.default_plan_modifier}
+    error_recovery: ${profiles.agents.error_recovery_plan_modifier}
 
 # Basic settings
 settings:

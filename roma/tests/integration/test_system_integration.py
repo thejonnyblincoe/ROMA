@@ -10,13 +10,13 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock
 
-from src.roma.infrastructure.orchestration.system_manager import SystemManager
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.config.roma_config import ROMAConfig
-from src.roma.domain.value_objects.config.profile_config import ProfileConfig, AgentMappingConfig
-from src.roma.domain.value_objects.config.app_config import StorageConfig
+from roma.infrastructure.orchestration.system_manager import SystemManager
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.domain.value_objects.config.profile_config import ProfileConfig, AgentMappingConfig
+from roma.domain.value_objects.config.app_config import StorageConfig
 
 
 class TestSystemIntegration:

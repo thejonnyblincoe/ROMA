@@ -32,6 +32,7 @@ graph TB
         PEE[ParallelExecutionEngine]
         RM[RecoveryManager]
         AS[ArtifactService]
+        DV[DependencyValidator]
     end
     
     subgraph "Domain Layer ✅"
@@ -39,6 +40,7 @@ graph TB
         DTG[DynamicTaskGraph]
         TT[TaskType]
         TST[TaskStatus]
+        DS[DependencyStatus]
         EV[DomainEvents]
         IA[ImageArtifact]
         BA[BaseArtifact]
@@ -53,11 +55,14 @@ graph TB
         HA[HydraIntegration]
     end
     
-    subgraph "Future Infrastructure"
+    subgraph "Infrastructure Layer ✅"
         PG[(PostgreSQL)]
         RD[(Redis)]
         S3[(S3/MinIO)]
         LF[Langfuse]
+        DCM[DatabaseConnectionManager]
+        PSE[PostgreSQLEventStore]
+        MIG[AlembicMigrations]
     end
     
     API -.-> SM
@@ -80,6 +85,11 @@ graph TB
     
     SM --> ES
     SM --> GTS
+    SM --> PG
+    SM --> DCM
+    ES --> PSE
+    PSE --> PG
+    DCM --> PG
 ```
 
 ## Class Diagrams
@@ -677,7 +687,7 @@ graph TD
         WS[WebSocket<br/>Socket.io]
         CLI[CLI<br/>Click]
     end
-    
+
     subgraph "Application Layer"
         subgraph "Orchestration"
             EO[ExecutionOrchestrator]
@@ -685,7 +695,7 @@ graph TD
             DD[DeadlockDetector]
             RM[RecoveryManager]
         end
-        
+
         subgraph "Services"
             AS[AtomizerService]
             PS[PlannerService]
@@ -694,74 +704,87 @@ graph TD
             CMS[ContextService]
             ARS[ArtifactService]
         end
-        
+
         subgraph "Managers"
             CM[ConfigManager]
             EM[EventManager]
             MM[MetricsManager]
         end
     end
-    
+
     subgraph "Domain Layer"
         subgraph "Entities"
             TN[TaskNode]
             TG[TaskGraph]
         end
-        
+
         subgraph "Value Objects"
             TT[TaskType]
             NT[NodeType]
             TST[TaskStatus]
             TC[TaskContext]
             RE[ResultEnvelope]
+            DC[DatabaseConfig]
         end
-        
+
         subgraph "Events"
             TE[TaskEvents]
             SE[SystemEvents]
         end
     end
-    
+
     subgraph "Infrastructure Layer"
-        subgraph "Persistence"
-            PGR[PostgreSQL<br/>Repository]
+        subgraph "Persistence ✅"
+            PGR[PostgreSQL<br/>Event Store]
+            DCM[Connection<br/>Manager]
             RDC[Redis<br/>Cache]
             S3S[S3<br/>Storage]
+            MIG[Alembic<br/>Migrations]
+            EM[Event Models]
+            TEM[Task Execution Models]
+            CM[Checkpoint Models]
         end
-        
+
         subgraph "External Services"
             LLM[LLM<br/>Providers]
             TOOLS[Agno<br/>Tools]
             OBS[Langfuse<br/>Observability]
         end
     end
-    
+
     REST --> EO
     GQL --> EO
     WS --> EO
     CLI --> EO
-    
+
     EO --> TS
     EO --> AS
     EO --> RM
-    
+
     TS --> DD
     TS --> TG
-    
+
     AS --> LLM
     PS --> LLM
     ES --> TOOLS
-    
+
     AS --> TN
     PS --> TN
-    
+
     EM --> TE
     EM --> SE
-    
+
     TG --> PGR
     CMS --> RDC
     ES --> S3S
-    
+    ES --> PGR
+    PGR --> DCM
+    DCM --> MIG
+    DCM --> DC
+    PGR --> EM
+    PGR --> TEM
+    PGR --> CM
+
     EO --> OBS
 ```
 
@@ -1459,16 +1482,282 @@ storage_refs = await artifact_service.store_envelope_artifacts(
 # Both document and chart are stored with appropriate handling
 ```
 
+## PostgreSQL Persistence Layer ✅
+
+### Architecture Overview
+
+The PostgreSQL persistence layer provides robust event sourcing, execution history, and checkpoint recovery capabilities for ROMA v2.0.
+
+```mermaid
+graph TB
+    subgraph "Application Layer"
+        SM[SystemManager]
+        ES[EventStore Interface]
+        EHS[ExecutionHistoryService]
+        CHS[CheckpointService]
+    end
+
+    subgraph "Domain Layer"
+        DC[DatabaseConfig]
+        DPC[DatabasePoolConfig]
+        TE[TaskEvents]
+        TS[TaskStatus]
+        TT[TaskType]
+        NT[NodeType]
+    end
+
+    subgraph "Infrastructure Persistence"
+        PSE[PostgreSQLEventStore]
+        DCM[DatabaseConnectionManager]
+
+        subgraph "Models"
+            EM[EventModel]
+            TEM[TaskExecutionModel]
+            TRM[TaskRelationshipModel]
+            CM[CheckpointModel]
+        end
+
+        subgraph "Database"
+            PG[(PostgreSQL)]
+            IDX[Composite Indexes]
+            MIG[Alembic Migrations]
+        end
+    end
+
+    SM --> ES
+    ES --> PSE
+    PSE --> DCM
+    PSE --> EM
+    PSE --> TEM
+    PSE --> TRM
+    PSE --> CM
+
+    DCM --> DC
+    DCM --> DPC
+    DCM --> PG
+
+    EM --> TE
+    TEM --> TS
+    TEM --> TT
+    TEM --> NT
+
+    PG --> IDX
+    PG --> MIG
+```
+
+### Key Components
+
+#### DatabaseConfig (Domain Value Object)
+- **Location**: `src/roma/domain/value_objects/config/database_config.py`
+- **Pattern**: Immutable dataclass following ROMA config conventions
+- **Features**:
+  - Field validation (host, port, database, credentials)
+  - Environment variable integration via Hydra
+  - Connection pooling configuration
+  - SSL and timeout settings
+
+```python
+@dataclass(frozen=True)
+class DatabaseConfig:
+    host: str = "localhost"
+    port: int = 5432
+    database: str = "roma_db"
+    user: str = "roma_user"
+    password: str = "roma_password"
+    pool: DatabasePoolConfig = Field(default_factory=DatabasePoolConfig)
+```
+
+#### DatabaseConnectionManager
+- **Location**: `src/roma/infrastructure/persistence/connection_manager.py`
+- **Responsibilities**:
+  - AsyncPG connection pooling with health checks
+  - Connection lifecycle management
+  - Automatic reconnection and circuit breaking
+  - Performance monitoring and statistics
+  - Transaction management with context managers
+
+#### PostgreSQLEventStore
+- **Location**: `src/roma/infrastructure/persistence/postgres_event_store.py`
+- **Implements**: EventStore interface from application layer
+- **Features**:
+  - Event sourcing with complete execution history
+  - Async batch operations for performance
+  - Event filtering and querying capabilities
+  - Automatic event serialization/deserialization
+  - Checkpoint support for state recovery
+
+#### Database Models
+All models use SQLAlchemy 2.0 with async support:
+
+1. **EventModel**: Complete event logging with JSONB metadata
+2. **TaskExecutionModel**: Task execution tracking with performance metrics
+3. **TaskRelationshipModel**: Graph structure persistence
+4. **CheckpointModel**: State snapshots with compression
+
+### Performance Optimizations
+
+#### Composite Indexes
+```sql
+-- Most common query patterns
+CREATE INDEX idx_events_task_timestamp ON events (task_id, timestamp);
+CREATE INDEX idx_events_type_timestamp ON events (event_type, timestamp);
+CREATE INDEX idx_events_correlation ON events (correlation_id, timestamp);
+
+-- JSONB GIN index for metadata queries
+CREATE INDEX idx_events_metadata_gin ON events USING gin (event_metadata);
+
+-- Task execution queries
+CREATE INDEX idx_executions_status_created ON task_executions (status, created_at);
+CREATE INDEX idx_executions_parent_status ON task_executions (parent_id, status);
+```
+
+#### Connection Pooling
+- Minimum 10 connections, maximum 50 connections
+- Query timeout: 30 seconds
+- Health checks every 30 seconds
+- Automatic connection replacement on failure
+
+#### Batch Operations
+- Event batching for high-throughput scenarios
+- Bulk insert optimizations
+- Prepared statement caching
+
+### Integration Patterns
+
+#### SystemManager Integration
+```python
+class SystemManager:
+    async def _initialize_event_store(self) -> None:
+        """Auto-fallback between PostgreSQL and in-memory stores."""
+        if self.config.database and self.config.database.host:
+            try:
+                self._connection_manager = DatabaseConnectionManager(self.config.database)
+                await self._connection_manager.initialize()
+                self._event_store = PostgreSQLEventStore(self._connection_manager)
+                await self._event_store.initialize()
+                logger.info("PostgreSQL event store initialized successfully")
+            except Exception as e:
+                logger.warning(f"PostgreSQL unavailable, falling back to in-memory store: {e}")
+                self._event_store = InMemoryEventStore()
+        else:
+            self._event_store = InMemoryEventStore()
+```
+
+#### Configuration Integration
+```yaml
+# config/config.yaml
+database:
+  _target_: roma.domain.value_objects.config.database_config.DatabaseConfig
+  host: "${oc.env:ROMA_DB_HOST,localhost}"
+  port: "${oc.env:ROMA_DB_PORT,5432}"
+  database: "${oc.env:ROMA_DB_NAME,roma_db}"
+  user: "${oc.env:ROMA_DB_USER,roma_user}"
+  password: "${oc.env:ROMA_DB_PASSWORD,roma_password}"
+  pool:
+    _target_: roma.domain.value_objects.config.database_config.DatabasePoolConfig
+    min_size: "${oc.env:ROMA_DB_POOL_MIN_SIZE,10}"
+    max_size: "${oc.env:ROMA_DB_POOL_MAX_SIZE,50}"
+```
+
+### Migration Management
+
+#### Alembic Integration
+- **Location**: `src/roma/infrastructure/persistence/migrations/`
+- **Features**:
+  - Automatic schema versioning
+  - Environment-specific configurations
+  - Safe migration rollbacks
+  - Data migration support
+
+#### Migration Commands
+```bash
+# Initialize migrations
+alembic init migrations
+
+# Create new migration
+alembic revision --autogenerate -m "Add event store tables"
+
+# Apply migrations
+alembic upgrade head
+
+# Rollback migrations
+alembic downgrade -1
+```
+
+### Error Handling and Recovery
+
+#### Connection Recovery
+- Automatic reconnection on connection loss
+- Circuit breaker pattern for cascading failures
+- Exponential backoff for retry strategies
+- Graceful degradation to in-memory store
+
+#### Data Integrity
+- ACID transaction guarantees
+- Foreign key constraints
+- Check constraints for data validation
+- Duplicate event prevention
+
+#### Monitoring and Observability
+- Connection pool metrics
+- Query performance tracking
+- Error rate monitoring
+- Health check endpoints
+
+### Testing Strategy
+
+#### Integration Tests
+- **Location**: `tests/integration/persistence/`
+- **Coverage**: Complete CRUD operations, concurrent access, error scenarios
+- **Database**: Isolated test database with cleanup between tests
+
+#### Performance Tests
+- Load testing with 1000+ concurrent operations
+- Memory usage validation
+- Connection pool stress testing
+- Query performance benchmarking
+
+### Production Considerations
+
+#### Security
+- SSL/TLS encryption for connections
+- Role-based access control
+- Parameter sanitization
+- Connection string security
+
+#### Scalability
+- Read replicas for query optimization
+- Connection pooling across instances
+- Horizontal scaling with sharding
+- Cache integration with Redis
+
+#### Backup and Recovery
+- Point-in-time recovery capabilities
+- Automated backup schedules
+- Disaster recovery procedures
+- Data retention policies
+
+### Future Enhancements
+
+#### Planned Improvements
+- ✅ Connection pool duplication fix
+- ✅ Event type reconstruction optimization
+- ⏳ Read replica support
+- ⏳ Streaming replication
+- ⏳ Advanced query optimization
+- ⏳ Metric collection integration
+
 ## Summary
 
 This architecture provides:
 
 1. **Clear Separation of Concerns**: Each object has a single, well-defined responsibility
 2. **Scalability**: Concurrent execution with proper control mechanisms
-3. **Reliability**: Multiple error recovery strategies
-4. **Observability**: Complete event tracking and tracing
+3. **Reliability**: Multiple error recovery strategies with PostgreSQL persistence
+4. **Observability**: Complete event tracking and tracing with event sourcing
 5. **Flexibility**: Plugin-based agent and tool system
 6. **Maintainability**: Clean architecture with clear boundaries
 7. **Extensibility**: Framework-agnostic design enables easy adoption of new agent frameworks
+8. **Persistence**: Robust PostgreSQL layer with event sourcing and checkpoint recovery
 
-The system follows SOLID principles, uses immutable data structures for thread safety, and provides comprehensive error handling and recovery mechanisms.
+The system follows SOLID principles, uses immutable data structures for thread safety, and provides comprehensive error handling and recovery mechanisms with enterprise-grade persistence capabilities.

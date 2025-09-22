@@ -9,15 +9,20 @@ Task 1.3.1: Framework-agnostic agent runtime abstraction
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any, Optional, List, Union
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.agent_type import AgentType
-from src.roma.domain.value_objects.agent_responses import AtomizerResult
-from src.roma.application.services.event_store import InMemoryEventStore
-from src.roma.application.services.context_builder_service import TaskContext
-from src.roma.infrastructure.agents.agent_factory import AgentFactory
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.result_envelope import ResultEnvelope, AnyResultEnvelope, ExecutionMetrics
+from roma.domain.value_objects.config.agent_config import AgentConfig
+from roma.application.services.event_store import InMemoryEventStore
+from roma.application.services.event_publisher import EventPublisher
+from roma.application.services.context_builder_service import TaskContext
+from roma.infrastructure.agents.agent_factory import AgentFactory
+from roma.infrastructure.agents.configurable_agent import ConfigurableAgent
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +37,18 @@ class AgentRuntimeService:
     
     def __init__(
         self,
-        event_store: Optional[InMemoryEventStore] = None,
-        agent_factory: Optional[AgentFactory] = None
+        agent_factory: AgentFactory,
+        event_publisher: EventPublisher
     ):
         """
         Initialize the agent runtime service.
 
         Args:
-            event_store: Event store for runtime events
-            agent_factory: Agent factory for creating configured agents
+            agent_factory: Agent factory for creating configured agents (required)
+            event_publisher: Event publisher for runtime events (required)
         """
-        self._event_store = event_store
         self._agent_factory = agent_factory
+        self._event_publisher = event_publisher
         self._initialized = False
         self._runtime_agents: Dict[str, Any] = {}  # Pre-created agents at startup
         self._runtime_metrics = {
@@ -65,9 +70,8 @@ class AgentRuntimeService:
         logger.info("Initializing Agent Runtime Service")
 
         # Initialize agent factory
-        if self._agent_factory:
-            await self._agent_factory.initialize()
-            logger.info("Agent factory initialized")
+        await self._agent_factory.initialize()
+        logger.info("Agent factory initialized")
 
         # Skip creating all agents at startup - use lazy loading instead
         logger.info("Using lazy agent creation - agents will be created on first use")
@@ -75,51 +79,63 @@ class AgentRuntimeService:
         self._initialized = True
 
         # Emit initialization event
-        await self._emit_runtime_event("runtime_initialized", {
-            "framework": "agno",
-            "agent_factory_available": self._agent_factory is not None,
-            "runtime_agents_created": len(self._runtime_agents)
-        })
+        await self._event_publisher.emit_runtime_initialized(
+            framework="agno",
+            agent_factory_available=True,
+            runtime_agents_created=len(self._runtime_agents)
+        )
 
         logger.info(f"Agent Runtime Service initialized with {len(self._runtime_agents)} runtime agents")
 
+    async def _create_and_cache_agent(self, task_type: TaskType, agent_type: AgentType) -> Optional[ConfigurableAgent]:
+        """
+        Create and cache agent for specified task and agent types.
+
+        Args:
+            task_type: Task type enum
+            agent_type: Agent type enum
+
+        Returns:
+            ConfigurableAgent instance or None if creation failed
+        """
+        agent_key = f"{task_type.value}_{agent_type.value}"
+
+        try:
+            # Get agent config from factory
+            config_dict = self._agent_factory.get_agent_config(task_type, agent_type)
+            agent_config = AgentConfig(**config_dict)
+
+            # Create agent
+            agent = await self._agent_factory.create_agent(agent_config)
+
+            # Cache the agent
+            self._runtime_agents[agent_key] = agent
+            self._increment_metric("agents_created")
+            logger.debug(f"Created and cached agent: {agent_key}")
+
+            return agent
+
+        except Exception as e:
+            logger.error(f"Failed to create agent {agent_key}: {e}")
+            return None
+
     async def _create_all_agents(self) -> None:
         """Create all configured agents at startup and cache them."""
-        if not self._agent_factory:
-            logger.warning("No agent factory available - skipping agent creation")
-            return
-
-        from src.roma.domain.value_objects.task_type import TaskType
-        from src.roma.domain.value_objects.agent_type import AgentType
-
         created_count = 0
         failed_count = 0
 
         for task_type in TaskType:
             for agent_type in AgentType:
-                agent_key = f"{task_type.value}_{agent_type.value}"
-
                 try:
-                    # Get agent configuration dictionary from factory
-                    config_dict = self._agent_factory.get_agent_config(task_type, agent_type)
-
-                    # Convert dictionary to AgentConfig object
-                    from src.roma.domain.value_objects.config.agent_config import AgentConfig
-                    agent_config = AgentConfig.from_dict(config_dict)
-
-                    # Create agent using factory with proper AgentConfig object
-                    agent = await self._agent_factory.create_agent(agent_config)
-                    self._runtime_agents[agent_key] = agent
-                    created_count += 1
-                    logger.info(f"✅ Created runtime agent: {agent_key}")
-
-                except Exception as e:
+                    agent = await self._create_and_cache_agent(task_type, agent_type)
+                    if agent:
+                        created_count += 1
+                    else:
+                        failed_count += 1
+                except Exception:
                     failed_count += 1
-                    logger.debug(f"⚠️  No config for {agent_key}: {e}")
-                    # Not an error - some agents may not be configured
 
         logger.info(f"Runtime agent creation complete: {created_count} created, {failed_count} skipped")
-        self._runtime_metrics["agents_created"] = created_count
 
     async def shutdown(self) -> None:
         """Shutdown the agent runtime service."""
@@ -132,14 +148,14 @@ class AgentRuntimeService:
         self._runtime_agents.clear()
         
         # Emit shutdown event
-        await self._emit_runtime_event("runtime_shutdown", {
-            "metrics": self._runtime_metrics.copy()
-        })
+        await self._event_publisher.emit_runtime_shutdown(
+            metrics=self._runtime_metrics.copy()
+        )
         
         self._initialized = False
         logger.info("Agent Runtime Service shutdown complete")
         
-    async def get_agent(self, task_type: TaskType, agent_type: AgentType) -> Any:
+    async def get_agent(self, task_type: TaskType, agent_type: AgentType) -> ConfigurableAgent:
         """
         Get agent for the specified task type and agent type (lazy creation).
 
@@ -148,7 +164,7 @@ class AgentRuntimeService:
             agent_type: Agent type enum
 
         Returns:
-            Agent instance (created on first use)
+            ConfigurableAgent instance (created on first use)
 
         Raises:
             RuntimeError: If service not initialized or agent config not available
@@ -165,29 +181,14 @@ class AgentRuntimeService:
 
         # Create agent on-demand (lazy loading)
         logger.info(f"Creating agent on-demand: {agent_key}")
-        try:
-            # Get agent configuration dictionary from factory
-            config_dict = self._agent_factory.get_agent_config(task_type, agent_type)
+        agent = await self._create_and_cache_agent(task_type, agent_type)
 
-            # Convert dictionary to AgentConfig object
-            from src.roma.domain.value_objects.config.agent_config import AgentConfig
-            agent_config = AgentConfig.from_dict(config_dict)
+        if not agent:
+            raise RuntimeError(f"Agent {agent_key} not available")
 
-            # Create agent using factory with proper AgentConfig object
-            agent = await self._agent_factory.create_agent(agent_config)
-
-            # Cache the agent for future use
-            self._runtime_agents[agent_key] = agent
-            self._runtime_metrics["agents_created"] += 1
-
-            logger.info(f"✅ Created and cached agent on-demand: {agent_key}")
-            return agent
-
-        except Exception as e:
-            logger.error(f"Failed to create agent {agent_key}: {e}")
-            raise RuntimeError(f"Agent {agent_key} not available - {e}")
+        return agent
             
-    async def execute_agent(self, agent: Any, task: TaskNode, context: Optional[TaskContext] = None) -> Dict[str, Any]:
+    async def execute_agent(self, agent: ConfigurableAgent, task: TaskNode, context: Optional[TaskContext] = None, agent_type: Optional[AgentType] = None, execution_id: Optional[str] = None) -> AnyResultEnvelope:
         """
         Execute an agent with the given task and optional TaskContext.
 
@@ -195,56 +196,52 @@ class AgentRuntimeService:
             agent: Agent instance to execute
             task: Task to execute
             context: Optional TaskContext with rich multimodal context
+            agent_type: Type of agent (ATOMIZER, PLANNER, EXECUTOR, AGGREGATOR) for metadata
+            execution_id: Execution ID for session isolation (if supported by framework)
 
         Returns:
-            Execution result
+            ResultEnvelope with execution result
         """
         self._ensure_initialized()
-        
+        start_time = datetime.now()
+
         try:
             # Emit execution start event
-            await self._emit_runtime_event("agent_execution_started", {
-                "task_id": task.task_id,
-                "task_type": task.task_type.value,
-                "agent_name": getattr(agent, 'name', 'unknown'),
-                "context_provided": context is not None,
-                "context_files": len([item for item in context.context_items if item.content_type.value in ["IMAGE", "AUDIO", "VIDEO", "FILE"]]) if context else 0
-            })
+            await self._event_publisher.emit_agent_execution_started(task, agent, context)
 
             # Execute ConfigurableAgent directly with TaskContext
+            # Pass execution_id for session isolation if supported
+            if hasattr(agent, 'set_execution_context') and execution_id:
+                agent.set_execution_context(execution_id)
+
             structured_result = await agent.run(task, context)
 
-            # Convert structured response to runtime format
-            result = {
-                "result": structured_result.model_dump() if hasattr(structured_result, 'model_dump') else structured_result,
-                "success": True,
-                "agent_name": getattr(agent, 'agent_name', 'ConfigurableAgent'),
-                "response_type": type(structured_result).__name__ if structured_result else "None"
-            }
+            # Validate that agent returned a proper result
+            if structured_result is None:
+                raise ValueError(f"Agent {agent.name} returned None result for task {task.task_id} - this indicates an agent execution problem")
+
+            # Create result envelope with execution metrics
+            result_envelope = self._create_result_envelope(
+                structured_result=structured_result,
+                task=task,
+                agent=agent,
+                agent_type=agent_type,
+                execution_id=execution_id,
+                start_time=start_time
+            )
             
             # Update metrics
-            self._runtime_metrics["agents_executed"] += 1
-            
+            self._increment_metric("agents_executed")
+
             # Emit execution success event
-            await self._emit_runtime_event("agent_execution_completed", {
-                "task_id": task.task_id,
-                "task_type": task.task_type.value,
-                "agent_name": getattr(agent, 'name', 'unknown'),
-                "success": result.get("success", True),
-                "artifacts_created": len(result.get("artifacts", []))
-            })
-            
+            await self._event_publisher.emit_agent_execution_completed(task, agent, success=True)
+
             logger.debug(f"Executed agent for task {task.task_id} with context: {context is not None}")
-            return result
+            return result_envelope
             
         except Exception as e:
-            self._runtime_metrics["runtime_errors"] += 1
-            await self._emit_runtime_event("agent_execution_failed", {
-                "task_id": task.task_id,
-                "task_type": task.task_type.value,
-                "agent_name": getattr(agent, 'name', 'unknown'),
-                "error": str(e)
-            })
+            self._increment_metric("runtime_errors")
+            await self._event_publisher.emit_agent_execution_failed(task, agent, str(e))
             logger.error(f"Failed to execute agent for task {task.task_id}: {e}")
             raise
             
@@ -270,22 +267,78 @@ class AgentRuntimeService:
         """Ensure the runtime service is initialized."""
         if not self._initialized:
             raise RuntimeError("Agent runtime service not initialized. Call initialize() first.")
-            
-    async def _emit_runtime_event(self, event_type: str, data: Dict[str, Any]) -> None:
-        """Emit a runtime event."""
-        try:
-            if self._event_store:
-                from src.roma.domain.events.task_events import BaseTaskEvent, utc_now
-                from uuid import uuid4
 
-                event = BaseTaskEvent(
-                    event_id=str(uuid4()),
-                    event_type=f"runtime.{event_type}",
-                    task_id=data.get("task_id", "runtime-event"),
-                    timestamp=utc_now(),
-                    metadata={**data, "framework": "agno"}
-                )
-                await self._event_store.append(event)
-        except Exception as e:
-            logger.error(f"Failed to emit runtime event {event_type}: {e}")
-            # Don't fail the main operation if event emission fails
+    def _increment_metric(self, metric_name: str) -> None:
+        """Increment a runtime metric."""
+        if metric_name in self._runtime_metrics:
+            self._runtime_metrics[metric_name] += 1
+        else:
+            logger.warning(f"Unknown metric: {metric_name}")
+
+    def _extract_execution_metrics(self, structured_result: Any, start_time: datetime) -> ExecutionMetrics:
+        """
+        Extract execution metrics from agent result.
+
+        Args:
+            structured_result: Agent execution result
+            start_time: Execution start time
+
+        Returns:
+            ExecutionMetrics with timing and usage data
+        """
+        execution_time = (datetime.now() - start_time).total_seconds()
+        return ExecutionMetrics(
+            execution_time=execution_time,
+            tokens_used=getattr(structured_result, 'tokens_used', 0) if structured_result else 0,
+            model_calls=1,
+            cost_estimate=getattr(structured_result, 'cost_estimate', 0.0) if structured_result else 0.0
+        )
+
+    def _create_result_envelope(
+        self,
+        structured_result: Any,
+        task: TaskNode,
+        agent: ConfigurableAgent,
+        agent_type: Optional[AgentType],
+        execution_id: Optional[str],
+        start_time: datetime
+    ) -> ResultEnvelope:
+        """
+        Create result envelope with execution metrics and metadata.
+
+        Args:
+            structured_result: Agent execution result
+            task: Task that was executed
+            agent: Agent instance that executed the task
+            agent_type: Type of agent for metadata
+            execution_id: Execution ID for session isolation
+            start_time: Execution start time
+
+        Returns:
+            Complete result envelope with metrics and metadata
+        """
+        # Extract execution metrics
+        execution_metrics = self._extract_execution_metrics(structured_result, start_time)
+
+        # Keep typed Pydantic result as-is (avoid converting to dict)
+        primary_result = structured_result
+        output_text = None  # Envelope will provide extract_primary_output()
+
+        # Create result envelope with proper agent type
+        return ResultEnvelope.create_success(
+            result=primary_result,
+            task_id=task.task_id,
+            execution_id=f"agent_{task.task_id}",
+            agent_type=agent_type or AgentType.EXECUTOR,
+            execution_metrics=execution_metrics,
+            artifacts=[],  # Agents don't typically create artifacts directly
+            output_text=output_text,
+            metadata={
+                "agent_name": agent.name,
+                "agent_type": (agent_type or AgentType.EXECUTOR).value,
+                "response_type": type(structured_result).__name__ if structured_result else "None",
+                "framework": "agno",
+                "execution_id": execution_id or "unknown"
+            }
+        )
+

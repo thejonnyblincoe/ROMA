@@ -9,17 +9,17 @@ import pytest
 from unittest.mock import Mock
 from typing import Dict, Any, List
 
-from src.roma.application.services.context_builder_service import (
+from roma.application.services.context_builder_service import (
     ContextBuilderService,
     ContextItem,
     TaskContext
 )
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.entities.artifacts.file_artifact import FileArtifact
-from src.roma.domain.entities.media_file import MediaFile
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.media_type import MediaType
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.entities.artifacts.file_artifact import FileArtifact
+from roma.domain.entities.media_file import MediaFile
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.media_type import MediaType
 
 
 class TestContextItem:

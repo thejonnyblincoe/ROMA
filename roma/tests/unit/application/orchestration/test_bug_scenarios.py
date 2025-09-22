@@ -9,14 +9,14 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from src.roma.application.orchestration.graph_state_manager import GraphStateManager
-from src.roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
-from src.roma.application.services.event_store import InMemoryEventStore
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.application.orchestration.graph_state_manager import GraphStateManager
+from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
+from roma.application.services.event_store import InMemoryEventStore
 
 from .test_utils import (
     TestGraphFactory,
@@ -49,7 +49,7 @@ class TestCriticalBugScenarios:
         
         This test should FAIL initially to expose the bug.
         """
-        from src.roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
+        from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
         
         # Create test environment
         graph = DynamicTaskGraph(root_node=sample_node)
@@ -102,7 +102,7 @@ class TestCriticalBugScenarios:
         
         This test should FAIL initially to expose the bug.
         """
-        from src.roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
+        from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
         
         # Create multiple nodes
         nodes = []
@@ -175,7 +175,7 @@ class TestCriticalBugScenarios:
         
         This test should FAIL initially to expose the race condition bug.
         """
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         # Create event store that fails intermittently
         failing_event_store = AsyncMock()
@@ -212,7 +212,7 @@ class TestCriticalBugScenarios:
         
         This test should FAIL initially to expose concurrency bugs.
         """
-        from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+        from roma.application.orchestration.graph_state_manager import GraphStateManager
         
         event_store = InMemoryEventStore()
         
@@ -270,7 +270,7 @@ class TestCriticalBugScenarios:
         
         This test should FAIL initially to expose deadlock detection bugs.
         """
-        from src.roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
+        from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
         
         # Create a scenario that could lead to undetected deadlock
         event_store = InMemoryEventStore()
@@ -344,7 +344,7 @@ class TestEdgeCaseCoverage:
         
         This edge case is not covered in original tests.
         """
-        from src.roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
+        from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
         
         event_store = InMemoryEventStore()
         graph = DynamicTaskGraph()  # Start with empty graph
@@ -395,7 +395,7 @@ class TestEdgeCaseCoverage:
         
         This edge case tests error propagation and final state consistency.
         """
-        from src.roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
+        from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
         
         # Create graph with multiple independent nodes
         nodes = []
@@ -445,7 +445,7 @@ class TestEdgeCaseCoverage:
         
         Tests stack overflow and performance with deep recursion-like execution.
         """
-        from src.roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
+        from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
         
         # Create very deep linear chain (100 nodes)
         nodes = []

@@ -59,6 +59,12 @@ dependencies = [
     "uvicorn>=0.20.0",
     # Agent framework integration
     "agno>=2.0",
+    # LLM provider integration
+    "litellm>=1.40.0",
+    # Database persistence
+    "asyncpg>=0.29.0",
+    "sqlalchemy>=2.0.0",
+    "alembic>=1.13.0",
 ]
 
 # Optional dependencies for different use cases
@@ -325,3 +331,8 @@ src_paths = ["src", "tests"]
 # Known first party modules
 known_first_party = ["src"]
 known_local_folder = ["tests"]
+
+[dependency-groups]
+dev = [
+    "hydra-core>=1.3.2",
+]

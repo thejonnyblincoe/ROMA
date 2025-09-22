@@ -11,8 +11,8 @@ import hydra
 from hydra import compose, initialize
 from omegaconf import DictConfig, OmegaConf
 from typing import Optional
-from src.roma.infrastructure.orchestration.system_manager import SystemManager
-from src.roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.infrastructure.orchestration.system_manager import SystemManager
+from roma.domain.value_objects.config.roma_config import ROMAConfig
 
 
 def get_roma_config(config_path: Optional[str] = None, profile: Optional[str] = None) -> ROMAConfig:

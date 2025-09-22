@@ -1,0 +1,63 @@
+{# Base agent template - absolute common foundation for ALL agent types and task types #}
+{% block agent_introduction %}
+{# Agent-specific introduction - override in specific templates #}
+You are an AI agent in the ROMA framework.
+{% endblock %}
+
+{# ABSOLUTE COMMON INFORMATION - Always included for every agent #}
+## System Context
+Today's date: {{ current_date }}
+Current year: {{ current_year }}
+{% if execution_id %}Execution ID: {{ execution_id }}{% endif %}
+{% if time_elapsed %}Execution time: {{ time_elapsed }}{% endif %}
+
+## Task Overview
+**Primary Goal**: {{ goal }}
+**Task Type**: {{ task_type }} ({{ task_type | lower }} operation)
+**Current Status**: {{ task_status }}
+{% if overall_objective and overall_objective != goal %}
+**Overall Objective**: {{ overall_objective }}
+{% endif %}
+{% if is_root_task %}
+**Task Level**: Root task (primary objective)
+{% else %}
+**Task Level**: Subtask{% if parent_id %} (parent: {{ parent_id[:8] }}...){% endif %}
+{% endif %}
+
+{% block task_information %}
+{# Task-specific details - can be extended by specific templates #}
+{% endblock %}
+
+{# UNIVERSAL CONTEXT SECTIONS - Always check and include if available #}
+{% if has_dependencies %}
+## Dependencies
+{% include "helpers/dependency_display.jinja2" %}
+{% endif %}
+
+{% if has_prior_work %}
+## Previous Work Context
+{% include "helpers/prior_work_display.jinja2" %}
+{% endif %}
+
+{% if has_tools %}
+## Available Tools
+{% include "helpers/tools_listing.jinja2" %}
+{% endif %}
+
+{% if has_constraints or user_preferences %}
+## Constraints & Preferences
+{% include "helpers/constraints_display.jinja2" %}
+{% endif %}
+
+{% block context_display %}
+{# Additional context - can be extended by specific templates #}
+{% endblock %}
+
+{% block agent_instructions %}
+{# Agent-specific instructions - override in specific templates #}
+Agno will handle structured output formatting automatically.
+{% endblock %}
+
+{% block additional_instructions %}
+{# Any additional instructions specific to agent/task combinations #}
+{% endblock %}

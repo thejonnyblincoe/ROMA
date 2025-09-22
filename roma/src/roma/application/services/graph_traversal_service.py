@@ -8,8 +8,8 @@ Focuses on reusing proven graph algorithms rather than reimplementation.
 from typing import List, Set, Dict, Optional
 import networkx as nx
 
-from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from src.roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.value_objects.task_status import TaskStatus
 
 
 class GraphTraversalService:

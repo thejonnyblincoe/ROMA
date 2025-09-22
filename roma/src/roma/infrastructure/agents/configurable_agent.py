@@ -5,15 +5,18 @@ Generic agent implementation that can be configured for any agent type
 using Jinja2 templates and Agno's native output_schema support.
 """
 
-from typing import TypeVar, Generic, Type, Dict, Any, Optional, Union
+from typing import TypeVar, Generic, Type, Optional, TYPE_CHECKING
 import logging
-from jinja2 import Template, TemplateError
 
-from src.roma.domain.interfaces.agent import Agent
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.config.agent_config import AgentConfig
-from src.roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
-from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+from roma.domain.interfaces.agent import Agent
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.config.agent_config import AgentConfig
+from roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
+from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+
+if TYPE_CHECKING:
+    from roma.infrastructure.prompts.prompt_template_manager import PromptTemplateManager
+    from roma.application.services.context_builder_service import TaskContext
 
 T = TypeVar('T')
 logger = logging.getLogger(__name__)
@@ -21,10 +24,11 @@ logger = logging.getLogger(__name__)
 
 class ConfigurableAgent(Agent[T], Generic[T]):
     """
-    Generic configurable agent using Agno framework.
+    Configurable agent that delegates to specialized services.
 
-    This agent can be configured to serve as any agent type (atomizer, planner, etc.)
-    by providing appropriate prompt templates and output schemas.
+    - PromptTemplateManager renders prompts with full context
+    - Agno executes with output_schema for structured output
+    - Clean separation of concerns with proper delegation
     """
 
     def __init__(
@@ -32,29 +36,21 @@ class ConfigurableAgent(Agent[T], Generic[T]):
         config: AgentConfig,
         framework_adapter: AgnoFrameworkAdapter,
         output_schema: Type[T],
-        prompt_template: Union[str, Template]
+        prompt_template_manager: "PromptTemplateManager"
     ):
         """
-        Initialize configurable agent.
+        Initialize configurable agent with dependencies.
 
         Args:
             config: AgentConfig object (already validated)
             framework_adapter: Framework adapter for Agno integration
             output_schema: Pydantic output schema class (Agno's output_schema)
-            prompt_template: Jinja2 template string or Template object
+            prompt_template_manager: Manager for template operations
         """
         self.config = config
         self.adapter = framework_adapter
         self.output_schema = output_schema
-
-        try:
-            if isinstance(prompt_template, Template):
-                self.prompt_template = prompt_template
-            else:
-                self.prompt_template = Template(prompt_template)
-        except TemplateError as e:
-            logger.error(f"Invalid prompt template: {e}")
-            raise ValueError(f"Invalid prompt template: {e}")
+        self.prompt_manager = prompt_template_manager
 
         # Injected dependencies
         self.toolkit_manager: Optional[AgnoToolkitManager] = None
@@ -62,20 +58,53 @@ class ConfigurableAgent(Agent[T], Generic[T]):
         self.agent_name = config.name
         logger.info(f"Initialized {self.agent_name} with output schema {output_schema.__name__}")
 
-    async def run(self, task: TaskNode, context: Dict[str, Any]) -> T:
+    @property
+    def name(self) -> str:
+        """Alias for agent name to ensure compatibility with callers expecting `.name`.
+
+        Some parts of the system (and external frameworks like Agno) expose the
+        agent identifier via a `name` attribute. ConfigurableAgent historically
+        stored it as `agent_name`. This property provides a stable `.name` alias
+        so the rest of the codebase can consistently access `agent.name`.
         """
-        Execute agent with task and context.
+        return self.agent_name
+
+    async def run(self, task: TaskNode, context: "TaskContext") -> T:
+        """
+        Execute agent with proper separation of concerns.
 
         Args:
             task: TaskNode to process
-            context: Execution context with relevant data
+            context: TaskContext from ContextBuilderService
 
         Returns:
             Structured result of type T
         """
         try:
-            # Render prompt with Jinja2 template
-            prompt = self._render_prompt(task, context)
+            # Delegate prompt rendering to PromptTemplateManager
+            # Use the agent config's prompt_template directly
+            if self.config.prompt_template:
+                template = self.prompt_manager.load_template(self.config.prompt_template)
+
+                # Get template variables
+                if self.prompt_manager.context_builder:
+                    template_vars = await self.prompt_manager.context_builder.export_template_variables(
+                        task, context
+                    )
+                else:
+                    template_vars = self.prompt_manager._get_basic_template_variables(
+                        self.config.type, self.config.task_type.value if self.config.task_type else "GENERAL", task, context
+                    )
+
+                prompt = template.render(**template_vars).strip()
+            else:
+                # Fallback to old method
+                prompt = await self.prompt_manager.render_agent_prompt(
+                    agent_type=self.config.type,
+                    task_type=self.config.task_type.value if self.config.task_type else "GENERAL",
+                    task=task,
+                    task_context=context
+                )
 
             # Get tools from configuration
             tools = self._get_tools()
@@ -83,7 +112,7 @@ class ConfigurableAgent(Agent[T], Generic[T]):
             # Create model configuration
             model_config = self._create_model_config()
 
-            # Execute via Agno adapter with native output_schema
+            # Execute via Agno with output_schema (Agno handles structured output)
             result = await self.adapter.run(
                 prompt=prompt,
                 output_schema=self.output_schema,
@@ -99,34 +128,6 @@ class ConfigurableAgent(Agent[T], Generic[T]):
             logger.error(f"{self.agent_name} execution failed: {e}")
             raise
 
-    def _render_prompt(self, task: TaskNode, context: Dict[str, Any]) -> str:
-        """
-        Render prompt template with task and context data.
-
-        Args:
-            task: TaskNode to include in template
-            context: Context data for template
-
-        Returns:
-            Rendered prompt string
-        """
-        try:
-            prompt = self.prompt_template.render(
-                task=task,
-                context=context,
-                config=self.config,
-                # Add helpful template functions
-                task_type=task.task_type.value if task.task_type else "UNKNOWN",
-                status=task.status.value if task.status else "UNKNOWN",
-                goal=task.goal
-            )
-
-            logger.debug(f"Rendered prompt for {self.agent_name}: {prompt[:200]}...")
-            return prompt
-
-        except TemplateError as e:
-            logger.error(f"Template rendering failed for {self.agent_name}: {e}")
-            raise ValueError(f"Template rendering failed: {e}")
 
     def _get_tools(self) -> list:
         """Get tools from configuration."""

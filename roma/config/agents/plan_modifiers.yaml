@@ -7,14 +7,14 @@
 # ============================================
 
 default_plan_modifier:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "DefaultPlanModifier"
   type: "plan_modifier"
   task_type: null  # Can handle any task type
   description: "Modifies existing plans based on user feedback"
   
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "plan_modifier/default.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "plan_modifier/plan_modifier.jinja2"
   output_schema: "PlanModifierResult"
   
   config:
@@ -24,14 +24,14 @@ default_plan_modifier:
     max_plan_size: 20
 
 hitl_plan_modifier:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "HITLPlanModifier"
   type: "plan_modifier"
   task_type: null
   description: "Human-in-the-loop plan modifier for interactive refinement"
   
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "plan_modifier/hitl.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "plan_modifier/plan_modifier.jinja2"
   output_schema: "PlanModifierResult"
   
   config:
@@ -41,14 +41,14 @@ hitl_plan_modifier:
     interactive_mode: true
 
 error_recovery_plan_modifier:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ErrorRecoveryPlanModifier"
   type: "plan_modifier"
   task_type: null
   description: "Modifies plans to recover from failures and errors"
   
-  model: ${models.gpt_4o}
-  prompt_template: "plan_modifier/error_recovery.jinja2"
+  model: ${profiles.models.gpt_4o}
+  prompt_template: "plan_modifier/plan_modifier.jinja2"
   output_schema: "PlanModifierResult"
   
   config:
@@ -59,14 +59,14 @@ error_recovery_plan_modifier:
     force_atomic_on_repeated_failure: true
 
 optimization_plan_modifier:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "OptimizationPlanModifier"
   type: "plan_modifier"
   task_type: null
   description: "Optimizes plans for efficiency and parallelization"
   
-  model: ${models.gpt_4o}
-  prompt_template: "plan_modifier/optimization.jinja2"
+  model: ${profiles.models.gpt_4o}
+  prompt_template: "plan_modifier/plan_modifier.jinja2"
   output_schema: "PlanModifierResult"
   
   config:
@@ -77,14 +77,14 @@ optimization_plan_modifier:
     cost_optimization: true
 
 constraint_plan_modifier:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ConstraintPlanModifier"
   type: "plan_modifier"
   task_type: null
   description: "Modifies plans to meet specific constraints (time, cost, resources)"
   
-  model: ${models.claude_3_5_haiku}
-  prompt_template: "plan_modifier/constraint.jinja2"
+  model: ${profiles.models.claude_3_5_haiku}
+  prompt_template: "plan_modifier/plan_modifier.jinja2"
   output_schema: "PlanModifierResult"
   
   config:
@@ -96,14 +96,14 @@ constraint_plan_modifier:
     enforcement_strategy: "strict"  # strict, best_effort, advisory
 
 adaptive_plan_modifier:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "AdaptivePlanModifier"
   type: "plan_modifier"
   task_type: null
   description: "Learns from execution history to improve plan modifications"
   
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "plan_modifier/adaptive.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "plan_modifier/plan_modifier.jinja2"
   output_schema: "PlanModifierResult"
   
   config:
@@ -113,14 +113,14 @@ adaptive_plan_modifier:
     continuous_improvement: true
 
 replan_modifier:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ReplanModifier"
   type: "plan_modifier"
   task_type: null
   description: "Handles NEEDS_REPLAN status by creating alternative plans"
   
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "plan_modifier/replan.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "plan_modifier/plan_modifier.jinja2"
   output_schema: "PlanModifierResult"
   
   config:

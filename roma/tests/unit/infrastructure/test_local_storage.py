@@ -6,13 +6,14 @@ directory management, and storage information.
 """
 
 import pytest
+import pytest_asyncio
 import asyncio
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 
-from src.roma.infrastructure.storage.local_storage import LocalFileStorage
-from src.roma.infrastructure.storage.storage_interface import StorageConfig
+from roma.infrastructure.storage.local_storage import LocalFileStorage
+from roma.infrastructure.storage.storage_interface import StorageConfig
 
 
 class TestStorageConfig:
@@ -50,16 +51,19 @@ class TestLocalFileStorage:
         """Create storage config for testing."""
         return StorageConfig.from_mount_path(str(temp_mount_path))
     
-    @pytest.fixture
-    def storage(self, storage_config):
+    @pytest_asyncio.fixture
+    async def storage(self, storage_config):
         """Create storage instance for testing."""
-        return LocalFileStorage(storage_config)
-    
-    def test_initialization(self, storage, temp_mount_path):
+        storage = LocalFileStorage(storage_config)
+        await storage.initialize()
+        return storage
+
+    @pytest.mark.asyncio
+    async def test_initialization(self, storage, temp_mount_path):
         """Test storage initialization."""
         assert storage.mount_path == temp_mount_path
         assert storage.mount_path.exists()
-        
+
         # Check subdirectories were created
         artifacts_path = temp_mount_path / "artifacts"
         temp_path = temp_mount_path / "temp"
@@ -284,17 +288,18 @@ class TestLocalFileStorage:
         assert isinstance(count, int)
         assert count >= 0
     
-    def test_get_storage_info(self, storage):
+    @pytest.mark.asyncio
+    async def test_get_storage_info(self, storage):
         """Test getting storage information."""
-        info = storage.get_storage_info()
-        
+        info = await storage.get_storage_info()
+
         assert "mount_path" in info
         assert "total_size_bytes" in info
         assert "total_size_mb" in info
         assert "file_count" in info
         assert "artifacts_path" in info
         assert "temp_path" in info
-        
+
         assert info["mount_path"] == str(storage.mount_path)
         assert info["file_count"] >= 0
         assert info["total_size_bytes"] >= 0

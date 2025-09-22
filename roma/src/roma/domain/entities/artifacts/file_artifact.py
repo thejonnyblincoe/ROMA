@@ -7,8 +7,8 @@ Specialized artifact for file content using MediaFile.
 from typing import Dict, Any, Optional
 from pathlib import Path
 
-from src.roma.domain.value_objects.media_type import MediaType
-from src.roma.domain.entities.media_file import MediaFile
+from roma.domain.value_objects.media_type import MediaType
+from roma.domain.entities.media_file import MediaFile
 from .base_artifact import BaseArtifact
 
 

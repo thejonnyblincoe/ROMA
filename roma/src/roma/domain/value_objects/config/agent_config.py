@@ -8,7 +8,7 @@ Single source of truth for agent configuration across the system.
 from pydantic.dataclasses import dataclass
 from pydantic import Field, field_validator
 from dataclasses import field
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 from ..task_type import TaskType
 from .model_config import ModelConfig
@@ -21,7 +21,7 @@ class AgentConfig:
     
     name: str
     type: str  # atomizer, planner, executor, aggregator, plan_modifier
-    task_type: TaskType
+    task_type: Optional[TaskType]
     description: str = ""
     model: ModelConfig = ModelConfig()
     prompt_template: Optional[str] = None
@@ -48,14 +48,16 @@ class AgentConfig:
     
     @field_validator("task_type", mode="before")
     @classmethod
-    def validate_task_type(cls, v) -> TaskType:
-        """Convert string to TaskType if needed."""
-        if isinstance(v, str):
+    def validate_task_type(cls, v) -> Optional[TaskType]:
+        """Convert string to TaskType if needed, allow null for general-purpose agents."""
+        if v is None:
+            return None
+        elif isinstance(v, str):
             return TaskType.from_string(v)
         elif isinstance(v, TaskType):
             return v
         else:
-            raise ValueError(f"task_type must be TaskType or string, got: {type(v)}")
+            raise ValueError(f"task_type must be TaskType, string, or null, got: {type(v)}")
 
     @field_validator("prompt_template")
     @classmethod
@@ -82,7 +84,7 @@ class AgentConfig:
         return {
             "name": self.name,
             "type": self.type,
-            "task_type": self.task_type.value,
+            "task_type": self.task_type.value if self.task_type else None,
             "description": self.description,
             "model": self.model.to_dict(),
             "prompt_template": self.prompt_template,

@@ -7,10 +7,12 @@ Only initializes toolkits when they are attached to agents (lazy initialization)
 
 from typing import Dict, Any, List, Optional, Set, Union
 import logging
+from pathlib import Path
 from omegaconf import DictConfig, OmegaConf
 
-from src.roma.domain.value_objects import ToolkitConfig, AgentToolkitsConfig
-from .agno_toolkit_manager import AgnoToolkitManager
+from roma.domain.value_objects import ToolkitConfig, AgentToolkitsConfig
+from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+from roma.infrastructure.utils.async_file_utils import async_path_exists, async_yaml_load
 
 logger = logging.getLogger(__name__)
 
@@ -303,27 +305,22 @@ class ToolkitLoader:
     async def load_toolkit_configs(self, config_path: str) -> Dict[str, Any]:
         """
         Load toolkit configurations from YAML file.
-        
+
         Args:
             config_path: Path to toolkit definitions YAML file
-            
+
         Returns:
             Dictionary of toolkit configurations
         """
         try:
-            import yaml
-            from pathlib import Path
-            
             config_file = Path(config_path)
-            if not config_file.exists():
+            if not await async_path_exists(config_file):
                 logger.warning(f"Config file not found: {config_path}")
                 return {}
-                
-            with open(config_file, 'r') as f:
-                config_data = yaml.safe_load(f)
-                
+
+            config_data = await async_yaml_load(config_file)
             return config_data or {}
-            
+
         except Exception as e:
             logger.error(f"Failed to load toolkit configs from {config_path}: {e}")
             return {}

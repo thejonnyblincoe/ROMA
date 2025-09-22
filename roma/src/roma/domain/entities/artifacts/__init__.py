@@ -7,13 +7,14 @@ Text is handled as plain strings - only non-text content uses artifacts.
 
 from .base_artifact import BaseArtifact
 from .file_artifact import FileArtifact
-
-# Future artifact types (reminder tasks):
-# from .image_artifact import ImageArtifact
-# from .audio_artifact import AudioArtifact  
-# from .video_artifact import VideoArtifact
+from .image_artifact import ImageArtifact
+from .audio_artifact import AudioArtifact
+from .video_artifact import VideoArtifact
 
 __all__ = [
     "BaseArtifact",
     "FileArtifact",
+    "ImageArtifact",
+    "AudioArtifact",
+    "VideoArtifact",
 ]

@@ -1,0 +1,36 @@
+{# Dependency status display helper #}
+{% if has_dependencies %}
+### Dependency Status ({{ dependency_count }} total)
+
+{% if dependency_validation %}
+{% if dependency_validation.can_execute %}
+✅ **Ready to Execute**: All dependencies satisfied
+{% else %}
+⚠️ **Execution Blocked**: {{ dependency_validation.message }}
+{% endif %}
+
+**Summary**: {{ dependency_validation.completed_count }} completed, {{ dependency_validation.failed_count }} failed, {{ dependency_validation.pending_count }} pending
+{% endif %}
+
+{% if dependency_results %}
+### Dependency Details
+{% for dep in dependency_results %}
+**{{ dep.goal }}** ({{ dep.status | upper }})
+{% if dep.status == "completed" %}
+✅ {{ dep.result_summary | default("Completed successfully") }}
+{% if dep.execution_time %}({{ dep.execution_time }}s){% endif %}
+{% elif dep.status == "failed" %}
+❌ {{ dep.error | default("Failed") }}
+{% elif dep.status == "pending" %}
+⏳ Waiting to start
+{% elif dep.status == "executing" %}
+🔄 Currently executing
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if failed_dependencies %}
+⚠️ **Failed Dependencies**: {{ failed_dependencies | join(", ") }}
+Consider alternative approaches or request replanning.
+{% endif %}
+{% endif %}

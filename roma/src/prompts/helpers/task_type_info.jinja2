@@ -1,0 +1,22 @@
+{# Task type information helper - general task type context for all agents #}
+### {{ task_type }} Task Context
+
+{% if current_task_type_info %}
+**Description**: {{ current_task_type_info.description }}
+
+**Examples of {{ task_type }} tasks**:
+{% for example in current_task_type_info.examples %}
+- {{ example }}
+{% endfor %}
+{% else %}
+{# Fallback if task type info not available #}
+**Task Type**: {{ task_type }}
+**Current Goal**: {{ goal }}
+{% endif %}
+
+{% if task_complexity %}
+**Estimated Complexity**: {{ task_complexity | title }}
+{% endif %}
+
+### Task Type Guidelines
+Focus your {{ agent_type | default("") | lower }} capabilities on {{ task_type | lower }} operations as described above.

@@ -8,13 +8,10 @@ with event emission and concurrency control.
 import asyncio
 from typing import Dict, List, Optional, Any
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from src.roma.domain.events.task_events import (
-    TaskCreatedEvent, TaskStatusChangedEvent, TaskNodeAddedEvent
-)
-from src.roma.application.services.event_store import InMemoryEventStore
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.application.services.event_publisher import EventPublisher
 
 
 class GraphStateManager:
@@ -29,16 +26,16 @@ class GraphStateManager:
     - Execution statistics and monitoring
     """
     
-    def __init__(self, graph: DynamicTaskGraph, event_store: InMemoryEventStore):
+    def __init__(self, graph: DynamicTaskGraph, event_publisher: EventPublisher):
         """
         Initialize GraphStateManager.
-        
+
         Args:
             graph: DynamicTaskGraph to manage
-            event_store: Event store for state change notifications
+            event_publisher: Event publisher for state change notifications
         """
         self.graph = graph
-        self.event_store = event_store
+        self.event_publisher = event_publisher
         self.version = 0
         self._state_lock = asyncio.Lock()
     
@@ -166,7 +163,39 @@ class GraphStateManager:
             
             # Step 3: Increment manager version only after successful event storage
             self.version += 1
-    
+
+    async def add_dependency_edge(self, from_id: str, to_id: str) -> None:
+        """
+        Add a dependency edge between two existing nodes.
+
+        Args:
+            from_id: Source task ID (dependency)
+            to_id: Target task ID (dependent)
+
+        Raises:
+            KeyError: If either task ID is not found in graph
+            ValueError: If adding edge would create a cycle
+        """
+        async with self._state_lock:
+            # Delegate to graph and handle events
+            await self.graph.add_dependency_edge(from_id, to_id)
+
+            # Emit dependency added event for observability
+            dependency_event = DependencyAddedEvent.create(
+                task_id=to_id,
+                dependency_id=from_id,
+                metadata={
+                    "from_task": from_id,
+                    "to_task": to_id,
+                    "dependency_type": "task_dependency",
+                    "graph_version": self.version + 1
+                }
+            )
+            await self.event_store.store_event(dependency_event)
+
+            # Increment version for this state change
+            self.version += 1
+
     def get_ready_nodes(self) -> List[TaskNode]:
         """
         Get nodes ready for execution.
@@ -191,12 +220,24 @@ class GraphStateManager:
     def get_all_nodes(self) -> List[TaskNode]:
         """
         Get all nodes in the graph.
-        
+
         Returns:
             List of all TaskNode objects
         """
         return self.graph.get_all_nodes()
-    
+
+    def get_children_nodes(self, task_id: str) -> List[TaskNode]:
+        """
+        Get child nodes of a specific task.
+
+        Args:
+            task_id: Parent task identifier
+
+        Returns:
+            List of child TaskNode objects
+        """
+        return self.graph.get_children_nodes(task_id)
+
     def has_cycles(self) -> bool:
         """
         Check if graph has cycles.
@@ -227,3 +268,54 @@ class GraphStateManager:
             "version": self.version,
             **status_counts
         }
+
+    async def remove_node(self, task_id: str) -> None:
+        """
+        Remove node from graph with event emission.
+
+        This operation is atomic - either all steps succeed or none do,
+        maintaining consistency between graph state, events, and version.
+
+        Args:
+            task_id: Task identifier to remove
+
+        Raises:
+            KeyError: If task not found
+        """
+        async with self._state_lock:
+            # Step 1: Verify node exists before removal
+            node = self.graph.get_node(task_id)
+            if node is None:
+                raise KeyError(f"Task node {task_id} not found in graph")
+
+            # Step 2: Remove from graph (delegates to DynamicTaskGraph)
+            await self.graph.remove_node(task_id)
+
+            # Step 3: Increment manager version after successful removal
+            self.version += 1
+
+    async def update_node_metadata(self, task_id: str, metadata_updates: Dict[str, Any]) -> TaskNode:
+        """
+        Update node metadata with event emission.
+
+        This operation is atomic - either all steps succeed or none do,
+        maintaining consistency between graph state, events, and version.
+
+        Args:
+            task_id: Task identifier
+            metadata_updates: Dictionary of metadata key-value pairs to update
+
+        Returns:
+            Updated TaskNode
+
+        Raises:
+            KeyError: If task not found
+        """
+        async with self._state_lock:
+            # Step 1: Update metadata (delegates to DynamicTaskGraph)
+            updated_node = await self.graph.update_node_metadata(task_id, metadata_updates)
+
+            # Step 2: Increment manager version after successful update
+            self.version += 1
+
+            return updated_node

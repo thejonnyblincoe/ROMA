@@ -22,45 +22,45 @@ version: "2.0.0"
 agents:
   # Atomizers by task type
   atomizers:
-    RETRIEVE: ${retrieve_atomizer}
-    WRITE: ${write_atomizer}
-    THINK: ${think_atomizer}
-    CODE_INTERPRET: ${code_atomizer}
-    IMAGE_GENERATION: ${image_atomizer}
-    AGGREGATE: ${aggregate_atomizer}
-    
+    RETRIEVE: ${profiles.agents.retrieve_atomizer}
+    WRITE: ${profiles.agents.write_atomizer}
+    THINK: ${profiles.agents.think_atomizer}
+    CODE_INTERPRET: ${profiles.agents.code_atomizer}
+    IMAGE_GENERATION: ${profiles.agents.image_atomizer}
+    AGGREGATE: ${profiles.agents.aggregate_atomizer}
+
   # Planners by task type
   planners:
-    RETRIEVE: ${enhanced_retrieve_planner}
-    WRITE: ${write_planner}
-    THINK: ${think_planner}
-    CODE_INTERPRET: ${code_planner}
-    IMAGE_GENERATION: ${image_planner}
-    AGGREGATE: ${aggregate_planner}
-    
+    RETRIEVE: ${profiles.agents.enhanced_retrieve_planner}
+    WRITE: ${profiles.agents.write_planner}
+    THINK: ${profiles.agents.think_planner}
+    CODE_INTERPRET: ${profiles.agents.code_planner}
+    IMAGE_GENERATION: ${profiles.agents.image_planner}
+    AGGREGATE: ${profiles.agents.aggregate_planner}
+
   # Executors by task type
   executors:
-    RETRIEVE: ${retrieve_executor}
-    WRITE: ${write_executor}
-    THINK: ${think_executor}
-    CODE_INTERPRET: ${code_executor}
-    IMAGE_GENERATION: ${image_executor}
+    RETRIEVE: ${profiles.agents.retrieve_executor}
+    WRITE: ${profiles.agents.write_executor}
+    THINK: ${profiles.agents.think_executor}
+    CODE_INTERPRET: ${profiles.agents.code_executor}
+    IMAGE_GENERATION: ${profiles.agents.image_executor}
     
   # Aggregators by task type
   aggregators:
-    RETRIEVE: ${retrieve_aggregator}
-    WRITE: ${write_aggregator}
-    THINK: ${think_aggregator}
-    CODE_INTERPRET: ${code_aggregator}
-    IMAGE_GENERATION: ${image_aggregator}
-    AGGREGATE: ${research_aggregator}
-    default: ${default_aggregator}
-  
+    RETRIEVE: ${profiles.agents.retrieve_aggregator}
+    WRITE: ${profiles.agents.write_aggregator}
+    THINK: ${profiles.agents.think_aggregator}
+    CODE_INTERPRET: ${profiles.agents.code_aggregator}
+    IMAGE_GENERATION: ${profiles.agents.image_aggregator}
+    AGGREGATE: ${profiles.agents.research_aggregator}
+    default: ${profiles.agents.default_aggregator}
+
   # Plan modifiers
   plan_modifiers:
-    default: ${default_plan_modifier}
-    hitl: ${hitl_plan_modifier}
-    error_recovery: ${error_recovery_plan_modifier}
+    default: ${profiles.agents.default_plan_modifier}
+    hitl: ${profiles.agents.hitl_plan_modifier}
+    error_recovery: ${profiles.agents.error_recovery_plan_modifier}
 
 # Core execution settings
 settings:

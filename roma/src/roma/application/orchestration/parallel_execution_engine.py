@@ -1,341 +1,351 @@
 """
 Parallel Execution Engine for ROMA v2.0.
 
-Implements modified Kahn's algorithm for hierarchical task execution with:
-- Dynamic graph expansion during execution
-- Semaphore-controlled parallel processing 
-- Event-driven state management
-- Graceful error handling and recovery
+Pure concurrency engine that executes TaskNodes in parallel with semaphore control.
+Single responsibility: concurrent execution only, no orchestration logic.
 """
 
 import asyncio
-from typing import List, Dict, Any, Optional, Protocol, Set
+import logging
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.application.orchestration.graph_state_manager import GraphStateManager
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_result import NodeResult
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.node_action import NodeAction
+from roma.application.orchestration.graph_state_manager import GraphStateManager
+from roma.application.services.agent_service_registry import AgentServiceRegistry
+from roma.application.services.context_builder_service import TaskContext
+from roma.application.services.dependency_validator import DependencyValidator
 
-
-class TaskExecutor(Protocol):
-    """Protocol for task execution implementations."""
-    
-    async def execute_task(self, node: TaskNode) -> Dict[str, Any]:
-        """
-        Execute a single task node.
-        
-        Args:
-            node: TaskNode to execute
-            
-        Returns:
-            Dictionary with execution results
-        """
-        ...
+logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ExecutionResult:
-    """Result of graph execution."""
-    
-    total_nodes: int
-    completed_nodes: int
+class ParallelExecutionStats:
+    """Statistics for parallel execution batch."""
+
+    nodes_requested: int
+    nodes_processed: int
+    successful_nodes: int
     failed_nodes: int
-    success: bool
     execution_time_seconds: float
     error_details: Optional[List[Dict[str, Any]]] = None
 
 
 class ParallelExecutionEngine:
     """
-    Parallel execution engine using modified Kahn's algorithm.
-    
-    Key Features:
-    - Modified Kahn's algorithm for DAG traversal
-    - Semaphore-controlled concurrency
-    - Dynamic node addition during execution
-    - Real-time state management through GraphStateManager
-    - Comprehensive error handling and recovery
-    
-    Modified Kahn's Algorithm Flow:
-    1. Initialize in-degree counts for all nodes
-    2. Identify ready nodes (in-degree = 0, status = PENDING)
-    3. Execute ready nodes in parallel (respecting concurrency limit)
-    4. Update dependencies and repeat until completion or deadlock
-    5. Handle dynamic node addition during execution
+    Parallel execution engine for concurrent TaskNode processing.
+
+    Pure concurrency responsibility:
+    - Execute multiple nodes in parallel with semaphore control
+    - Handle individual node execution through TaskNodeProcessor
+    - Manage state transitions via GraphStateManager
+    - Return structured results without orchestration logic
+
+    NOT responsible for:
+    - Main execution loops (ExecutionOrchestrator)
+    - Ready node detection (GraphStateManager)
+    - Graph mutations (ExecutionOrchestrator)
+    - Completion detection (ExecutionOrchestrator)
     """
-    
+
     def __init__(
         self,
         state_manager: GraphStateManager,
-        task_executor: TaskExecutor,
-        max_concurrent_tasks: int = 10
+        max_concurrent_tasks: int = 10,
+        dependency_validator: Optional[DependencyValidator] = None,
+        recovery_manager: Optional[Any] = None
     ):
         """
         Initialize ParallelExecutionEngine.
-        
+
         Args:
             state_manager: GraphStateManager for state coordination
-            task_executor: TaskExecutor implementation for task execution
             max_concurrent_tasks: Maximum number of concurrent task executions
+            dependency_validator: Optional dependency validator for pre-execution validation
+            recovery_manager: Optional recovery manager for dependency failure handling
         """
         self.state_manager = state_manager
-        self.task_executor = task_executor
         self.max_concurrent_tasks = max_concurrent_tasks
-        self.is_running = False
-        
-        # Semaphore to control concurrency
+
+        # Initialize dependency validator with recovery manager integration
+        self.dependency_validator = dependency_validator or DependencyValidator(
+            recovery_manager=recovery_manager
+        )
+
+        # Concurrency control
         self._execution_semaphore = asyncio.Semaphore(max_concurrent_tasks)
-        
+
         # Execution statistics
+        self._total_batches_processed = 0
         self._total_nodes_processed = 0
-        self._completed_nodes = 0
-        self._failed_nodes = 0
-        self._error_details: List[Dict[str, Any]] = []
-        # Track task IDs in case state transitions fail but execution outcome is known
-        self._completed_task_ids: Set[str] = set()
-        self._failed_task_ids: Set[str] = set()
-    
-    async def execute_graph(self) -> ExecutionResult:
-        """
-        Execute the entire task graph using modified Kahn's algorithm.
-        
-        Returns:
-            ExecutionResult with execution statistics
-        """
-        if self.is_running:
-            raise RuntimeError("Execution engine is already running")
-        
-        self.is_running = True
-        start_time = datetime.now(timezone.utc)
-        
-        try:
-            # Reset statistics
-            self._total_nodes_processed = 0
-            self._completed_nodes = 0
-            self._failed_nodes = 0
-            self._error_details = []
-            self._completed_task_ids.clear()
-            self._failed_task_ids.clear()
+        self._total_execution_time = 0.0
 
-            # If graph is empty at start, wait briefly for dynamic additions
-            if not self.state_manager.get_all_nodes():
-                for _ in range(50):  # ~1s total
-                    await asyncio.sleep(0.02)
-                    if self.state_manager.get_all_nodes():
-                        break
-            
-            # Main execution loop (modified Kahn's algorithm)
-            while not self._is_execution_complete():
-                # Get batch of ready nodes
-                ready_batch = self._get_ready_nodes_batch()
-                
-                if not ready_batch:
-                    # No ready nodes but execution not complete - possible deadlock
-                    break
-                
-                # Execute ready nodes in parallel
-                await self._execute_batch(ready_batch)
-            
-            # Calculate final results
-            end_time = datetime.now(timezone.utc)
-            execution_time = (end_time - start_time).total_seconds()
-            
-            all_nodes = self.state_manager.get_all_nodes()
-            total_nodes = len(all_nodes)
-            
-            # Count final statistics from actual graph state
-            completed_count_graph = sum(1 for node in all_nodes if node.status == TaskStatus.COMPLETED)
-            failed_count_graph = sum(1 for node in all_nodes if node.status == TaskStatus.FAILED)
+        logger.info(f"ParallelExecutionEngine initialized with max_concurrent_tasks={max_concurrent_tasks}")
 
-            # Reconcile with local tracking in case state transitions failed
-            completed_count = max(completed_count_graph, len(self._completed_task_ids))
-            failed_count = max(failed_count_graph, len(self._failed_task_ids))
-            
-            success = failed_count == 0 and total_nodes == completed_count
-            
-            return ExecutionResult(
-                total_nodes=total_nodes,
-                completed_nodes=completed_count,
-                failed_nodes=failed_count,
-                success=success,
-                execution_time_seconds=execution_time,
-                error_details=self._error_details if self._error_details else None
-            )
-        
-        finally:
-            self.is_running = False
-    
-    def _get_ready_nodes_batch(self) -> List[TaskNode]:
+    async def execute_ready_nodes(
+        self,
+        ready_nodes: List[TaskNode],
+        agent_service_registry: AgentServiceRegistry,
+        context: TaskContext,
+        execution_id: Optional[str] = None
+    ) -> List[NodeResult]:
         """
-        Get batch of nodes ready for execution.
-        
-        A node is ready if:
-        1. Status is PENDING
-        2. All dependencies are COMPLETED
-        
-        Returns:
-            List of TaskNode objects ready for execution
-        """
-        return self.state_manager.get_ready_nodes()
-    
-    def _is_execution_complete(self) -> bool:
-        """
-        Check if graph execution is complete.
-        
-        Execution is complete when all nodes are in terminal states
-        (COMPLETED or FAILED) or no more progress can be made.
-        
-        Returns:
-            True if execution is complete, False otherwise
-        """
-        all_nodes = self.state_manager.get_all_nodes()
-        
-        if not all_nodes:
-            return True  # Empty graph is complete
-        
-        # Check if all nodes are in terminal states
-        terminal_statuses = {TaskStatus.COMPLETED, TaskStatus.FAILED}
-        non_terminal_nodes = [
-            node for node in all_nodes 
-            if node.status not in terminal_statuses
-        ]
-        
-        return len(non_terminal_nodes) == 0
-    
-    async def _execute_batch(self, batch: List[TaskNode]) -> None:
-        """
-        Execute a batch of ready nodes in parallel.
-        
+        Execute multiple ready nodes in parallel with semaphore control.
+
+        This is the core method that provides parallel execution capability
+        without any orchestration logic.
+
         Args:
-            batch: List of TaskNode objects to execute
+            ready_nodes: List of nodes ready for execution
+            agent_service_registry: Registry providing access to agent services
+            context: Base execution context (will be enriched per node)
+            execution_id: Optional execution ID for session isolation
+
+        Returns:
+            List of NodeResult objects with execution outcomes
+
+        Raises:
+            Exception: If critical execution errors occur
         """
-        if not batch:
-            return
-        
-        # Create execution tasks with semaphore control
-        execution_tasks = [
-            self._execute_single_node(node)
-            for node in batch
-        ]
-        
-        # Execute all tasks concurrently
-        await asyncio.gather(*execution_tasks, return_exceptions=True)
-    
-    async def _execute_single_node(self, node: TaskNode) -> None:
+        if not ready_nodes:
+            return []
+
+        start_time = datetime.now(timezone.utc)
+        logger.info(f"Executing {len(ready_nodes)} nodes in parallel (max concurrent: {self.max_concurrent_tasks})")
+
+        # Pre-execution dependency validation
+        executable_nodes = await self.dependency_validator.get_executable_nodes(ready_nodes, self.state_manager.graph)
+
+        if len(executable_nodes) < len(ready_nodes):
+            skipped_count = len(ready_nodes) - len(executable_nodes)
+            logger.warning(f"Dependency validation filtered out {skipped_count} nodes from execution")
+
+        if not executable_nodes:
+            logger.info("No nodes passed dependency validation - returning empty results")
+            return []
+
+        # Create tasks for parallel execution with semaphore control
+        execution_tasks = []
+
+        for node in executable_nodes:
+            task = self._execute_single_node_with_semaphore(node, agent_service_registry, context, execution_id)
+            execution_tasks.append(task)
+
+        # Execute all tasks in parallel
+        node_results = await asyncio.gather(*execution_tasks, return_exceptions=True)
+
+        # Process results and handle exceptions
+        processed_results = []
+        successful_count = 0
+        failed_count = 0
+        error_details = []
+
+        for i, result in enumerate(node_results):
+            node = executable_nodes[i]
+
+            if isinstance(result, Exception):
+                logger.error(f"Node execution failed for {node.task_id}: {result}")
+                # Create failure NodeResult
+                failure_result = NodeResult.failure(
+                    error=str(result),
+                    agent_name="parallel_execution_engine",
+                    metadata={"node_id": node.task_id, "exception_type": type(result).__name__}
+                )
+                processed_results.append(failure_result)
+                failed_count += 1
+                error_details.append({
+                    "node_id": node.task_id,
+                    "error": str(result),
+                    "exception_type": type(result).__name__
+                })
+            else:
+                processed_results.append(result)
+                if result.is_successful:
+                    successful_count += 1
+                else:
+                    failed_count += 1
+                    if result.error:
+                        error_details.append({
+                            "node_id": node.task_id,
+                            "error": result.error,
+                            "action": result.action.value
+                        })
+
+        # Update statistics
+        execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+        self._total_batches_processed += 1
+        self._total_nodes_processed += len(executable_nodes)
+        self._total_execution_time += execution_time
+
+        logger.info(
+            f"Parallel execution completed: {len(processed_results)} results "
+            f"({successful_count} successful, {failed_count} failed) "
+            f"in {execution_time:.2f}s"
+        )
+
+        return processed_results
+
+    async def _execute_single_node_with_semaphore(
+        self,
+        node: TaskNode,
+        agent_service_registry: AgentServiceRegistry,
+        base_context: TaskContext,
+        execution_id: Optional[str] = None
+    ) -> NodeResult:
         """
-        Execute a single node with concurrency control.
-        
+        Execute a single node with semaphore control and state transitions.
+
         Args:
             node: TaskNode to execute
+            agent_service_registry: Registry providing access to agent services
+            base_context: Base context to use for this node
+            execution_id: Optional execution ID for session isolation
+
+        Returns:
+            NodeResult with execution outcome
         """
         async with self._execution_semaphore:
+            start_time = datetime.now(timezone.utc)
+            node_id = node.task_id
+
             try:
-                # Transition to READY if still PENDING
-                if node.status == TaskStatus.PENDING:
-                    await self.state_manager.transition_node_status(
-                        node.task_id, TaskStatus.READY
-                    )
-                
-                # Transition to EXECUTING
-                await self.state_manager.transition_node_status(
-                    node.task_id, TaskStatus.EXECUTING
-                )
-                
-                # Execute the actual task
-                execution_result = await self.task_executor.execute_task(node)
-                
-                # Determine final status based on execution result
-                if execution_result.get("status") == "completed":
-                    final_status = TaskStatus.COMPLETED
-                    self._completed_nodes += 1
-                    self._completed_task_ids.add(node.task_id)
-                else:
-                    final_status = TaskStatus.FAILED
-                    self._failed_nodes += 1
-                    self._failed_task_ids.add(node.task_id)
-                
-                # Transition to final status
-                await self.state_manager.transition_node_status(
-                    node.task_id, final_status
-                )
-                
-                self._total_nodes_processed += 1
-                
-            except Exception as e:
-                # Handle execution errors
-                self._failed_nodes += 1
-                self._total_nodes_processed += 1
-                self._failed_task_ids.add(node.task_id)
-                base_error_details = {
-                    "error": str(e),
-                    "task_id": node.task_id,
-                    "goal": node.goal,
-                    "phase": "execute_task",
-                }
-                
-                # Attempt state transition but handle failure gracefully
+                # Transition node to EXECUTING state via GraphStateManager
+                await self.state_manager.transition_node_status(node_id, TaskStatus.READY)
+                await self.state_manager.transition_node_status(node_id, TaskStatus.EXECUTING)
+
+                logger.debug(f"Processing node {node_id} through agent pipeline")
+
+                # Process node through agent services
+                result = await self._process_node_with_agent_services(node, agent_service_registry, base_context)
+
+                # Ensure node_id metadata is present for downstream handlers
                 try:
-                    await self.state_manager.transition_node_status(
-                        node.task_id, TaskStatus.FAILED
-                    )
-                except Exception as state_error:
-                    # Capture both execution error and transition failure
-                    error_details = {
-                        **base_error_details,
-                        "state_transition_error": str(state_error),
-                        "phase": "state_transition_failed",
-                    }
-                    self._error_details.append(error_details)
+                    if (not hasattr(result, 'metadata')) or (result.metadata is None) or ("node_id" not in result.metadata):
+                        new_meta = dict(result.metadata or {})
+                        new_meta["node_id"] = node_id
+                        result = result.model_copy(update={"metadata": new_meta})
+                except Exception:
+                    # Best-effort; do not fail execution for metadata enrichment
+                    pass
+
+                # Log execution metrics
+                execution_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                logger.debug(f"Node {node_id} processed in {execution_time:.2f}ms: {result.action}")
+
+                return result
+
+            except Exception as e:
+                # On exception, ensure node is marked as failed
+                try:
+                    await self.state_manager.transition_node_status(node_id, TaskStatus.FAILED)
+                    logger.error(f"Node {node_id} execution failed, transitioned to FAILED: {e}")
+                except Exception as transition_error:
+                    logger.error(f"Failed to transition node {node_id} to FAILED: {transition_error}")
+
+                # Re-raise exception to be handled by caller
+                raise e
+
+    async def _process_node_with_agent_services(
+        self,
+        node: TaskNode,
+        agent_service_registry: AgentServiceRegistry,
+        context: TaskContext
+    ) -> NodeResult:
+        """
+        Process a single node through the agent services pipeline.
+
+        This replicates the core logic from TaskNodeProcessor but uses the
+        modular agent services from the registry.
+
+        Args:
+            node: TaskNode to process
+            agent_service_registry: Registry providing access to agent services
+            context: Execution context for the node
+
+        Returns:
+            NodeResult indicating next action and any results
+        """
+        try:
+            logger.debug(f"Processing node {node.task_id} with agent services")
+
+            # Phase 1: Atomizer Decision
+            atomizer_service = agent_service_registry.get_atomizer_service()
+            atomizer_result = await atomizer_service.run(node, context, execution_id=execution_id)
+
+            # Extract node type from atomizer result metadata
+            if atomizer_result.action == NodeAction.NOOP:
+                # Atomizer provided decision in metadata
+                if atomizer_result.metadata and "node_type" in atomizer_result.metadata:
+                    node_type = atomizer_result.metadata["node_type"]
+                elif hasattr(atomizer_result, 'envelope') and atomizer_result.envelope:
+                    atomizer_response = atomizer_result.envelope.result
+                    if hasattr(atomizer_response, 'is_atomic'):
+                        node_type = NodeType.EXECUTE if atomizer_response.is_atomic else NodeType.PLAN
+                    else:
+                        raise ValueError("Atomizer result missing is_atomic decision")
                 else:
-                    # Transition to FAILED succeeded; record original error
-                    self._error_details.append(base_error_details)
-    
-    def get_execution_statistics(self) -> Dict[str, Any]:
-        """
-        Get current execution statistics.
-        
-        Returns:
-            Dictionary with execution statistics
-        """
+                    raise ValueError("Atomizer result missing node_type decision")
+            else:
+                # Atomizer returned error/retry action, return directly
+                return atomizer_result
+
+            logger.debug(f"Atomizer decision for {node.task_id}: {node_type}")
+
+            # Phase 2: Execute based on atomizer decision
+            if node_type == NodeType.EXECUTE:
+                # Execute atomic task using executor service
+                executor_service = agent_service_registry.get_executor_service()
+                result = await executor_service.run(node, context, execution_id=execution_id)
+            elif node_type == NodeType.PLAN:
+                # Execute planning task using planner service
+                planner_service = agent_service_registry.get_planner_service()
+                result = await planner_service.run(node, context, execution_id=execution_id)
+            else:
+                raise ValueError(f"Unknown node type from atomizer: {node_type}")
+
+            logger.debug(f"Node {node.task_id} processed successfully: {result.action}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Node processing failed for {node.task_id}: {e}")
+            # Re-raise exception to be handled by caller at higher level
+            raise e
+
+    def get_execution_stats(self) -> ParallelExecutionStats:
+        """Get execution statistics."""
+        return ParallelExecutionStats(
+            nodes_requested=0,  # Only available during active execution
+            nodes_processed=self._total_nodes_processed,
+            successful_nodes=0,  # Only available during active execution
+            failed_nodes=0,  # Only available during active execution
+            execution_time_seconds=self._total_execution_time
+        )
+
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """Get detailed performance metrics."""
         return {
-            "total_nodes_processed": self._total_nodes_processed,
-            "completed_nodes": self._completed_nodes,
-            "failed_nodes": self._failed_nodes,
-            "is_running": self.is_running,
             "max_concurrent_tasks": self.max_concurrent_tasks,
-            "current_graph_stats": self.state_manager.get_execution_statistics()
+            "total_batches_processed": self._total_batches_processed,
+            "total_nodes_processed": self._total_nodes_processed,
+            "total_execution_time_seconds": self._total_execution_time,
+            "average_nodes_per_batch": (
+                self._total_nodes_processed / self._total_batches_processed
+                if self._total_batches_processed > 0 else 0
+            ),
+            "average_batch_time_seconds": (
+                self._total_execution_time / self._total_batches_processed
+                if self._total_batches_processed > 0 else 0
+            )
         }
-    
-    async def stop_execution(self) -> None:
-        """
-        Stop the execution engine gracefully.
-        
-        This will allow currently running tasks to complete but prevent
-        new tasks from starting.
-        """
-        self.is_running = False
-        
-        # Wait for all current executions to complete
-        # This is done by waiting for all semaphore slots to be available
-        for _ in range(self.max_concurrent_tasks):
-            await self._execution_semaphore.acquire()
-        
-        # Release all acquired slots
-        for _ in range(self.max_concurrent_tasks):
-            self._execution_semaphore.release()
-    
-    def is_deadlocked(self) -> bool:
-        """
-        Check if execution is in a deadlock state.
-        
-        Deadlock occurs when there are non-terminal nodes but no ready nodes.
-        
-        Returns:
-            True if deadlocked, False otherwise
-        """
-        if self._is_execution_complete():
-            return False
-        
-        ready_nodes = self._get_ready_nodes_batch()
-        return len(ready_nodes) == 0
+
+    def reset_stats(self) -> None:
+        """Reset execution statistics."""
+        self._total_batches_processed = 0
+        self._total_nodes_processed = 0
+        self._total_execution_time = 0.0
+        logger.info("Execution statistics reset")

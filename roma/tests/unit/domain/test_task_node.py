@@ -9,10 +9,10 @@ import pytest
 from datetime import datetime, timezone
 from dataclasses import FrozenInstanceError
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
 
 
 class TestTaskNodeImmutability:

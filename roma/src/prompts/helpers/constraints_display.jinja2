@@ -1,0 +1,45 @@
+{# Constraints and preferences display helper #}
+{% if has_constraints %}
+### System Constraints
+{% for constraint in constraints %}
+⚠️ {{ constraint }}
+{% endfor %}
+{% endif %}
+
+{% if user_preferences %}
+### User Preferences
+{% if user_preferences.output_style %}
+**Style**: {{ user_preferences.output_style }}
+{% endif %}
+{% if user_preferences.detail_level %}
+**Detail Level**: {{ user_preferences.detail_level }}
+{% endif %}
+{% if user_preferences.max_length %}
+**Length**: {{ user_preferences.max_length }}
+{% endif %}
+{% if user_preferences.format %}
+**Format**: {{ user_preferences.format }}
+{% endif %}
+{% if user_preferences.tone %}
+**Tone**: {{ user_preferences.tone }}
+{% endif %}
+{% if user_preferences.include_sources %}
+📚 **Include sources and references**
+{% endif %}
+{% if user_preferences.language %}
+**Language**: {{ user_preferences.language }}
+{% endif %}
+{% endif %}
+
+{% if configuration %}
+### System Configuration
+{% if configuration.strict_mode %}
+⚠️ **Strict Mode**: Follow all guidelines precisely
+{% endif %}
+{% if configuration.debug_enabled %}
+🐛 **Debug Mode**: Enhanced logging enabled
+{% endif %}
+{% if configuration.timeout_seconds %}
+⏱️ **Timeout**: {{ configuration.timeout_seconds }}s maximum execution time
+{% endif %}
+{% endif %}

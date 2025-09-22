@@ -17,8 +17,8 @@ from typing import Dict, Any, List, Optional
 from uuid import uuid4
 
 # Import domain interfaces
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestBaseAgnoToolkitIntegration:
@@ -28,7 +28,7 @@ class TestBaseAgnoToolkitIntegration:
     async def test_base_agno_toolkit_initialization(self):
         """Test base Agno toolkit can be initialized."""
         # RED: This will fail - base class doesn't exist yet
-        from src.roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
+        from roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
         
         toolkit_config = {
             "name": "test_toolkit",
@@ -46,7 +46,7 @@ class TestBaseAgnoToolkitIntegration:
     @pytest.mark.asyncio
     async def test_base_toolkit_agno_integration(self):
         """Test base toolkit provides available tools."""
-        from src.roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
+        from roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
         
         toolkit = BaseAgnoToolkit({
             "name": "test_toolkit",
@@ -65,7 +65,7 @@ class TestBaseAgnoToolkitIntegration:
     @pytest.mark.asyncio
     async def test_toolkit_lifecycle_management(self):
         """Test toolkit lifecycle (create, update, delete)."""
-        from src.roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
+        from roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
         
         toolkit = BaseAgnoToolkit({
             "name": "lifecycle_test",
@@ -94,7 +94,7 @@ class TestAgnoToolkitCRUDOperations:
     async def test_agno_toolkit_manager_initialization(self):
         """Test Agno toolkit manager can be initialized."""
         # RED: Will fail - manager doesn't exist
-        from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+        from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
         
         manager = AgnoToolkitManager()
         await manager.initialize()
@@ -109,7 +109,7 @@ class TestAgnoToolkitCRUDOperations:
     async def test_create_agno_toolkit(self):
         """Test creating new Agno toolkit instance."""
         # RED: Will fail - create operation not implemented
-        from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+        from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
         
         manager = AgnoToolkitManager()
         await manager.initialize()
@@ -134,7 +134,7 @@ class TestAgnoToolkitCRUDOperations:
     async def test_read_available_agno_toolkits(self):
         """Test reading/listing available Agno toolkits.""" 
         # RED: Will fail - read operation not implemented
-        from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+        from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
         
         manager = AgnoToolkitManager()
         await manager.initialize()
@@ -154,7 +154,7 @@ class TestAgnoToolkitCRUDOperations:
     async def test_update_agno_toolkit_config(self):
         """Test updating Agno toolkit configuration."""
         # RED: Will fail - update operation not implemented
-        from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+        from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
         
         manager = AgnoToolkitManager()
         await manager.initialize()
@@ -178,7 +178,7 @@ class TestAgnoToolkitCRUDOperations:
     async def test_delete_agno_toolkit(self):
         """Test deleting/disabling Agno toolkit."""
         # RED: Will fail - delete operation not implemented
-        from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+        from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
         
         manager = AgnoToolkitManager()
         await manager.initialize()
@@ -204,7 +204,7 @@ class TestConfigurationBasedLoading:
     async def test_toolkit_loader_initialization(self):
         """Test toolkit loader can read configurations."""
         # RED: Will fail - loader doesn't exist
-        from src.roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
+        from roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
         
         loader = ToolkitLoader()
         
@@ -219,7 +219,7 @@ class TestConfigurationBasedLoading:
     async def test_detect_default_vs_custom_toolkits(self):
         """Test distinguishing default Agno vs custom toolkits."""
         # RED: Will fail - detection logic not implemented
-        from src.roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
+        from roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
         
         loader = ToolkitLoader()
         
@@ -254,8 +254,8 @@ class TestConfigurationBasedLoading:
     async def test_initialize_default_agno_toolkits(self):
         """Test initializing default Agno toolkits from config."""
         # RED: Will fail - default initialization not implemented
-        from src.roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
-        from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+        from roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
+        from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
         
         loader = ToolkitLoader()
         manager = AgnoToolkitManager()
@@ -278,7 +278,7 @@ class TestConfigurationBasedLoading:
     @pytest.mark.asyncio
     async def test_initialize_custom_toolkits(self):
         """Test initializing custom toolkit implementations."""
-        from src.roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
+        from roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
         
         loader = ToolkitLoader()
         
@@ -304,8 +304,8 @@ class TestCustomToolkitSupport:
     async def test_custom_toolkit_inheritance(self):
         """Test custom toolkit inherits from base classes."""
         # Use Binance toolkit as example
-        from src.roma.infrastructure.toolkits.custom.crypto.binance_toolkit import BinanceToolkit
-        from src.roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
+        from roma.infrastructure.toolkits.custom.crypto.binance_toolkit import BinanceToolkit
+        from roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit
         
         config = {
             "name": "binance_test",
@@ -327,7 +327,7 @@ class TestCustomToolkitSupport:
     async def test_custom_toolkit_execution(self):
         """Test custom toolkit can execute tools."""
         # Use Binance toolkit as example of custom toolkit
-        from src.roma.infrastructure.toolkits.custom.crypto.binance_toolkit import BinanceToolkit
+        from roma.infrastructure.toolkits.custom.crypto.binance_toolkit import BinanceToolkit
         
         toolkit = BinanceToolkit({
             "name": "binance_test",
@@ -356,8 +356,8 @@ class TestAgentToolkitIntegration:
     @pytest.mark.asyncio
     async def test_adapter_integrates_with_toolkit_manager(self):
         """Test adapter can integrate with toolkit manager."""
-        from src.roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
-        from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+        from roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
+        from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
 
         adapter = AgnoFrameworkAdapter()
         toolkit_manager = AgnoToolkitManager()
@@ -374,7 +374,7 @@ class TestAgentToolkitIntegration:
     @pytest.mark.asyncio
     async def test_adapter_executes_task_with_toolkits(self):
         """Test adapter executes task using toolkit integration."""
-        from src.roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
+        from roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
         from agno.agent import Agent
         from unittest.mock import Mock
         import os
@@ -407,8 +407,8 @@ class TestAgentToolkitIntegration:
     @pytest.mark.asyncio
     async def test_adapter_toolkit_manager_persistence(self):
         """Test adapter maintains toolkit manager across operations."""
-        from src.roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
-        from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+        from roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
+        from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
 
         adapter = AgnoFrameworkAdapter()
         toolkit_manager1 = AgnoToolkitManager()
@@ -432,8 +432,8 @@ class TestToolkitRegistryIntegration:
     async def test_agno_toolkits_register_in_registry(self):
         """Test Agno toolkits register in the toolkit registry."""
         # RED: Will fail - no registry integration
-        from src.roma.domain.interfaces.toolkit_registry import ToolkitRegistry
-        from src.roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
+        from roma.domain.interfaces.toolkit_registry import ToolkitRegistry
+        from roma.infrastructure.toolkits.toolkit_loader import ToolkitLoader
         
         registry = ToolkitRegistry()
         loader = ToolkitLoader()

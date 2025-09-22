@@ -6,11 +6,11 @@ for node relationship methods in DynamicTaskGraph.
 """
 
 import pytest
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
 
 class TestNodeRelationships:

@@ -10,11 +10,11 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch
 
-from src.roma.infrastructure.orchestration.system_manager import SystemManager
-from src.roma.domain.value_objects.config.roma_config import ROMAConfig
-from src.roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
-from src.roma.infrastructure.toolkits.custom.crypto.binance_toolkit import BinanceToolkit
-from src.roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit, ToolkitValidationMixin
+from roma.infrastructure.orchestration.system_manager import SystemManager
+from roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
+from roma.infrastructure.toolkits.custom.crypto.binance_toolkit import BinanceToolkit
+from roma.infrastructure.toolkits.base_agno_toolkit import BaseAgnoToolkit, ToolkitValidationMixin
 
 
 class TestAgnoToolkitIntegration:
@@ -30,8 +30,8 @@ class TestAgnoToolkitIntegration:
     def roma_config(self, temp_storage_path):
         """Create ROMA configuration for toolkit testing."""
         # Use the same format as working system integration tests
-        from src.roma.domain.value_objects.config.profile_config import ProfileConfig, AgentMappingConfig
-        from src.roma.domain.value_objects.config.app_config import StorageConfig
+        from roma.domain.value_objects.config.profile_config import ProfileConfig, AgentMappingConfig
+        from roma.domain.value_objects.config.app_config import StorageConfig
 
         # Create agent mapping with all required agent types
         agent_mapping = AgentMappingConfig(
@@ -142,7 +142,7 @@ class TestAgnoToolkitIntegration:
             assert toolkit is not None
             
             # Verify it's a wrapper
-            from src.roma.infrastructure.toolkits.base_agno_toolkit import DefaultAgnoToolkitWrapper
+            from roma.infrastructure.toolkits.base_agno_toolkit import DefaultAgnoToolkitWrapper
             assert isinstance(toolkit, DefaultAgnoToolkitWrapper)
             
             # Test basic functionality

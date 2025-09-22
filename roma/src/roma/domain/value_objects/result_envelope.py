@@ -10,9 +10,9 @@ from typing import Any, List, Dict, Optional, Union, Generic, TypeVar
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from src.roma.domain.value_objects.agent_type import AgentType
-from src.roma.domain.value_objects.media_type import MediaType
-from src.roma.domain.entities.artifacts.base_artifact import BaseArtifact
+from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.media_type import MediaType
+from roma.domain.entities.artifacts.base_artifact import BaseArtifact
 
 # Type variable for generic result content
 T = TypeVar('T')
@@ -228,7 +228,7 @@ class ResultEnvelope(BaseModel, Generic[T]):
 
 
 # Type aliases for specific agent result envelopes
-from src.roma.domain.value_objects.agent_responses import (
+from roma.domain.value_objects.agent_responses import (
     AtomizerResult, PlannerResult, ExecutorResult,
     AggregatorResult, PlanModifierResult
 )

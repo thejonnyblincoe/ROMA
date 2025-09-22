@@ -5,7 +5,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![uv](https://img.shields.io/badge/package%20manager-uv-blue)](https://github.com/astral-sh/uv)
-[![Tests](https://img.shields.io/badge/tests-96%25%20coverage-green)](./tests/)
+[![Tests](https://img.shields.io/badge/tests-90%25%20coverage-green)](./tests/)
 [![Architecture](https://img.shields.io/badge/architecture-clean%20%2B%20immutable-brightgreen)](./ARCHITECTURE_SUMMARY.md)
 
 ## 🚀 Core Innovation

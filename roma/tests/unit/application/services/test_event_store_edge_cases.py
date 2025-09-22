@@ -11,14 +11,14 @@ from unittest.mock import Mock, AsyncMock
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, deque
 
-from src.roma.domain.events.task_events import (
+from roma.domain.events.task_events import (
     TaskCreatedEvent, TaskStatusChangedEvent, AtomizerEvaluatedEvent,
     TaskCompletedEvent, TaskFailedEvent, BaseTaskEvent
 )
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.application.services.event_store import (
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.application.services.event_store import (
     InMemoryEventStore, EventFilter, get_event_store, emit_event
 )
 
@@ -330,7 +330,7 @@ class TestGlobalEventStoreEdgeCases:
     @pytest.mark.asyncio
     async def test_get_event_store_creates_singleton(self):
         """Test that get_event_store creates singleton on first call."""
-        from src.roma.application.services.event_store import _global_event_store
+        from roma.application.services.event_store import _global_event_store
 
         # Access the module-level variable to check initial state
         # (this is implementation detail testing for coverage)

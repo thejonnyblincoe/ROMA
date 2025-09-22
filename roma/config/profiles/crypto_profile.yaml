@@ -25,19 +25,19 @@ version: "2.0.0"
 agents:
   # Override executors with crypto-specific ones
   executors:
-    RETRIEVE: ${crypto_retrieve_executor}  # Use crypto-specificc executor
-    THINK: ${crypto_market_analyzer}       # Use crypto market analyzer
-    WRITE: ${crypto_research_writer}       # Use crypto research writer
+    RETRIEVE: ${profiles.agents.crypto_retrieve_executor}  # Use crypto-specific executor
+    THINK: ${profiles.agents.crypto_market_analyzer}       # Use crypto market analyzer
+    WRITE: ${profiles.agents.crypto_research_writer}       # Use crypto research writer
     # Other executors inherited from research profile
-    
+
   # Override planners with crypto-specific ones
   planners:
-    RETRIEVE: ${crypto_retrieve_planner}    # Use crypto-specific planner
+    RETRIEVE: ${profiles.agents.crypto_retrieve_planner}    # Use crypto-specific planner
     # Other planners inherited from research profile
     
   # Override aggregators with crypto-specific ones
   aggregators:
-    RETRIEVE: ${crypto_aggregator}       # Use crypto-specific aggregator
+    RETRIEVE: ${profiles.agents.crypto_aggregator}       # Use crypto-specific aggregator
     # Other aggregators inherited from research profile
 
 # Crypto-specific settings (extends base settings)

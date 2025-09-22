@@ -3,7 +3,7 @@
 
 # OpenAI Models (via LiteLLM)
 gpt_4o:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "gpt-4o"  # LiteLLM handles OpenAI models without prefix
   temperature: 0.7
@@ -11,7 +11,7 @@ gpt_4o:
   top_p: 0.95
 
 gpt_4o_mini:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "gpt-4o-mini"
   temperature: 0.5
@@ -19,14 +19,14 @@ gpt_4o_mini:
   top_p: 0.9
 
 o1_preview:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "o1-preview"
   temperature: 1.0  # o1 models have fixed temperature
   max_tokens: 32768
 
 o1_mini:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "o1-mini"
   temperature: 1.0
@@ -34,7 +34,7 @@ o1_mini:
 
 # Anthropic Models (via LiteLLM)
 claude_3_5_sonnet:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "anthropic/claude-3-5-sonnet-20241022"
   temperature: 0.3
@@ -42,14 +42,14 @@ claude_3_5_sonnet:
   top_p: 0.95
 
 claude_3_5_haiku:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "anthropic/claude-3-5-haiku-20241022"
   temperature: 0.4
   max_tokens: 8192
 
 claude_3_opus:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "anthropic/claude-3-opus-20240229"
   temperature: 0.3
@@ -57,14 +57,14 @@ claude_3_opus:
 
 # Google Models (via LiteLLM)
 gemini_1_5_pro:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "gemini/gemini-1.5-pro-latest"
   temperature: 0.7
   max_tokens: 8192
 
 gemini_1_5_flash:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "gemini/gemini-1.5-flash-latest"
   temperature: 0.5
@@ -72,21 +72,21 @@ gemini_1_5_flash:
 
 # OpenRouter Models (via LiteLLM)
 openrouter_claude:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "openrouter/anthropic/claude-3.5-sonnet"
   temperature: 0.5
   max_tokens: 4096
 
 openrouter_llama_405b:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "openrouter/meta-llama/llama-3.1-405b-instruct"
   temperature: 0.7
   max_tokens: 4096
 
 openrouter_mixtral:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "openrouter/mistralai/mixtral-8x22b-instruct"
   temperature: 0.7
@@ -94,14 +94,14 @@ openrouter_mixtral:
 
 # Groq Models (via LiteLLM)
 groq_llama_70b:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "groq/llama3-70b-8192"
   temperature: 0.7
   max_tokens: 8192
 
 groq_mixtral:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "groq/mixtral-8x7b-32768"
   temperature: 0.7
@@ -109,14 +109,14 @@ groq_mixtral:
 
 # Together AI Models (via LiteLLM)
 together_llama_70b:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "together_ai/meta-llama/Llama-3-70b-chat-hf"
   temperature: 0.7
   max_tokens: 4096
 
 together_mixtral:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "together_ai/mistralai/Mixtral-8x7B-Instruct-v0.1"
   temperature: 0.7
@@ -124,14 +124,14 @@ together_mixtral:
 
 # AWS Bedrock Models (via LiteLLM)
 bedrock_claude:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "bedrock/anthropic.claude-v2"
   temperature: 0.5
   max_tokens: 4096
 
 bedrock_llama:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "bedrock/meta.llama2-70b-chat-v1"
   temperature: 0.7
@@ -139,7 +139,7 @@ bedrock_llama:
 
 # Cohere Models (via LiteLLM)
 cohere_command:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "cohere/command-r-plus"
   temperature: 0.7
@@ -147,7 +147,7 @@ cohere_command:
 
 # Local Models (Ollama via LiteLLM)
 ollama_llama3:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "ollama/llama3:8b"
   temperature: 0.7
@@ -155,7 +155,7 @@ ollama_llama3:
   api_base: "http://localhost:11434"
 
 ollama_mistral:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "ollama/mistral:7b"
   temperature: 0.7
@@ -164,7 +164,7 @@ ollama_mistral:
 
 # Replicate Models (via LiteLLM)
 replicate_llama_70b:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "replicate/meta/llama-2-70b-chat"
   temperature: 0.7
@@ -172,7 +172,7 @@ replicate_llama_70b:
 
 # Hugging Face Models (via LiteLLM)
 huggingface_mistral:
-  _target_: src.roma.domain.value_objects.config.model_config.ModelConfig
+  _target_: roma.domain.value_objects.config.model_config.ModelConfig
   provider: "litellm"
   model_id: "huggingface/mistralai/Mistral-7B-Instruct-v0.2"
   temperature: 0.7

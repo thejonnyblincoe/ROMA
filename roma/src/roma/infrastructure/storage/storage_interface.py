@@ -19,19 +19,23 @@ logger = logging.getLogger(__name__)
 
 class StorageConfig(BaseModel):
     """Configuration for goofys-based storage."""
-    
+
     model_config = ConfigDict(frozen=True)
-    
+
     # Local mount point (goofys mounts remote storage here)
     mount_path: str = Field(description="Local path where goofys mounts remote storage")
-    
+
     # Performance settings
     max_file_size: int = Field(default=100 * 1024 * 1024, description="Max file size in bytes (100MB)")
     create_subdirs: bool = Field(default=True, description="Auto-create subdirectories")
-    
-    # File organization
+
+    # File organization subdirectories
     artifacts_subdir: str = Field(default="artifacts", description="Subdirectory for artifacts")
     temp_subdir: str = Field(default="temp", description="Subdirectory for temporary files")
+    results_subdir: str = Field(default="results", description="Subdirectory for execution results")
+    plots_subdir: str = Field(default="results/plots", description="Subdirectory for plot outputs")
+    reports_subdir: str = Field(default="results/reports", description="Subdirectory for report outputs")
+    logs_subdir: str = Field(default="logs", description="Subdirectory for execution logs")
     
     @classmethod
     def from_mount_path(cls, mount_path: str) -> "StorageConfig":
@@ -152,14 +156,70 @@ class StorageInterface(ABC):
     def get_temp_path(self, key: str) -> Path:
         """
         Get path in temp subdirectory.
-        
+
         Args:
             key: Temp file key
-            
+
         Returns:
             Full path in temp subdirectory
         """
         return self.get_full_path(f"{self.config.temp_subdir}/{key}")
+
+    def get_results_path(self, key: str = "") -> Path:
+        """
+        Get path in results subdirectory.
+
+        Args:
+            key: Results file key (optional)
+
+        Returns:
+            Full path in results subdirectory
+        """
+        if key:
+            return self.get_full_path(f"{self.config.results_subdir}/{key}")
+        return self.get_full_path(self.config.results_subdir)
+
+    def get_plots_path(self, key: str = "") -> Path:
+        """
+        Get path in plots subdirectory.
+
+        Args:
+            key: Plot file key (optional)
+
+        Returns:
+            Full path in plots subdirectory
+        """
+        if key:
+            return self.get_full_path(f"{self.config.plots_subdir}/{key}")
+        return self.get_full_path(self.config.plots_subdir)
+
+    def get_reports_path(self, key: str = "") -> Path:
+        """
+        Get path in reports subdirectory.
+
+        Args:
+            key: Report file key (optional)
+
+        Returns:
+            Full path in reports subdirectory
+        """
+        if key:
+            return self.get_full_path(f"{self.config.reports_subdir}/{key}")
+        return self.get_full_path(self.config.reports_subdir)
+
+    def get_logs_path(self, key: str = "") -> Path:
+        """
+        Get path in logs subdirectory.
+
+        Args:
+            key: Log file key (optional)
+
+        Returns:
+            Full path in logs subdirectory
+        """
+        if key:
+            return self.get_full_path(f"{self.config.logs_subdir}/{key}")
+        return self.get_full_path(self.config.logs_subdir)
     
     def generate_key(self, prefix: str = "", suffix: str = "") -> str:
         """
@@ -240,15 +300,13 @@ class StorageInterface(ABC):
     async def get_size(self, key: str) -> Optional[int]:
         """
         Get file size in bytes.
-        
+
         Args:
             key: Storage key/path
-            
+
         Returns:
             Size in bytes, or None if not found
         """
+        from ..utils.async_file_utils import async_file_size
         full_path = self.get_full_path(key)
-        try:
-            return full_path.stat().st_size
-        except FileNotFoundError:
-            return None
+        return await async_file_size(full_path)

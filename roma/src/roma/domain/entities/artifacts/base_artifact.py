@@ -12,7 +12,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-from src.roma.domain.value_objects.media_type import MediaType
+from roma.domain.value_objects.media_type import MediaType
+from roma.domain.value_objects.context_item_type import ContextItemType
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,25 @@ class BaseArtifact(BaseModel, ABC):
     def get_file_extension(self) -> Optional[str]:
         """Get file extension if applicable. Override in subclasses."""
         return None
+
+    def get_context_item_type(self) -> ContextItemType:
+        """
+        Get appropriate ContextItemType for this artifact.
+
+        Returns:
+            ContextItemType based on the artifact's media type
+        """
+        media_type = self.media_type
+        if media_type.value == "IMAGE":
+            return ContextItemType.IMAGE_ARTIFACT
+        elif media_type.value == "AUDIO":
+            return ContextItemType.AUDIO_ARTIFACT
+        elif media_type.value == "VIDEO":
+            return ContextItemType.VIDEO_ARTIFACT
+        elif media_type.value == "TEXT":
+            return ContextItemType.REFERENCE_TEXT
+        else:  # FILE or unknown
+            return ContextItemType.FILE_ARTIFACT
     
     def is_text_content(self) -> bool:
         """Check if this artifact contains text content."""

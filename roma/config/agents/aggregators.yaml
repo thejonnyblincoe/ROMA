@@ -8,14 +8,14 @@
 
 # RETRIEVE Aggregators (evolved from SEARCH in v1)
 retrieve_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "RetrieveAggregator"
   type: "aggregator"
   task_type: "RETRIEVE"
   description: "Aggregates retrieval results from multiple sources"
 
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "aggregator/retrieve.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -25,14 +25,14 @@ retrieve_aggregator:
     max_results: 20
 
 crypto_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "CryptoAggregator"
   type: "aggregator"
   task_type: "RETRIEVE"
   description: "Specialized aggregator for cryptocurrency data"
 
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "aggregator/crypto.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -43,14 +43,14 @@ crypto_aggregator:
 
 # WRITE Aggregators
 write_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "WriteAggregator"
   type: "aggregator"
   task_type: "WRITE"
   description: "Combines document sections into cohesive output"
 
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "aggregator/write.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -60,14 +60,14 @@ write_aggregator:
     format_output: true
 
 document_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "DocumentAggregator"
   type: "aggregator"
   task_type: "WRITE"
   description: "Advanced document section aggregation"
 
-  model: ${models.gpt_4o}
-  prompt_template: "aggregator/document.jinja2"
+  model: ${profiles.models.gpt_4o}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -78,14 +78,14 @@ document_aggregator:
 
 # THINK Aggregators
 think_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ThinkAggregator"
   type: "aggregator"
   task_type: "THINK"
   description: "Synthesizes analytical results"
 
-  model: ${models.o1_preview}
-  prompt_template: "aggregator/think.jinja2"
+  model: ${profiles.models.o1_preview}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -95,14 +95,14 @@ think_aggregator:
     conclusion_generation: true
 
 analysis_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "AnalysisAggregator"
   type: "aggregator"
   task_type: "THINK"
   description: "Combines multiple analyses into insights"
 
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "aggregator/analysis.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -113,14 +113,14 @@ analysis_aggregator:
 
 # CODE_INTERPRET Aggregators
 code_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "CodeAggregator"
   type: "aggregator"
   task_type: "CODE_INTERPRET"
   description: "Aggregates code execution results"
 
-  model: ${models.gpt_4o}
-  prompt_template: "aggregator/code.jinja2"
+  model: ${profiles.models.gpt_4o}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -130,14 +130,14 @@ code_aggregator:
     performance_summary: true
 
 test_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "TestAggregator"
   type: "aggregator"
   task_type: "CODE_INTERPRET"
   description: "Aggregates test results and coverage"
 
-  model: ${models.gpt_4o}
-  prompt_template: "aggregator/test.jinja2"
+  model: ${profiles.models.gpt_4o}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -148,14 +148,14 @@ test_aggregator:
 
 # IMAGE_GENERATION Aggregators
 image_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ImageAggregator"
   type: "aggregator"
   task_type: "IMAGE_GENERATION"
   description: "Aggregates multiple image generation results"
 
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "aggregator/image.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -166,14 +166,14 @@ image_aggregator:
 
 # AGGREGATE-specific Aggregators (meta-aggregation)
 research_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "ResearchAggregator"
   type: "aggregator"
   task_type: null
   description: "High-level research synthesis across all results"
 
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "aggregator/research.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -184,14 +184,14 @@ research_aggregator:
     confidence_assessment: true
 
 meta_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "MetaAggregator"
   type: "aggregator"
   task_type: null
   description: "Aggregates heterogeneous results from different task types"
 
-  model: ${models.claude_3_5_sonnet}
-  prompt_template: "aggregator/meta.jinja2"
+  model: ${profiles.models.claude_3_5_sonnet}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:
@@ -202,14 +202,14 @@ meta_aggregator:
 
 # Default fallback aggregator
 default_aggregator:
-  _target_: src.roma.domain.value_objects.config.agent_config.AgentConfig
+  _target_: roma.domain.value_objects.config.agent_config.AgentConfig
   name: "DefaultAggregator"
   type: "aggregator"
   task_type: null  # Can handle any task type
   description: "Generic aggregator for any task type"
 
-  model: ${models.claude_3_5_haiku}
-  prompt_template: "aggregator/default.jinja2"
+  model: ${profiles.models.claude_3_5_haiku}
+  prompt_template: "aggregator/aggregator.jinja2"
   output_schema: "AggregatorResult"
 
   config:

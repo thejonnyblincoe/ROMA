@@ -6,18 +6,14 @@ with thread-safe operations and NetworkX integration.
 """
 
 import asyncio
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any
 from uuid import uuid4
 import networkx as nx
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.events.task_events import (
-    BaseTaskEvent,
-    TaskNodeAddedEvent,
-    TaskStatusChangedEvent
-)
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.application.services.event_publisher import EventPublisher
 
 
 def generate_execution_id() -> str:
@@ -58,7 +54,7 @@ class DynamicTaskGraph(BaseModel):
     # Private attributes (excluded from serialization)
     _graph: nx.DiGraph = PrivateAttr(default_factory=nx.DiGraph)  # type: ignore[type-arg]
     _lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
-    _event_handlers: List[Callable[[BaseTaskEvent], Any]] = PrivateAttr(default_factory=list)
+    _event_publisher: Optional[EventPublisher] = PrivateAttr(default=None)
     
     def __init__(self, root_node: Optional[TaskNode] = None, **data: Any) -> None:
         """Initialize DynamicTaskGraph with optional root node."""
@@ -74,12 +70,22 @@ class DynamicTaskGraph(BaseModel):
         # Initialize private attributes
         self._graph = nx.DiGraph()
         self._lock = asyncio.Lock()
+        self._event_publisher = None
         
         # Add nodes to NetworkX graph
         for node_id, node in self.nodes.items():
             self._graph.add_node(node_id)
             if node.parent_id and node.parent_id in self.nodes:
                 self._graph.add_edge(node.parent_id, node_id)
+
+    def set_event_publisher(self, event_publisher: EventPublisher) -> None:
+        """
+        Set the event publisher for this graph.
+
+        Args:
+            event_publisher: EventPublisher instance for emitting events (required)
+        """
+        self._event_publisher = event_publisher
     
     async def add_node(self, node: TaskNode) -> None:
         """
@@ -99,17 +105,62 @@ class DynamicTaskGraph(BaseModel):
             if node.parent_id and node.parent_id in self.nodes:
                 self._graph.add_edge(node.parent_id, node.task_id)
             
+            # Add dependency edges if any exist
+            for dependency_id in node.dependencies:
+                if dependency_id in self.nodes:
+                    self._graph.add_edge(dependency_id, node.task_id)
+
             # Emit node added event
-            await self._emit_event(TaskNodeAddedEvent.create(
+            await self._event_publisher.emit_task_node_added(
                 task_id=node.task_id,
                 goal=node.goal,
                 task_type=node.task_type,
-                parent_id=node.parent_id,
-                metadata={
-                    "status": node.status.value
-                }
-            ))
-    
+                parent_id=node.parent_id
+            )
+
+    async def add_dependency_edge(self, from_id: str, to_id: str) -> None:
+        """
+        Add a dependency edge between two existing nodes.
+
+        Args:
+            from_id: Source task ID (dependency)
+            to_id: Target task ID (dependent)
+
+        Raises:
+            KeyError: If either task ID is not found in graph
+            ValueError: If adding edge would create a cycle
+        """
+        async with self._lock:
+            # Validate both nodes exist
+            if from_id not in self.nodes:
+                raise KeyError(f"Source task ID {from_id} not found in graph")
+            if to_id not in self.nodes:
+                raise KeyError(f"Target task ID {to_id} not found in graph")
+
+            # Add edge to NetworkX graph temporarily
+            self._graph.add_edge(from_id, to_id)
+
+            # Check for cycles after adding edge
+            if self.has_cycles():
+                # Revert the edge if it creates a cycle
+                self._graph.remove_edge(from_id, to_id)
+                raise ValueError(
+                    f"Adding dependency edge from {from_id} to {to_id} would create a cycle. "
+                    f"Current cycles: {self.get_cycles()}"
+                )
+
+            # Update the target node's dependencies
+            target_node = self.nodes[to_id]
+            if from_id not in target_node.dependencies:
+                updated_node = target_node.add_dependency(from_id)
+                self.nodes[to_id] = updated_node
+
+            # Emit dependency edge added event
+            await self._event_publisher.emit_dependency_added(
+                from_task_id=from_id,
+                to_task_id=to_id
+            )
+
     def get_node(self, task_id: str) -> Optional[TaskNode]:
         """
         Get a node by task ID.
@@ -189,15 +240,12 @@ class DynamicTaskGraph(BaseModel):
             self.nodes[task_id] = updated_node
             
             # Emit status change event
-            await self._emit_event(TaskStatusChangedEvent.create(
+            await self._event_publisher.emit_task_status_changed(
                 task_id=task_id,
-                old_status=current_node.status,
-                new_status=new_status,
-                version=updated_node.version,
-                metadata={
-                    "goal": updated_node.goal
-                }
-            ))
+                old_status=current_node.status.value,
+                new_status=new_status.value,
+                goal=updated_node.goal
+            )
             
             return updated_node
     
@@ -243,6 +291,30 @@ class DynamicTaskGraph(BaseModel):
             NetworkXError: If graph contains cycles
         """
         return list(nx.topological_sort(self._graph))
+
+    def get_cycles(self) -> List[List[str]]:
+        """
+        Get all cycles in the graph using NetworkX.
+
+        Returns:
+            List of cycles, where each cycle is a list of node IDs
+        """
+        try:
+            return list(nx.simple_cycles(self._graph))
+        except Exception:
+            return []
+
+    def get_nodes_by_status(self, status: TaskStatus) -> List[TaskNode]:
+        """
+        Get all nodes with a specific status.
+
+        Args:
+            status: TaskStatus to filter by
+
+        Returns:
+            List of TaskNode objects with the specified status
+        """
+        return [node for node in self.nodes.values() if node.status == status]
     
     # Node Relationship Methods (Task 1.2.3)
     
@@ -375,43 +447,6 @@ class DynamicTaskGraph(BaseModel):
         subtree_ids = [task_id] + self.get_descendants(task_id)
         return {node_id: self.nodes[node_id] for node_id in subtree_ids}
     
-    # Event Handling Methods (Task 1.2.5)
-    
-    def add_event_handler(self, handler: Callable[[BaseTaskEvent], Any]) -> None:
-        """
-        Add event handler for graph operations.
-        
-        Args:
-            handler: Async callable that receives TaskEvent objects
-        """
-        self._event_handlers.append(handler)
-    
-    def remove_event_handler(self, handler: Callable[[BaseTaskEvent], Any]) -> None:
-        """
-        Remove event handler.
-        
-        Args:
-            handler: Handler to remove
-        """
-        if handler in self._event_handlers:
-            self._event_handlers.remove(handler)
-    
-    async def _emit_event(self, event: BaseTaskEvent) -> None:
-        """
-        Emit event to all registered handlers.
-        
-        Args:
-            event: Event to emit
-        """
-        for handler in self._event_handlers:
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    await handler(event)
-                else:
-                    handler(event)
-            except Exception as e:
-                # Log error but don't fail graph operations
-                print(f"Event handler error: {e}")
 
     async def set_node_exact(self, task_id: str, node: TaskNode) -> None:
         """Replace a node in-place without altering its version or timestamps.
@@ -423,6 +458,60 @@ class DynamicTaskGraph(BaseModel):
             if task_id not in self.nodes:
                 raise KeyError(f"Task ID {task_id} not found in graph")
             self.nodes[task_id] = node
+
+    async def update_node_metadata(self, task_id: str, metadata_updates: Dict[str, Any]) -> TaskNode:
+        """
+        Update node metadata with thread safety.
+
+        Args:
+            task_id: Task identifier
+            metadata_updates: Dictionary of metadata key-value pairs to update
+
+        Returns:
+            Updated TaskNode
+
+        Raises:
+            KeyError: If task_id not found in graph
+        """
+        async with self._lock:
+            if task_id not in self.nodes:
+                raise KeyError(f"Task ID {task_id} not found in graph")
+
+            # Get current node
+            current_node = self.nodes[task_id]
+
+            # Create updated node with new metadata
+            updated_metadata = {**current_node.metadata, **metadata_updates}
+            updated_node = current_node.model_copy(update={
+                "metadata": updated_metadata,
+                "version": current_node.version + 1
+            })
+
+            # Update nodes dict
+            self.nodes[task_id] = updated_node
+
+            return updated_node
+
+    async def remove_node(self, task_id: str) -> None:
+        """
+        Remove node from graph with thread safety.
+
+        Args:
+            task_id: Task identifier to remove
+
+        Raises:
+            KeyError: If task_id not found in graph
+        """
+        async with self._lock:
+            if task_id not in self.nodes:
+                raise KeyError(f"Task ID {task_id} not found in graph")
+
+            # Remove from nodes dict
+            del self.nodes[task_id]
+
+            # Remove from NetworkX graph (including all edges)
+            if self._graph.has_node(task_id):
+                self._graph.remove_node(task_id)
     
     def model_post_init(self, __context: Any) -> None:
         """Post-initialization to rebuild NetworkX graph from nodes."""
@@ -432,6 +521,7 @@ class DynamicTaskGraph(BaseModel):
         # Initialize private attributes for deserialization
         self._graph = nx.DiGraph()
         self._lock = asyncio.Lock()
+        self._event_publisher = None
         
         # Rebuild NetworkX graph from nodes
         for node_id, node in self.nodes.items():

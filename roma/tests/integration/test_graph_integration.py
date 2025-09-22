@@ -8,13 +8,13 @@ import pytest
 import pytest_asyncio
 import asyncio
 from typing import List, Dict, Any
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from src.roma.domain.events.task_events import BaseTaskEvent
-from src.roma.tools.graph_visualizer import GraphVisualizer
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.events.task_events import BaseTaskEvent
+from roma.tools.graph_visualizer import GraphVisualizer
 
 
 class TestGraphIntegration:

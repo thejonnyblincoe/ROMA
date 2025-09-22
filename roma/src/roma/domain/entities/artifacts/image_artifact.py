@@ -14,8 +14,8 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
-from src.roma.domain.entities.artifacts.base_artifact import BaseArtifact
-from src.roma.domain.value_objects.media_type import MediaType
+from roma.domain.entities.artifacts.base_artifact import BaseArtifact
+from roma.domain.value_objects.media_type import MediaType
 
 logger = logging.getLogger(__name__)
 

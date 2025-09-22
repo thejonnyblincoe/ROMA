@@ -11,7 +11,7 @@
 # Web Search Tools (Agno Default Toolkits)
 web_search:
   google:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "google_search"
     type: "web_search"
     enabled: true
@@ -24,7 +24,7 @@ web_search:
       safe_search: true
       
   exa:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "exa_search"
     type: "web_search"
     enabled: ${oc.env:EXA_API_KEY,false}
@@ -38,7 +38,7 @@ web_search:
       search_type: "neural"
       
   openai_web:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "openai_web_search"
     type: "web_search"
     enabled: true
@@ -46,7 +46,7 @@ web_search:
       max_results: 5
       
   arxiv:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "arxiv_search"
     type: "web_search"
     enabled: true
@@ -55,7 +55,7 @@ web_search:
       sort_by: "relevance"
       
   wikipedia:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "wikipedia_search"
     type: "web_search"
     enabled: true
@@ -66,7 +66,7 @@ web_search:
 # Code Execution Tools (Agno Default Toolkits)
 code_execution:
   e2b_sandbox:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "e2b_sandbox"
     type: "code_execution"
     enabled: ${oc.env:E2B_API_KEY,false}
@@ -78,7 +78,7 @@ code_execution:
       cpu_count: 1
       
   python:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "python_tools"
     type: "code_execution"
     enabled: true
@@ -91,7 +91,7 @@ code_execution:
       timeout: 10
       
   jupyter:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "jupyter_kernel"
     type: "code_execution"
     enabled: false
@@ -102,7 +102,7 @@ code_execution:
 # Reasoning Tools (Agno Default Toolkits)
 reasoning:
   logic_analyzer:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "logic_analyzer"
     type: "reasoning"
     enabled: true
@@ -110,7 +110,7 @@ reasoning:
       methods: ["deduction", "induction", "abduction"]
       
   hypothesis_tester:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "hypothesis_tester"
     type: "reasoning"
     enabled: true
@@ -120,7 +120,7 @@ reasoning:
 # Image Generation Tools (Agno Default Toolkits)
 image_generation:
   dalle:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "dalle_3"
     type: "image_generation"
     enabled: true
@@ -130,7 +130,7 @@ image_generation:
       style: "natural"
       
   stability:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "stable_diffusion"
     type: "image_generation"
     enabled: ${oc.env:STABILITY_API_KEY,false}
@@ -141,7 +141,7 @@ image_generation:
 # Visualization Tools (Agno Default Toolkits)
 visualization:
   mermaid:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "mermaid_diagram"
     type: "visualization"
     enabled: true
@@ -156,7 +156,7 @@ visualization:
 # Data API Tools (Custom Implementations from v1)
 data_apis:
   binance:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "binance_api"
     type: "data_api"
     implementation: "roma.toolkits.data.BinanceToolkit"  # Custom implementation
@@ -174,7 +174,7 @@ data_apis:
         - "coinm"  # Coin-margined futures
       
   coingecko:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "coingecko_api"
     type: "data_api"
     implementation: "roma.toolkits.data.CoinGeckoToolkit"  # Custom implementation
@@ -187,7 +187,7 @@ data_apis:
       cache_ttl: 300  # 5 minutes cache
       
   defillama:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "defillama_api"
     type: "data_api"
     implementation: "roma.toolkits.data.DeFiLlamaToolkit"  # Custom implementation
@@ -199,7 +199,7 @@ data_apis:
       cache_ttl: 600  # 10 minutes cache
       
   arkham:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "arkham_api"
     type: "data_api"
     implementation: "roma.toolkits.data.ArkhamToolkit"  # Custom implementation
@@ -211,7 +211,7 @@ data_apis:
       supported_chains: ["ethereum", "bitcoin", "polygon", "avalanche", "bsc"]
       
   dune:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "dune_analytics"
     type: "data_api"
     implementation: "roma.toolkits.data.DuneToolkit"  # Custom implementation
@@ -224,7 +224,7 @@ data_apis:
 # Storage Tools (Mix of Agno and Custom)
 storage:
   s3:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "s3_storage"
     type: "storage"
     # Default Agno S3 toolkit
@@ -236,7 +236,7 @@ storage:
       secret_key: "${oc.env:AWS_SECRET_ACCESS_KEY}"
       
   local_fs:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "local_storage"
     type: "storage"
     implementation: "roma.toolkits.storage.LocalFileSystemToolkit"  # Custom implementation
@@ -248,7 +248,7 @@ storage:
 # Knowledge Store Tools (Custom Implementations)
 knowledge:
   vector_store:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "vector_store"
     type: "knowledge"
     implementation: "roma.toolkits.knowledge.QdrantToolkit"  # Custom implementation
@@ -259,7 +259,7 @@ knowledge:
       collection: "roma_knowledge"
       
   graph_store:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "graph_store"
     type: "knowledge"
     implementation: "roma.toolkits.knowledge.Neo4jToolkit"  # Custom implementation
@@ -272,7 +272,7 @@ knowledge:
 # Utility Tools (Mix of Agno and Custom)
 utilities:
   web_scraper:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "web_scraper"
     type: "utility"
     # Default Agno web scraper
@@ -283,7 +283,7 @@ utilities:
       user_agent: "ROMA/2.0"
       
   pdf_reader:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "pdf_reader"
     type: "utility"
     # Default Agno PDF reader
@@ -293,7 +293,7 @@ utilities:
       extract_tables: true
       
   csv_analyzer:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "csv_analyzer"
     type: "utility"
     # Default Agno CSV analyzer
@@ -303,7 +303,7 @@ utilities:
       delimiter: ","
       
   markdown_formatter:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "markdown_formatter"
     type: "utility"
     implementation: "roma.toolkits.utility.MarkdownFormatter"  # Custom implementation
@@ -312,7 +312,7 @@ utilities:
       flavor: "github"
       
   citation_manager:
-    _target_: src.roma.domain.value_objects.config.tool_config.ToolConfig
+    _target_: roma.domain.value_objects.config.tool_config.ToolConfig
     name: "citation_manager"
     type: "utility"
     implementation: "roma.toolkits.utility.CitationManager"  # Custom implementation
@@ -320,27 +320,5 @@ utilities:
     config:
       style: "apa"
       
-# Tool Presets (Combinations for specific use cases)
-presets:
-  research_tools:
-    - ${web_search.google}
-    - ${web_search.arxiv}
-    - ${web_search.wikipedia}
-    - ${utilities.web_scraper}
-    - ${utilities.pdf_reader}
-    
-  crypto_tools:
-    - ${data_apis.binance}
-    - ${data_apis.coingecko}
-    - ${data_apis.defillama}
-    - ${data_apis.dune}
-    - ${data_apis.arkham}
-    
-  code_tools:
-    - ${code_execution.e2b_sandbox}
-    - ${code_execution.python}
-    - ${utilities.markdown_formatter}
-    
-  storage_tools:
-    - ${storage.s3}
-    - ${storage.local_fs}
+# Note: Tool presets removed to avoid interpolation conflicts
+# Individual tools can be referenced directly in agent configurations

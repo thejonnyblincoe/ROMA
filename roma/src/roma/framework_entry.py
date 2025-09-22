@@ -7,11 +7,14 @@ Provides the same interface as v1 for backward compatibility.
 
 import hydra
 from hydra.core.config_store import ConfigStore
+from hydra.utils import instantiate
+from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 from typing import Dict, Any, Iterator, List, Optional
-from src.roma.domain.value_objects.config.roma_config import ROMAConfig
-from src.roma.infrastructure.config import cs  # Import registered ConfigStore
-from src.roma.infrastructure.orchestration.system_manager import SystemManager
+from pathlib import Path
+from roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.infrastructure.config import cs  # Import registered ConfigStore
+from roma.infrastructure.orchestration.system_manager import SystemManager
 
 
 class SentientAgent:
@@ -228,27 +231,34 @@ class LightweightSentientAgent(SentientAgent):
         }
 
 
-# Hydra main entry point using ConfigStore
+# Hydra main entry point using ConfigStore with automatic instantiation
 @hydra.main(version_base=None, config_path="../../config", config_name="config")
 def hydra_main(cfg: DictConfig) -> None:
-    """Hydra entry point using ConfigStore."""
+    """Hydra entry point using automatic object instantiation."""
     try:
-        # Convert and validate using domain value objects
-        config_dict = OmegaConf.to_container(cfg, resolve=True)
-        validated_config = ROMAConfig.from_dict(config_dict)
-        
+        print(f"🚀 ROMA v{cfg.app.version} - Hydra CLI Entry Point")
+        print(f"📋 Profile: {cfg.profiles.name}")
+        print(f"🌍 Environment: {cfg.app.environment}")
+
+        # Use FULL automatic instantiation with recursive object conversion
+        print("\n🔧 Instantiating full ROMA configuration...")
+
+        # Single instantiate call with _convert_="object" for full recursive instantiation
+        roma_config = instantiate(cfg, _convert_="object")
+        print(f"✅ Full instantiation successful: {type(roma_config).__name__}")
+
         # Initialize agent
-        agent = SentientAgent(validated_config)
-        
-        print(f"🚀 ROMA v{validated_config.app.version} initialized")
-        print(f"📋 Profile: {validated_config.profile.name}")
-        print(f"🌍 Environment: {validated_config.app.environment}")
-        print("✅ Status: SCAFFOLDING - Ready for implementation")
-        
+        agent = SentientAgent(roma_config)
+
+        print(f"✅ ROMA Agent initialized successfully!")
+        print(f"📊 System Info: {agent.get_system_info()}")
+
         # TODO: Add interactive mode or specific execution logic
-        
+
     except Exception as e:
         print(f"❌ Configuration error: {e}")
+        import traceback
+        traceback.print_exc()
         raise
 
 

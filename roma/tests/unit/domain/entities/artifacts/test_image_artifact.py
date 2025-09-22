@@ -11,8 +11,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from src.roma.domain.entities.artifacts.image_artifact import ImageArtifact
-from src.roma.domain.value_objects.media_type import MediaType
+from roma.domain.entities.artifacts.image_artifact import ImageArtifact
+from roma.domain.value_objects.media_type import MediaType
 
 
 class TestImageArtifact:

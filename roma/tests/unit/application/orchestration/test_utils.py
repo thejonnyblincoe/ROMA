@@ -9,13 +9,13 @@ import asyncio
 from typing import List
 from unittest.mock import AsyncMock
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from src.roma.application.orchestration.graph_state_manager import GraphStateManager
-from src.roma.application.services.event_store import InMemoryEventStore
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.application.orchestration.graph_state_manager import GraphStateManager
+from roma.application.services.event_store import InMemoryEventStore
 
 
 class TestGraphFactory:

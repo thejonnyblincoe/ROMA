@@ -9,11 +9,11 @@ import pytest
 import networkx as nx
 from typing import List, Set
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
 
 class TestGraphTraversalService:
@@ -76,7 +76,7 @@ class TestGraphTraversalService:
 
     def test_graph_traversal_service_init(self):
         """Test GraphTraversalService initialization."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph()
         service = GraphTraversalService(graph)
@@ -86,7 +86,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_get_topological_order_empty_graph(self):
         """Test topological ordering of empty graph."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph()
         service = GraphTraversalService(graph)
@@ -97,7 +97,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_get_topological_order_single_node(self, sample_task_nodes):
         """Test topological ordering of single node."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph(root_node=sample_task_nodes[0])
         service = GraphTraversalService(graph)
@@ -110,7 +110,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio 
     async def test_get_topological_order_linear_graph(self, sample_task_nodes):
         """Test topological ordering preserves dependency order."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_linear_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -124,7 +124,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_get_topological_order_parallel_graph(self, sample_task_nodes):
         """Test topological ordering with parallel branches."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_parallel_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -141,7 +141,7 @@ class TestGraphTraversalService:
 
     def test_detect_cycles_empty_graph(self):
         """Test cycle detection on empty graph."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph()
         service = GraphTraversalService(graph)
@@ -152,7 +152,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_detect_cycles_linear_graph(self, sample_task_nodes):
         """Test cycle detection on linear graph (no cycles)."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_linear_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -163,7 +163,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_detect_cycles_parallel_graph(self, sample_task_nodes):
         """Test cycle detection on parallel graph (no cycles)."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_parallel_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -174,7 +174,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_find_parallel_execution_paths_single_node(self, sample_task_nodes):
         """Test parallel execution paths with single node."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph(root_node=sample_task_nodes[0])
         service = GraphTraversalService(graph)
@@ -189,7 +189,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_find_parallel_execution_paths_linear_graph(self, sample_task_nodes):
         """Test parallel execution paths with linear graph."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_linear_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -205,7 +205,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_find_parallel_execution_paths_parallel_graph(self, sample_task_nodes):
         """Test parallel execution paths with parallel graph."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_parallel_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -219,7 +219,7 @@ class TestGraphTraversalService:
 
     def test_get_node_dependencies(self, sample_task_nodes):
         """Test getting node dependencies."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph(root_node=sample_task_nodes[0])
         service = GraphTraversalService(graph)
@@ -233,7 +233,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_get_node_dependencies_with_parent(self, sample_task_nodes):
         """Test getting node dependencies with parent."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_linear_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -250,7 +250,7 @@ class TestGraphTraversalService:
 
     def test_get_node_dependents(self, sample_task_nodes):
         """Test getting node dependents."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph(root_node=sample_task_nodes[0])
         service = GraphTraversalService(graph)
@@ -264,7 +264,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_get_node_dependents_with_children(self, sample_task_nodes):
         """Test getting node dependents with children."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_parallel_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -277,7 +277,7 @@ class TestGraphTraversalService:
 
     def test_calculate_graph_depth(self, sample_task_nodes):
         """Test calculating graph depth."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph(root_node=sample_task_nodes[0])
         service = GraphTraversalService(graph)
@@ -290,7 +290,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_calculate_graph_depth_linear(self, sample_task_nodes):
         """Test calculating graph depth for linear graph."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_linear_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -303,7 +303,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_calculate_graph_depth_parallel(self, sample_task_nodes):
         """Test calculating graph depth for parallel graph."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_parallel_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -315,7 +315,7 @@ class TestGraphTraversalService:
 
     def test_is_node_ready_for_execution_nonexistent(self):
         """Test checking if nonexistent node is ready for execution."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph()
         service = GraphTraversalService(graph)
@@ -326,7 +326,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_is_node_ready_for_execution_pending_root(self, sample_task_nodes):
         """Test checking if pending root node is ready for execution."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = DynamicTaskGraph(root_node=sample_task_nodes[0])
         service = GraphTraversalService(graph)
@@ -340,7 +340,7 @@ class TestGraphTraversalService:
     @pytest.mark.asyncio
     async def test_is_node_ready_for_execution_with_incomplete_dependencies(self, sample_task_nodes):
         """Test checking if node with incomplete dependencies is ready."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         graph = await self.create_linear_graph(sample_task_nodes)
         service = GraphTraversalService(graph)
@@ -361,7 +361,7 @@ class TestGraphTraversalServicePerformance:
     @pytest.mark.asyncio
     async def test_large_graph_topological_sort_performance(self):
         """Test topological sort performance with large graph."""
-        from src.roma.application.services.graph_traversal_service import GraphTraversalService
+        from roma.application.services.graph_traversal_service import GraphTraversalService
         
         # Create large linear graph (1000 nodes)
         nodes = []

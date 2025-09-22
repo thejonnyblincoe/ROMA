@@ -22,7 +22,7 @@ from .schemas import (
     StatusResponse,
 )
 
-from src.roma.framework_entry import (
+from roma.framework_entry import (
     SentientAgent,
     ProfiledSentientAgent,
     LightweightSentientAgent,

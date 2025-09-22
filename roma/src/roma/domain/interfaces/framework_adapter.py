@@ -7,7 +7,7 @@ to integrate with the ROMA agent runtime.
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any
-from src.roma.domain.entities.task_node import TaskNode
+from roma.domain.entities.task_node import TaskNode
 
 
 class FrameworkAdapter(ABC):

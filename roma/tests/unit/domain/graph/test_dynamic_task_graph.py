@@ -10,10 +10,10 @@ from typing import List, Set
 import pytest
 import networkx as nx
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
 
 
 class TestDynamicTaskGraph:
@@ -51,7 +51,7 @@ class TestDynamicTaskGraph:
 
     def test_dynamic_task_graph_init(self):
         """Test DynamicTaskGraph initialization."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         
@@ -67,7 +67,7 @@ class TestDynamicTaskGraph:
 
     def test_dynamic_task_graph_init_with_root(self, sample_task_nodes):
         """Test DynamicTaskGraph initialization with root node."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         root_node = sample_task_nodes[0]
         graph = DynamicTaskGraph(root_node=root_node)
@@ -79,7 +79,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_add_node_basic(self, sample_task_nodes):
         """Test basic node addition."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         node = sample_task_nodes[0]
@@ -93,7 +93,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio 
     async def test_add_node_with_parent(self, sample_task_nodes):
         """Test adding node with parent dependency."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         parent = sample_task_nodes[0]
@@ -111,7 +111,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_concurrent_node_addition(self, sample_task_nodes):
         """Test thread-safe concurrent node addition."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         
@@ -138,7 +138,7 @@ class TestDynamicTaskGraph:
 
     def test_get_ready_nodes_empty(self):
         """Test getting ready nodes from empty graph."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         ready_nodes = graph.get_ready_nodes()
@@ -148,7 +148,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_get_ready_nodes_single_pending(self, sample_task_nodes):
         """Test getting ready nodes with single pending node."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         node = sample_task_nodes[0]
@@ -162,7 +162,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_get_ready_nodes_with_dependencies(self, sample_task_nodes):
         """Test getting ready nodes respects dependencies."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         parent = sample_task_nodes[0]
@@ -180,7 +180,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_update_node_status(self, sample_task_nodes):
         """Test updating node status."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         node = sample_task_nodes[0]
@@ -202,7 +202,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_update_node_status_enables_children(self, sample_task_nodes):
         """Test completing parent enables children to become ready."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         parent = sample_task_nodes[0]
@@ -228,7 +228,7 @@ class TestDynamicTaskGraph:
 
     def test_has_cycles_empty_graph(self):
         """Test cycle detection on empty graph."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         assert graph.has_cycles() is False
@@ -236,7 +236,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_has_cycles_linear_graph(self, sample_task_nodes):
         """Test cycle detection on linear graph (no cycles)."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         
@@ -253,7 +253,7 @@ class TestDynamicTaskGraph:
 
     def test_get_node_nonexistent(self):
         """Test getting nonexistent node returns None."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         result = graph.get_node("nonexistent-id")
@@ -262,7 +262,7 @@ class TestDynamicTaskGraph:
 
     def test_get_all_nodes_empty(self):
         """Test getting all nodes from empty graph."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         all_nodes = graph.get_all_nodes()
@@ -273,7 +273,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_get_all_nodes_multiple(self, sample_task_nodes):
         """Test getting all nodes from populated graph."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         
@@ -287,7 +287,7 @@ class TestDynamicTaskGraph:
 
     def test_get_children_nonexistent_parent(self):
         """Test getting children of nonexistent parent."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         children = graph.get_children("nonexistent-id")
@@ -297,7 +297,7 @@ class TestDynamicTaskGraph:
     @pytest.mark.asyncio
     async def test_get_children_with_children(self, sample_task_nodes):
         """Test getting children of node with children."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         parent = sample_task_nodes[0]
@@ -316,7 +316,7 @@ class TestDynamicTaskGraph:
 
     def test_model_serialization(self, sample_task_nodes):
         """Test Pydantic model serialization/deserialization."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph(root_node=sample_task_nodes[0])
         
@@ -343,7 +343,7 @@ class TestDynamicTaskGraphPerformance:
     @pytest.mark.performance
     async def test_large_graph_performance(self):
         """Test performance with large number of nodes."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         
@@ -388,7 +388,7 @@ class TestDynamicTaskGraphPerformance:
     @pytest.mark.performance
     async def test_deep_hierarchy_performance(self):
         """Test performance with deep node hierarchy."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
         
         graph = DynamicTaskGraph()
         
@@ -461,7 +461,7 @@ class TestDynamicTaskGraphEdgeCases:
     @pytest.mark.asyncio
     async def test_add_node_with_parent_in_graph(self, sample_task_nodes):
         """Test adding node with parent that exists in graph (covers line 82)."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
         graph = DynamicTaskGraph()
         parent_node = sample_task_nodes[0]
@@ -486,7 +486,7 @@ class TestDynamicTaskGraphEdgeCases:
 
     def test_get_children_nonexistent_task_id(self):
         """Test get_children with task_id not in graph (covers lines 215-219)."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
         graph = DynamicTaskGraph()
 
@@ -497,7 +497,7 @@ class TestDynamicTaskGraphEdgeCases:
     @pytest.mark.asyncio
     async def test_get_children_with_fake_child_edge(self, sample_task_nodes):
         """Test get_children with manually added edge (covers successors path)."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
         graph = DynamicTaskGraph()
         parent_node = sample_task_nodes[0]
@@ -516,7 +516,7 @@ class TestDynamicTaskGraphEdgeCases:
     @pytest.mark.asyncio
     async def test_has_cycles_with_actual_cycle(self):
         """Test has_cycles with actual cycle (covers cycle detection paths)."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
         graph = DynamicTaskGraph()
 
@@ -537,7 +537,7 @@ class TestDynamicTaskGraphEdgeCases:
 
     def test_get_node_with_valid_id(self, sample_task_nodes):
         """Test get_node with valid task_id (covers successful path)."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
         graph = DynamicTaskGraph()
         node = sample_task_nodes[0]
@@ -552,7 +552,7 @@ class TestDynamicTaskGraphEdgeCases:
     @pytest.mark.asyncio
     async def test_update_node_status_nonexistent_node(self):
         """Test update_node_status with nonexistent node (covers error paths)."""
-        from src.roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+        from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
         graph = DynamicTaskGraph()
 

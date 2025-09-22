@@ -10,15 +10,15 @@ from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 from typing import List
 
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.domain.events.task_events import (
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.events.task_events import (
     TaskCreatedEvent, TaskStatusChangedEvent, AtomizerEvaluatedEvent,
     TaskCompletedEvent, TaskFailedEvent, BaseTaskEvent
 )
-from src.roma.application.services.event_store import (
+from roma.application.services.event_store import (
     InMemoryEventStore, EventFilter, get_event_store, emit_event
 )
 

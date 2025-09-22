@@ -1,6 +1,9 @@
 # Level 3: General Purpose Multi-Agent Profile (Simplified)
 # Basic profile for general tasks with balanced performance
 
+# Target for automatic instantiation to ProfileConfig object
+_target_: roma.domain.value_objects.config.profile_config.ProfileConfig
+
 defaults:
   # Import entities (Level 1)
   - /entities/models/providers@models
@@ -20,6 +23,7 @@ version: "2.0.0"
 
 # Agent mapping - using simpler/faster agents for general tasks
 agent_mapping:
+  _target_: roma.domain.value_objects.config.profile_config.AgentMappingConfig
   # Atomizers by task type
   atomizers:
     RETRIEVE: ${profiles.agents.retrieve_atomizer}
@@ -30,34 +34,34 @@ agent_mapping:
 
   # Planners by task type (using basic planners)
   planners:
-    RETRIEVE: ${retrieve_planner}       # Basic retrieve planner
-    WRITE: ${write_planner}
-    THINK: ${think_planner}
-    CODE_INTERPRET: ${code_planner}
-    IMAGE_GENERATION: ${image_planner}
-    AGGREGATE: ${aggregate_planner}
+    RETRIEVE: ${profiles.agents.retrieve_planner}       # Basic retrieve planner
+    WRITE: ${profiles.agents.write_planner}
+    THINK: ${profiles.agents.think_planner}
+    CODE_INTERPRET: ${profiles.agents.code_planner}
+    IMAGE_GENERATION: ${profiles.agents.image_planner}
+    AGGREGATE: ${profiles.agents.aggregate_planner}
 
   # Executors by task type (using fast executors)
   executors:
-    RETRIEVE: ${fast_retrieve_executor}  # Fast retrieval
-    WRITE: ${write_executor}
-    THINK: ${think_executor}
-    CODE_INTERPRET: ${code_executor}
-    IMAGE_GENERATION: ${image_executor}
+    RETRIEVE: ${profiles.agents.fast_retrieve_executor}  # Fast retrieval
+    WRITE: ${profiles.agents.write_executor}
+    THINK: ${profiles.agents.think_executor}
+    CODE_INTERPRET: ${profiles.agents.code_executor}
+    IMAGE_GENERATION: ${profiles.agents.image_executor}
 
   # Aggregators by task type
   aggregators:
-    RETRIEVE: ${retrieve_aggregator}
-    WRITE: ${write_aggregator}
-    THINK: ${think_aggregator}
-    CODE_INTERPRET: ${code_aggregator}
-    IMAGE_GENERATION: ${image_aggregator}
-    default: ${default_aggregator}
+    RETRIEVE: ${profiles.agents.retrieve_aggregator}
+    WRITE: ${profiles.agents.write_aggregator}
+    THINK: ${profiles.agents.think_aggregator}
+    CODE_INTERPRET: ${profiles.agents.code_aggregator}
+    IMAGE_GENERATION: ${profiles.agents.image_aggregator}
+    default: ${profiles.agents.default_aggregator}
 
   # Plan modifiers
   plan_modifiers:
-    default: ${default_plan_modifier}
-    error_recovery: ${error_recovery_plan_modifier}
+    default: ${profiles.agents.default_plan_modifier}
+    error_recovery: ${profiles.agents.error_recovery_plan_modifier}
 
 # Basic execution settings
 settings:
@@ -81,6 +85,20 @@ settings:
   retry_on_failure: true
   max_retries: 2
   fallback_to_simpler: true
+
+  # Replanning configuration
+  replanning_enabled: true
+  default_failure_threshold: 0.3  # 30% failures trigger replan
+  task_type_thresholds:
+    RETRIEVE: 0.5      # More tolerant for data retrieval
+    WRITE: 0.2         # Less tolerant for content generation
+    THINK: 0.3         # Default threshold
+    CODE_INTERPRET: 0.1  # Very strict for code execution
+    IMAGE_GENERATION: 0.4  # More tolerant for creative tasks
+  enable_partial_aggregation: true
+  deadlock_detection_enabled: true
+  deadlock_check_interval: 300  # 5 minutes
+  hitl_replanning_enabled: false  # No HITL for general profile
 
 # Simplified multimodal configuration
 multimodal:

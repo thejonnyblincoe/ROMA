@@ -1,0 +1,29 @@
+{# Temporal awareness helper - time-based context #}
+### Temporal Context
+**Current Date**: {{ current_date }}
+**Current Year**: {{ current_year }}
+{% if current_timestamp %}
+**Timestamp**: {{ current_timestamp }}
+{% endif %}
+
+{% if execution_started_at %}
+**Execution Started**: {{ execution_started_at }}
+{% endif %}
+
+{% if time_elapsed %}
+**Time Elapsed**: {{ time_elapsed }}
+{% if time_elapsed > "00:10:00" %}
+⚠️ **Long Running**: Task has been executing for over 10 minutes
+{% elif time_elapsed > "00:05:00" %}
+⏰ **Moderate Duration**: Task running for over 5 minutes
+{% endif %}
+{% endif %}
+
+{% if estimated_duration %}
+**Estimated Duration**: {{ estimated_duration }}
+{% endif %}
+
+### Temporal Guidelines
+- Consider current events and recent developments as of {{ current_date }}
+- Information should be relevant to {{ current_year }}
+- Account for time-sensitive data in your {{ task_type | lower }} operations

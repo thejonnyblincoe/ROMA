@@ -10,11 +10,14 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.roma.domain.entities.artifacts.base_artifact import BaseArtifact
-from src.roma.domain.entities.artifacts.file_artifact import FileArtifact
-from src.roma.domain.value_objects.result_envelope import ResultEnvelope, AnyResultEnvelope
-from src.roma.domain.value_objects.media_type import MediaType
-from src.roma.infrastructure.storage.storage_interface import StorageInterface
+from roma.domain.entities.artifacts.base_artifact import BaseArtifact
+from roma.domain.entities.artifacts.file_artifact import FileArtifact
+from roma.domain.entities.artifacts.audio_artifact import AudioArtifact
+from roma.domain.entities.artifacts.video_artifact import VideoArtifact
+from roma.domain.entities.artifacts.image_artifact import ImageArtifact
+from roma.domain.value_objects.result_envelope import ResultEnvelope, AnyResultEnvelope
+from roma.domain.value_objects.media_type import MediaType
+from roma.infrastructure.storage.storage_interface import StorageInterface
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +57,12 @@ class ArtifactService:
 
     async def store_envelope_artifacts(
         self,
-        execution_id: str,
         envelope: AnyResultEnvelope
     ) -> List[str]:
         """
         Store all artifacts from a ResultEnvelope and return storage references.
 
         Args:
-            execution_id: Associated execution ID for organization
             envelope: ResultEnvelope containing artifacts to store
 
         Returns:
@@ -71,7 +72,7 @@ class ArtifactService:
             await self.initialize()
 
         if not envelope.artifacts:
-            logger.debug(f"No artifacts to store for execution {execution_id}")
+            logger.debug("No artifacts to store")
             return []
 
         stored_refs = []
@@ -79,7 +80,7 @@ class ArtifactService:
         for artifact in envelope.artifacts:
             try:
                 storage_ref = await self._store_single_artifact(
-                    execution_id, envelope.task_id, artifact
+                    envelope.task_id, artifact
                 )
                 stored_refs.append(storage_ref)
 
@@ -87,12 +88,11 @@ class ArtifactService:
                 logger.error(f"Failed to store artifact {artifact.name}: {e}")
                 # Continue with other artifacts
 
-        logger.info(f"Stored {len(stored_refs)}/{len(envelope.artifacts)} artifacts for execution {execution_id}")
+        logger.info(f"Stored {len(stored_refs)}/{len(envelope.artifacts)} artifacts")
         return stored_refs
 
     async def _store_single_artifact(
         self,
-        execution_id: str,
         task_id: str,
         artifact: BaseArtifact
     ) -> str:
@@ -100,15 +100,14 @@ class ArtifactService:
         Store a single artifact and return its storage reference.
 
         Args:
-            execution_id: Associated execution ID
             task_id: Associated task ID
             artifact: Artifact to store
 
         Returns:
             Storage key/reference for the stored artifact
         """
-        # Generate storage key with execution organization
-        storage_key = self._generate_artifact_key(execution_id, task_id, artifact)
+        # Generate storage key
+        storage_key = self._generate_artifact_key(task_id, artifact)
 
         # Get artifact content
         content = await artifact.get_content()
@@ -119,14 +118,13 @@ class ArtifactService:
         metadata = {
             "artifact_id": artifact.artifact_id,
             "task_id": task_id,
-            "execution_id": execution_id,
             "media_type": artifact.media_type.value,
             "created_at": artifact.created_at.isoformat(),
             "original_name": artifact.name,
             **artifact.metadata
         }
 
-        # Store using storage interface
+        # Store using storage interface (already execution-isolated)
         if isinstance(content, str):
             # Text content
             full_path = await self.storage.put_text(
@@ -143,7 +141,6 @@ class ArtifactService:
 
     def _generate_artifact_key(
         self,
-        execution_id: str,
         task_id: str,
         artifact: BaseArtifact
     ) -> str:
@@ -151,12 +148,11 @@ class ArtifactService:
         Generate organized storage key for artifact.
 
         Args:
-            execution_id: Execution identifier
             task_id: Task identifier
             artifact: Artifact to generate key for
 
         Returns:
-            Storage key in format: executions/{execution_id}/tasks/{task_id}/{artifact_id}_{name}
+            Storage key in format: tasks/{task_id}/{artifact_id}_{name}
         """
         # Sanitize artifact name for filesystem
         safe_name = self._sanitize_filename(artifact.name)
@@ -167,9 +163,9 @@ class ArtifactService:
         else:
             extension = self._get_extension_for_media_type(artifact.media_type)
 
-        # Build hierarchical key
+        # Build hierarchical key (execution_id is handled by storage)
         filename = f"{artifact.artifact_id}_{safe_name}{extension}"
-        storage_key = f"executions/{execution_id}/tasks/{task_id}/{filename}"
+        storage_key = f"tasks/{task_id}/{filename}"
 
         return storage_key
 
@@ -215,18 +211,15 @@ class ArtifactService:
         else:
             return await self.storage.get(storage_key)
 
-    async def list_execution_artifacts(self, execution_id: str) -> List[str]:
+    async def list_execution_artifacts(self) -> List[str]:
         """
-        List all artifact storage keys for an execution.
-
-        Args:
-            execution_id: Execution identifier
+        List all artifact storage keys for this execution.
 
         Returns:
             List of storage keys for artifacts in this execution
         """
-        prefix = f"executions/{execution_id}/"
-        return await self.storage.list_keys(prefix)
+        # Storage is already execution-isolated, so list all keys
+        return await self.storage.list_keys("")
 
     async def get_artifact_metadata(self, storage_key: str) -> Dict[str, Any]:
         """
@@ -253,17 +246,14 @@ class ArtifactService:
 
         return {"exists": False}
 
-    async def cleanup_execution_artifacts(self, execution_id: str) -> int:
+    async def cleanup_execution_artifacts(self) -> int:
         """
-        Clean up all artifacts for an execution.
-
-        Args:
-            execution_id: Execution identifier
+        Clean up all artifacts for this execution.
 
         Returns:
             Number of artifacts deleted
         """
-        artifact_keys = await self.list_execution_artifacts(execution_id)
+        artifact_keys = await self.list_execution_artifacts()
         deleted_count = 0
 
         for key in artifact_keys:
@@ -273,7 +263,7 @@ class ArtifactService:
             except Exception as e:
                 logger.warning(f"Failed to delete artifact {key}: {e}")
 
-        logger.info(f"Cleaned up {deleted_count}/{len(artifact_keys)} artifacts for execution {execution_id}")
+        logger.info(f"Cleaned up {deleted_count}/{len(artifact_keys)} artifacts")
         return deleted_count
 
     async def create_file_artifact_from_storage(

@@ -356,6 +356,37 @@ class ResultsAggregatedEvent(BaseTaskEvent):
 
 
 # Union type for all task events
+@dataclass(frozen=True, slots=True)
+class DependencyAddedEvent(BaseTaskEvent):
+    """
+    Emitted when a dependency edge is added between tasks.
+
+    Records dependency relationships for observability and debugging.
+    """
+
+    dependency_id: str
+    dependency_type: str = "task_dependency"
+
+    @classmethod
+    def create(
+        cls,
+        task_id: str,
+        dependency_id: str,
+        dependency_type: str = "task_dependency",
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> "DependencyAddedEvent":
+        """Create a DependencyAddedEvent with default values."""
+        return cls(
+            event_id=str(uuid4()),
+            task_id=task_id,
+            timestamp=utc_now(),
+            event_type="dependency_added",
+            metadata=metadata or {},
+            dependency_id=dependency_id,
+            dependency_type=dependency_type
+        )
+
+
 TaskEvent = (
     TaskCreatedEvent |
     TaskStatusChangedEvent |
@@ -364,5 +395,6 @@ TaskEvent = (
     TaskExecutedEvent |
     TaskCompletedEvent |
     TaskFailedEvent |
-    ResultsAggregatedEvent
+    ResultsAggregatedEvent |
+    DependencyAddedEvent
 )
