@@ -11,16 +11,22 @@ from typing import Literal, Set
 class TaskStatus(str, Enum):
     """
     Status of a task node in the execution graph.
-    
+
     State transition flow:
-    PENDING → READY → EXECUTING → (COMPLETED | FAILED)
-    
+    PENDING → ATOMIZING → (PLANNING | EXECUTING) → (PLAN_DONE | AGGREGATING) → COMPLETED
+
     Special states:
-    - NEEDS_REPLAN: Triggers replanning when children fail
+    - ATOMIZING: Determining if task is atomic or needs decomposition
+    - PLANNING: Decomposing task into subtasks
+    - PLAN_DONE: Planning complete, subtasks ready for execution
     - AGGREGATING: Parent collecting results from completed children
+    - NEEDS_REPLAN: Triggers replanning when children fail
     """
-    
-    PENDING = "PENDING"           # Task created, waiting for dependencies
+
+    PENDING = "PENDING"           # Task created, waiting to be processed
+    ATOMIZING = "ATOMIZING"       # Determining if task is atomic
+    PLANNING = "PLANNING"         # Decomposing into subtasks
+    PLAN_DONE = "PLAN_DONE"       # Planning complete, subtasks created
     READY = "READY"               # Dependencies satisfied, ready to execute
     EXECUTING = "EXECUTING"       # Currently being processed
     AGGREGATING = "AGGREGATING"   # Parent collecting child results
@@ -60,8 +66,13 @@ class TaskStatus(str, Enum):
     
     @property
     def is_active(self) -> bool:
-        """Check if this task is currently active (executing or aggregating)."""
-        return self in {TaskStatus.EXECUTING, TaskStatus.AGGREGATING}
+        """Check if this task is currently active."""
+        return self in {
+            TaskStatus.ATOMIZING,
+            TaskStatus.PLANNING,
+            TaskStatus.EXECUTING,
+            TaskStatus.AGGREGATING
+        }
     
     @property
     def can_transition_to(self) -> Set["TaskStatus"]:
@@ -72,17 +83,19 @@ class TaskStatus(str, Enum):
             Set of valid target statuses for transitions
         """
         transitions = {
-            TaskStatus.PENDING: {TaskStatus.READY, TaskStatus.FAILED},
-            # READY should transition to EXECUTING; failing from READY is not allowed
+            TaskStatus.PENDING: {TaskStatus.ATOMIZING, TaskStatus.EXECUTING, TaskStatus.FAILED},
+            TaskStatus.ATOMIZING: {TaskStatus.PLANNING, TaskStatus.EXECUTING, TaskStatus.FAILED},
+            TaskStatus.PLANNING: {TaskStatus.PLAN_DONE, TaskStatus.FAILED},
+            TaskStatus.PLAN_DONE: {TaskStatus.AGGREGATING, TaskStatus.READY},
             TaskStatus.READY: {TaskStatus.EXECUTING},
             TaskStatus.EXECUTING: {
-                TaskStatus.COMPLETED, 
-                TaskStatus.FAILED, 
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
                 TaskStatus.AGGREGATING,
                 TaskStatus.NEEDS_REPLAN
             },
             TaskStatus.AGGREGATING: {TaskStatus.COMPLETED, TaskStatus.FAILED},
-            TaskStatus.NEEDS_REPLAN: {TaskStatus.READY, TaskStatus.FAILED},
+            TaskStatus.NEEDS_REPLAN: {TaskStatus.PLANNING, TaskStatus.READY, TaskStatus.FAILED},
             TaskStatus.COMPLETED: set(),  # Terminal state
             TaskStatus.FAILED: {TaskStatus.NEEDS_REPLAN, TaskStatus.READY},  # Recovery
         }
@@ -104,6 +117,7 @@ class TaskStatus(str, Enum):
 
 # Type hints for use in other modules
 TaskStatusLiteral = Literal[
-    "PENDING", "READY", "EXECUTING", "AGGREGATING", 
+    "PENDING", "ATOMIZING", "PLANNING", "PLAN_DONE",
+    "READY", "EXECUTING", "AGGREGATING",
     "COMPLETED", "FAILED", "NEEDS_REPLAN"
 ]

@@ -12,6 +12,9 @@ dependencies = [
     "ipykernel>=6.30.1",
     "pydantic>=2.11.9",
     "pytest>=8.4.2",
+    "networkx>=3.0",
+    "matplotlib>=3.6.0",
+    "ipdb>=0.13.13",
 ]
 
 [project.scripts]

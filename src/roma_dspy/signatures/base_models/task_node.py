@@ -1,8 +1,9 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, FrozenSet
+from typing import Optional, Dict, Any, FrozenSet, List
 from src.roma_dspy.types.task_type import TaskType
 from src.roma_dspy.types.node_type import NodeType
 from src.roma_dspy.types.task_status import TaskStatus
+from src.roma_dspy.types.module_result import ModuleResult, StateTransition, NodeMetrics
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -23,38 +24,68 @@ class TaskNode(BaseModel):
     """
     
     # Identity and structure
+    task_id: str = Field(default_factory=lambda: str(uuid4()), description="Unique task identifier")
     parent_id: Optional[str] = Field(default=None, description="Parent task ID")
     goal: str = Field(default="", min_length=1, description="Task objective")
-    
-    # MECE classification and atomizer decision  
+
+    # Recursion depth tracking
+    depth: int = Field(default=0, description="Current recursion depth")
+    max_depth: int = Field(default=2, description="Maximum allowed recursion depth")
+
+    # MECE classification and atomizer decision
     task_type: TaskType = Field(default=TaskType.THINK, description="MECE task classification")
     node_type: Optional[NodeType] = Field(default=None, description="Atomizer decision: PLAN or EXECUTE")
-    
+
     # State management
     status: TaskStatus = Field(default=TaskStatus.PENDING, description="Current task status")
-    
+
     # Execution results
     result: Optional[Any] = Field(default=None, description="Task execution result")
-    
+
     # Immutable relationships
     dependencies: FrozenSet[str] = Field(default_factory=frozenset, description="Task dependencies")
     children: FrozenSet[str] = Field(default_factory=frozenset, description="Child tasks")
 
+    # Comprehensive tracking
+    execution_history: Dict[str, ModuleResult] = Field(
+        default_factory=dict,
+        description="Complete history of module executions"
+    )
+    state_transitions: List[StateTransition] = Field(
+        default_factory=list,
+        description="State transition history"
+    )
+    metrics: NodeMetrics = Field(
+        default_factory=NodeMetrics,
+        description="Performance and execution metrics"
+    )
+
+    # Subgraph reference for planning nodes
+    subgraph_id: Optional[str] = Field(default=None, description="ID of subgraph for PLAN nodes")
+
+    # Timestamps
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+
+    # Version for optimistic locking
+    version: int = Field(default=0)
+
     def transition_to(
-        self, 
-        status: TaskStatus, 
+        self,
+        status: TaskStatus,
         **updates: Any
     ) -> "TaskNode":
         """
         Create new instance with status transition and optional updates.
-        
+
         Args:
             status: Target status to transition to
             **updates: Additional field updates
-            
+
         Returns:
             New TaskNode instance with updated status
-            
+
         Raises:
             ValueError: If status transition is invalid
         """
@@ -63,21 +94,34 @@ class TaskNode(BaseModel):
                 f"Invalid transition from {self.status} to {status}. "
                 f"Valid transitions: {self.status.can_transition_to}"
             )
-        
+
+        # Record state transition
+        transition = StateTransition(
+            from_state=self.status.value,
+            to_state=status.value,
+            timestamp=datetime.now(timezone.utc),
+            metadata=updates.get('transition_metadata', {})
+        )
+
+        new_transitions = list(self.state_transitions)
+        new_transitions.append(transition)
+
         # Auto-update timestamps based on status
         timestamp_updates = {}
         if status == TaskStatus.EXECUTING and not self.started_at:
             timestamp_updates['started_at'] = datetime.now(timezone.utc)
         elif status.is_terminal and not self.completed_at:
             timestamp_updates['completed_at'] = datetime.now(timezone.utc)
-        
+
         # Increment version for optimistic locking
         all_updates = {
             'status': status,
+            'state_transitions': new_transitions,
+            'version': self.version + 1,
             **timestamp_updates,
             **updates
         }
-        
+
         return self.model_copy(update=all_updates)
     
     def with_result(self, result: Any, metadata: Optional[Dict[str, Any]] = None) -> "TaskNode":
@@ -266,8 +310,283 @@ class TaskNode(BaseModel):
             "retry_count": self.retry_count + 1,
         })
     
+    def record_module_execution(
+        self,
+        module_name: str,
+        result: ModuleResult
+    ) -> "TaskNode":
+        """
+        Record module execution result in history.
+
+        Args:
+            module_name: Name of the module (atomizer, planner, executor, aggregator)
+            result: Module execution result
+
+        Returns:
+            New TaskNode instance with updated execution history
+        """
+        new_history = dict(self.execution_history)
+        new_history[module_name] = result
+
+        # Update metrics based on module
+        new_metrics = self.metrics.model_copy()
+        if module_name == "atomizer":
+            new_metrics.atomizer_duration = result.duration
+        elif module_name == "planner":
+            new_metrics.planner_duration = result.duration
+        elif module_name == "executor":
+            new_metrics.executor_duration = result.duration
+        elif module_name == "aggregator":
+            new_metrics.aggregator_duration = result.duration
+
+        new_metrics.total_duration = new_metrics.calculate_total_duration()
+
+        return self.model_copy(update={
+            "execution_history": new_history,
+            "metrics": new_metrics,
+            "version": self.version + 1
+        })
+
+    def should_force_execute(self) -> bool:
+        """
+        Check if task should be forced to execute due to max depth.
+
+        Returns:
+            True if at or beyond max depth, False otherwise
+        """
+        return self.depth >= self.max_depth
+
+    def with_incremented_depth(self, parent_depth: int) -> "TaskNode":
+        """
+        Create new instance with depth set based on parent.
+
+        Args:
+            parent_depth: Depth of parent node
+
+        Returns:
+            New TaskNode instance with updated depth
+        """
+        return self.model_copy(update={
+            "depth": parent_depth + 1,
+            "version": self.version + 1
+        })
+
+    def set_subgraph(self, subgraph_id: str) -> "TaskNode":
+        """
+        Set subgraph ID for planning nodes.
+
+        Args:
+            subgraph_id: ID of the subgraph
+
+        Returns:
+            New TaskNode instance with subgraph ID set
+        """
+        return self.model_copy(update={
+            "subgraph_id": subgraph_id,
+            "version": self.version + 1
+        })
+
+    def get_execution_summary(self) -> Dict[str, Any]:
+        """
+        Get comprehensive execution summary.
+
+        Returns:
+            Dictionary containing all execution details
+        """
+        return {
+            "task_id": self.task_id,
+            "goal": self.goal,
+            "depth": self.depth,
+            "status": self.status.value,
+            "node_type": self.node_type.value if self.node_type else None,
+            "execution_history": {
+                name: {
+                    "input": str(result.input)[:100],
+                    "output": str(result.output)[:100],
+                    "duration": result.duration,
+                    "error": result.error
+                }
+                for name, result in self.execution_history.items()
+            },
+            "metrics": self.metrics.model_dump(),
+            "state_transitions": [
+                {
+                    "from": t.from_state,
+                    "to": t.to_state,
+                    "timestamp": t.timestamp.isoformat()
+                }
+                for t in self.state_transitions
+            ],
+            "children": list(self.children),
+            "dependencies": list(self.dependencies)
+        }
+
     def __str__(self) -> str:
         """Human-readable string representation."""
         node_type_str = f"({self.node_type.value})" if self.node_type else ""
-        return f"TaskNode[{self.task_id[:8]}]{node_type_str}: {self.goal[:50]}..."
-    
+        depth_str = f"[D{self.depth}]" if self.depth > 0 else ""
+        return f"TaskNode{depth_str}[{self.task_id[:8]}]{node_type_str}: {self.goal[:50]}..."
+
+    def pretty_print(self, show_result: bool = True, show_execution: bool = True, indent: int = 0) -> str:
+        """
+        Generate a pretty-printed representation of the task node.
+
+        Args:
+            show_result: Whether to show the result content
+            show_execution: Whether to show execution history details
+            indent: Current indentation level
+
+        Returns:
+            Formatted string representation
+        """
+        lines = []
+        prefix = "  " * indent
+
+        # Header with task info
+        lines.append(f"{prefix}{'='*60}")
+        lines.append(f"{prefix}📋 TASK NODE")
+        lines.append(f"{prefix}{'='*60}")
+
+        # Basic info
+        lines.append(f"{prefix}ID:        {self.task_id[:8]}...")
+        lines.append(f"{prefix}Goal:      {self.goal}")  # Show full goal
+        lines.append(f"{prefix}Depth:     {self.depth}/{self.max_depth}")
+
+        # Status and type
+        status_emoji = {
+            "PENDING": "⏳",
+            "ATOMIZING": "🔍",
+            "PLANNING": "📝",
+            "PLAN_DONE": "✅",
+            "READY": "🟢",
+            "EXECUTING": "⚙️",
+            "AGGREGATING": "🔄",
+            "COMPLETED": "✨",
+            "FAILED": "❌",
+            "NEEDS_REPLAN": "🔁"
+        }.get(self.status.value, "❓")
+
+        lines.append(f"{prefix}Status:    {status_emoji} {self.status.value}")
+
+        if self.node_type:
+            node_emoji = "📝" if self.node_type == NodeType.PLAN else "⚡"
+            lines.append(f"{prefix}Node Type: {node_emoji} {self.node_type.value}")
+
+        if self.task_type:
+            lines.append(f"{prefix}Task Type: {self.task_type.value}")
+
+        # Subgraph info
+        if self.subgraph_id:
+            lines.append(f"{prefix}Subgraph:  {self.subgraph_id[:20]}...")
+
+        # Execution history
+        if show_execution and self.execution_history:
+            lines.append(f"{prefix}")
+            lines.append(f"{prefix}📊 EXECUTION HISTORY:")
+            lines.append(f"{prefix}{'-'*40}")
+
+            for module_name, result in self.execution_history.items():
+                module_emoji = {
+                    "atomizer": "🔍",
+                    "planner": "📝",
+                    "executor": "⚡",
+                    "aggregator": "🔄"
+                }.get(module_name, "📦")
+
+                lines.append(f"{prefix}  {module_emoji} {module_name.upper()}")
+                lines.append(f"{prefix}     Duration: {result.duration:.2f}s")
+
+                if result.error:
+                    lines.append(f"{prefix}     ❌ Error: {result.error}")
+                else:
+                    # Show output preview
+                    output_str = str(result.output)
+                    if len(output_str) > 100:
+                        output_str = output_str[:100] + "..."
+                    lines.append(f"{prefix}     Output: {output_str}")
+
+        # Metrics
+        if self.metrics and (self.metrics.total_duration or self.metrics.subtasks_created):
+            lines.append(f"{prefix}")
+            lines.append(f"{prefix}📈 METRICS:")
+            lines.append(f"{prefix}{'-'*40}")
+            if self.metrics.total_duration:
+                lines.append(f"{prefix}  Total Duration: {self.metrics.total_duration:.2f}s")
+            if self.metrics.subtasks_created:
+                lines.append(f"{prefix}  Subtasks Created: {self.metrics.subtasks_created}")
+            if self.metrics.retry_count:
+                lines.append(f"{prefix}  Retries: {self.metrics.retry_count}")
+
+        # Result
+        if show_result and self.result:
+            lines.append(f"{prefix}")
+            lines.append(f"{prefix}📄 RESULT:")
+            lines.append(f"{prefix}{'-'*40}")
+            result_str = str(self.result)
+
+            # Format result based on length
+            if len(result_str) <= 200:
+                lines.append(f"{prefix}  {result_str}")
+            else:
+                # Show first and last parts for long results
+                lines.append(f"{prefix}  {result_str[:150]}...")
+                lines.append(f"{prefix}  ... [truncated {len(result_str) - 200} chars] ...")
+                lines.append(f"{prefix}  ...{result_str[-50:]}")
+
+        # State transitions summary
+        if self.state_transitions:
+            lines.append(f"{prefix}")
+            lines.append(f"{prefix}🔄 STATE TRANSITIONS: {len(self.state_transitions)}")
+            last_transition = self.state_transitions[-1]
+            lines.append(f"{prefix}  Last: {last_transition.from_state} → {last_transition.to_state}")
+
+        lines.append(f"{prefix}{'='*60}")
+
+        return "\n".join(lines)
+
+    def print_tree(self, dag: Optional['TaskDAG'] = None, indent: int = 0, visited: Optional[set] = None) -> str:
+        """
+        Print the task tree structure with this node as root.
+
+        Args:
+            dag: The DAG containing the task relationships
+            indent: Current indentation level
+            visited: Set of visited task IDs to avoid cycles
+
+        Returns:
+            Tree representation as string
+        """
+        if visited is None:
+            visited = set()
+
+        if self.task_id in visited:
+            return f"{'  ' * indent}↺ {self.task_id[:8]}... (circular reference)"
+
+        visited.add(self.task_id)
+
+        lines = []
+        prefix = "  " * indent
+
+        # Current node
+        status_emoji = {
+            "COMPLETED": "✅",
+            "FAILED": "❌",
+            "EXECUTING": "⚙️",
+            "PENDING": "⏳",
+            "PLANNING": "📝",
+            "PLAN_DONE": "✔️"
+        }.get(self.status.value, "❓")
+
+        node_type_str = f"[{self.node_type.value}]" if self.node_type else ""
+        lines.append(f"{prefix}{status_emoji} {self.goal} {node_type_str}")  # Show full goal
+
+        # If we have a DAG and subgraph, show children
+        if dag and self.subgraph_id:
+            subgraph = dag.get_subgraph(self.subgraph_id)
+            if subgraph:
+                for child_task in subgraph.get_all_tasks(include_subgraphs=False):
+                    child_lines = child_task.print_tree(subgraph, indent + 1, visited)
+                    if child_lines:
+                        lines.append(child_lines)
+
+        return "\n".join(lines)
