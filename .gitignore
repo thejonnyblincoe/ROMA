@@ -11,3 +11,4 @@ wheels/
 .pytest_cache
 .env
 .pytest_cache
+.dspy_cache
