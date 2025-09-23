@@ -59,11 +59,13 @@ The following example mirrors a typical orchestration loop. It uses three differ
 
 ```python
 import dspy
-from src.roma_dspy.modules.executor import Executor
-from src.roma_dspy.modules.atomizer import Atomizer
-from src.roma_dspy.modules.planner import Planner
-from src.roma_dspy.modules.aggregator import Aggregator
-from src.roma_dspy.modules.verifier import Verifier
+from src.roma_dspy.modules import (
+    Aggregator,
+    Atomizer,
+    Executor,
+    Planner,
+    Verifier,
+)
 from src.roma_dspy.signatures.base_models.subtask import SubTask
 from src.roma_dspy.types.task_type import TaskType
 
@@ -152,7 +154,7 @@ All modules inherit from `BaseModule`, located at `src/roma_dspy/modules/base_mo
 When you instantiate a module, you can either provide an existing `dspy.LM` or let the module build one from a provider string (`model`) and optional keyword arguments (`model_config`).
 
 ```python
-from src.roma_dspy.modules.executor import Executor
+from src.roma_dspy.modules import Executor
 
 executor = Executor(
     model="openrouter/openai/gpt-4o-mini",
@@ -375,7 +377,7 @@ executor.forward(
 If you want deterministic tool routing, you can set a dummy LM (or a very low-temperature model) and pass pure Python callables.
 
 ```python
-from src.roma_dspy.modules.executor import Executor
+from src.roma_dspy.modules import Executor
 
 executor = Executor(
     prediction_strategy="code_act",

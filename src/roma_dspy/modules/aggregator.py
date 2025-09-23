@@ -70,6 +70,44 @@ class Aggregator(BaseModule):
                 **filtered,
             )
 
+    async def aforward(
+        self,
+        original_goal: str,
+        subtasks_results: Sequence[SubTask],
+        *,
+        tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+        call_params: Optional[Dict[str, Any]] = None,
+        **call_kwargs: Any,
+    ):
+        runtime_tools = self._merge_tools(self._tools, tools)
+
+        ctx = dict(self._context_defaults)
+        if context:
+            ctx.update(context)
+        ctx.setdefault("lm", self._lm)
+
+        extra = dict(call_params or {})
+        if call_kwargs:
+            extra.update(call_kwargs)
+        if config is not None:
+            extra["config"] = config
+        if runtime_tools:
+            extra["tools"] = runtime_tools
+
+        method_for_filter = getattr(self._predictor, "aforward", None) or getattr(self._predictor, "forward", None)
+        filtered = self._filter_kwargs(method_for_filter, extra)
+
+        with dspy.context(**ctx):
+            acall = getattr(self._predictor, "acall", None)
+            payload = dict(original_goal=original_goal, subtasks_results=list(subtasks_results))
+            if acall is not None and hasattr(self._predictor, "aforward"):
+                return await acall(**payload, **filtered)
+            if acall is not None:
+                return await acall(**payload, **filtered)
+            return self._predictor(**payload, **filtered)
+
     @classmethod
     def from_provider(
         cls,
