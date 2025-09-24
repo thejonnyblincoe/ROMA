@@ -102,6 +102,6 @@ Consider these additional improvements:
 1. Add metrics collection for performance monitoring (Already implemented in DSPy, just need to clean it up)
 2. Implement the verifier module integration (Not a priority)
 3. Add retry logic for failed tasks (We need to figure out retry logic in DSPy and Refine modules to see how to make this work)
-4. Implement caching for repeated tasks (Caching already implemented)
+4. ~~Implement caching for repeated tasks (Caching already implemented)~~
 5. Add progress callbacks for long-running tasks (Need this for checkpointing)
-6. Should asyncify modules that we add (Check DSPy on how to do this)
+6. ~~Should asyncify modules that we add (Check DSPy on how to do this)~~

@@ -44,8 +44,7 @@ class RecursiveSolver:
         verifier: Optional[Verifier] = None,
         max_depth: int = 2,
         lm: Optional[dspy.LM] = None,
-        enable_logging: bool = False,
-        visualizer: Optional['HierarchicalVisualizer'] = None
+        enable_logging: bool = False
     ):
         """
         Initialize the recursive solver.
@@ -70,7 +69,6 @@ class RecursiveSolver:
 
         self.max_depth = max_depth
         self.last_dag = None  # Store last DAG for visualization
-        self.visualizer = visualizer  # Optional visualizer
 
         # Configure logging
         if enable_logging:
@@ -103,24 +101,8 @@ class RecursiveSolver:
         # Initialize task and DAG
         task, dag = self._initialize_task_and_dag(task, dag, depth)
 
-        # Notify visualizer of execution start (only for root task)
-        if self.visualizer and depth == 0:
-            self.visualizer.realtime.on_execution_start(task)
-
-        # Notify visualizer of task entry
-        if self.visualizer:
-            self.visualizer.realtime.on_task_enter(task, depth)
-
         # Execute based on current state
         task = self._execute_state_machine(task, dag)
-
-        # Notify visualizer of task completion
-        if self.visualizer:
-            self.visualizer.realtime.on_task_complete(task, depth)
-
-        # Notify visualizer of execution complete (only for root task)
-        if self.visualizer and depth == 0:
-            self.visualizer.realtime.on_execution_complete(task)
 
         logger.debug(f"Completed solve with status: {task.status}")
         return task
@@ -242,20 +224,7 @@ class RecursiveSolver:
         old_status = task.status
         task = task.transition_to(TaskStatus.ATOMIZING)
 
-        # Notify visualizer of status change
-        if self.visualizer:
-            self.visualizer.realtime.on_status_change(task, old_status, task.status, task.depth)
-            self.visualizer.realtime.on_module_start(task, "atomizer", task.depth)
-
         result, duration = self._execute_module(self.atomizer, task.goal)
-
-        # Notify visualizer of module completion
-        if self.visualizer:
-            self.visualizer.realtime.on_module_complete(
-                task, "atomizer",
-                {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
-                duration, task.depth
-            )
 
         task = self._record_module_result(
             task, "atomizer", task.goal,
@@ -288,19 +257,7 @@ class RecursiveSolver:
         """Decompose task into subtasks."""
         logger.debug(f"Planning task: {task.goal[:50]}...")
 
-        # Notify visualizer
-        if self.visualizer:
-            self.visualizer.realtime.on_module_start(task, "planner", task.depth)
-
         result, duration = self._execute_module(self.planner, task.goal)
-
-        # Notify visualizer of module completion
-        if self.visualizer:
-            self.visualizer.realtime.on_module_complete(
-                task, "planner",
-                {"subtasks_count": len(result.subtasks)},
-                duration, task.depth
-            )
 
         task = self._record_module_result(
             task, "planner", task.goal,
@@ -316,10 +273,6 @@ class RecursiveSolver:
 
         old_status = task.status
         task = task.transition_to(TaskStatus.PLAN_DONE)
-
-        # Notify visualizer of status change
-        if self.visualizer:
-            self.visualizer.realtime.on_status_change(task, old_status, task.status, task.depth)
 
         dag.update_node(task)
         return task
@@ -350,17 +303,7 @@ class RecursiveSolver:
         """Execute atomic task."""
         logger.debug(f"Executing task: {task.goal[:50]}...")
 
-        # Notify visualizer
-        if self.visualizer:
-            self.visualizer.realtime.on_module_start(task, "executor", task.depth)
-
         result, duration = self._execute_module(self.executor, task.goal)
-
-        # Notify visualizer of module completion
-        if self.visualizer:
-            self.visualizer.realtime.on_module_complete(
-                task, "executor", result.output, duration, task.depth
-            )
 
         task = self._record_module_result(
             task, "executor", task.goal, result.output, duration
@@ -582,10 +525,6 @@ class RecursiveSolver:
             )
             subtask_nodes.append(subtask_node)
 
-        # Notify visualizer of subtasks creation
-        if self.visualizer:
-            self.visualizer.realtime.on_subtasks_created(task, subtask_nodes, task.depth)
-
         # Create subgraph with dependencies
         dag.create_subgraph(
             task.task_id,
@@ -649,7 +588,7 @@ class RecursiveSolver:
             return await asyncio.gather(*async_tasks)
         return []
 
-    # ==================== Visualization Methods ====================
+    # ==================== Visualization Methods (Deprecated) ====================
 
     def get_execution_tree(self, task: Optional[TaskNode] = None) -> str:
         """Get a tree visualization of the task execution."""
