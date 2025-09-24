@@ -24,7 +24,8 @@ from roma.application.services.plan_modifier_service import PlanModifierService
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.recovery_manager import RecoveryManager
 from roma.application.services.hitl_service import HITLService
-from roma.application.services.context_builder_service import TaskContext, ContextBuilderService
+from roma.domain.context import TaskContext
+from roma.application.services.context_builder_service import ContextBuilderService
 
 
 @pytest.fixture
@@ -102,6 +103,7 @@ def sample_context():
             status=TaskStatus.PENDING
         ),
         overall_objective="Complete analysis",
+        execution_id="test_execution",
         execution_metadata={}
     )
 
@@ -195,7 +197,7 @@ class TestPlanModifierService:
 
         # Verify the result
         assert isinstance(result, NodeResult)
-        assert result.action == NodeAction.REPLAN
+        assert result.action == NodeAction.ADD_SUBTASKS
         assert len(result.new_nodes) == 2
         assert result.envelope.result.reasoning == "Replacing failed approach with more robust strategy"
         # metadata should contain confidence from envelope or service metadata
@@ -210,144 +212,7 @@ class TestPlanModifierService:
         assert new_tasks[1].task_type == TaskType.THINK
         assert new_tasks[1].parent_id == sample_failed_task.task_id
 
-    @pytest.mark.asyncio
-    async def test_run_with_hitl_approval(self, plan_modifier_service, sample_failed_task, sample_context, sample_failed_children, mock_agent_runtime_service, mock_hitl_service, mock_context_builder):
-        """Test replanning workflow with HITL approval."""
-        # Setup context builder
-        plan_modifier_service._context_builder = mock_context_builder
-        mock_context_builder.build_context.return_value = sample_context
 
-        # Setup HITL service to approve
-        from roma.domain.value_objects.hitl_request import HITLResponse
-        hitl_response = HITLResponse(
-            request_id=str(uuid4()),
-            status=HITLRequestStatus.APPROVED,
-            response_data={}
-        )
-        mock_hitl_service.request_replanning_approval.return_value = hitl_response
-
-        # Setup mock agent response
-        mock_agent = Mock()
-        mock_agent.name = "TestPlanModifierAgent"
-        mock_agent_runtime_service.get_agent.return_value = mock_agent
-        mock_agent_runtime_service.execute_agent.return_value = {
-            "new_subtasks": [
-                {
-                    "goal": "HITL approved task",
-                    "task_type": "THINK",
-                    "priority": 1,
-                    "dependencies": []
-                }
-            ],
-            "reasoning": "Plan approved by human operator"
-        }
-
-        # Setup replanning nodes
-        plan_modifier_service._get_all_nodes_callback.return_value = [sample_failed_task]
-        plan_modifier_service._get_children_callback.return_value = sample_failed_children
-
-        # Process replanning
-        await plan_modifier_service.process_replanning_nodes(sample_context)
-
-        # Verify HITL service was called
-        mock_hitl_service.request_replanning_approval.assert_called_once()
-
-        # Verify plan modification was executed
-        mock_agent_runtime_service.execute_agent.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_run_with_hitl_rejection_fallback(self, plan_modifier_service, sample_failed_task, sample_context, sample_failed_children, mock_agent_runtime_service, mock_hitl_service, mock_context_builder):
-        """Test replanning workflow when HITL rejects but continues with automatic fallback."""
-        # Setup context builder
-        plan_modifier_service._context_builder = mock_context_builder
-        mock_context_builder.build_context.return_value = sample_context
-
-        # Setup HITL service to reject
-        from roma.domain.value_objects.hitl_request import HITLResponse
-        hitl_response = HITLResponse(
-            request_id=str(uuid4()),
-            status=HITLRequestStatus.REJECTED,
-            response_data={"reason": "Approach not suitable"}
-        )
-        mock_hitl_service.request_replanning_approval.return_value = hitl_response
-
-        # Setup mock agent response (automatic fallback)
-        mock_agent = Mock()
-        mock_agent.name = "TestPlanModifierAgent"
-        mock_agent_runtime_service.get_agent.return_value = mock_agent
-        mock_agent_runtime_service.execute_agent.return_value = {
-            "new_subtasks": [
-                {
-                    "goal": "Automatic fallback task",
-                    "task_type": "THINK",
-                    "priority": 1,
-                    "dependencies": []
-                }
-            ],
-            "reasoning": "Automatic replanning after HITL rejection"
-        }
-
-        # Setup replanning nodes
-        plan_modifier_service._get_all_nodes_callback.return_value = [sample_failed_task]
-        plan_modifier_service._get_children_callback.return_value = sample_failed_children
-
-        # Process replanning
-        await plan_modifier_service.process_replanning_nodes(sample_context)
-
-        # Verify HITL service was called
-        mock_hitl_service.request_replanning_approval.assert_called_once()
-
-        # Verify automatic plan modification was still executed as fallback
-        mock_agent_runtime_service.execute_agent.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_run_with_hitl_modification(self, plan_modifier_service, sample_failed_task, sample_context, sample_failed_children, mock_agent_runtime_service, mock_hitl_service, mock_context_builder):
-        """Test replanning workflow when HITL modifies the request."""
-        # Setup context builder
-        plan_modifier_service._context_builder = mock_context_builder
-        mock_context_builder.build_context.return_value = sample_context
-
-        # Setup HITL service to modify
-        from roma.domain.value_objects.hitl_request import HITLResponse
-        hitl_response = HITLResponse(
-            request_id=str(uuid4()),
-            status=HITLRequestStatus.MODIFIED,
-            response_data={},
-            modified_context={"priority": "high", "alternative_approach": "use_cache"}
-        )
-        mock_hitl_service.request_replanning_approval.return_value = hitl_response
-
-        # Setup mock agent response
-        mock_agent = Mock()
-        mock_agent.name = "TestPlanModifierAgent"
-        mock_agent_runtime_service.get_agent.return_value = mock_agent
-        mock_agent_runtime_service.execute_agent.return_value = {
-            "new_subtasks": [
-                {
-                    "goal": "HITL modified task",
-                    "task_type": "THINK",
-                    "priority": 1,
-                    "dependencies": []
-                }
-            ],
-            "reasoning": "Plan modified per human feedback"
-        }
-
-        # Setup replanning nodes
-        plan_modifier_service._get_all_nodes_callback.return_value = [sample_failed_task]
-        plan_modifier_service._get_children_callback.return_value = sample_failed_children
-
-        # Process replanning
-        await plan_modifier_service.process_replanning_nodes(sample_context)
-
-        # Verify HITL service was called
-        mock_hitl_service.request_replanning_approval.assert_called_once()
-
-        # Verify modified context was used in agent execution
-        call_args = mock_agent_runtime_service.execute_agent.call_args
-        used_context = call_args[0][2]  # Third argument is context
-        assert used_context.execution_metadata["hitl_modified"] is True
-        assert used_context.execution_metadata["priority"] == "high"
 
     @pytest.mark.asyncio
     async def test_run_handles_planning_error(self, plan_modifier_service, sample_failed_task, sample_context, sample_failed_children, mock_agent_runtime_service, mock_recovery_manager):
@@ -420,7 +285,7 @@ class TestPlanModifierService:
         )
 
         # Verify successful execution
-        assert result.action == NodeAction.REPLAN
+        assert result.action == NodeAction.ADD_SUBTASKS
         assert len(result.new_nodes) == 1
         assert result.new_nodes[0].goal == "Retry success task"
         assert mock_agent_runtime_service.execute_agent.call_count == 1
@@ -472,7 +337,7 @@ class TestPlanModifierService:
         )
 
         # Should work normally without HITL
-        assert result.action == NodeAction.REPLAN
+        assert result.action == NodeAction.ADD_SUBTASKS
         assert len(result.new_nodes) == 1
         assert result.new_nodes[0].goal == "No HITL task"
 
@@ -517,72 +382,3 @@ class TestPlanModifierService:
         assert "Plan modifier returned empty subtask list" in result.error
         assert len(result.new_nodes) == 0
 
-    @pytest.mark.asyncio
-    async def test_process_replanning_nodes_filters_correctly(self, plan_modifier_service, sample_context, mock_context_builder):
-        """Test that replanning only processes nodes with NEEDS_REPLAN status."""
-        # Create mix of nodes with different statuses
-        replan_node = TaskNode(
-            task_id=str(uuid4()),
-            goal="Needs replanning",
-            task_type=TaskType.THINK,
-            status=TaskStatus.NEEDS_REPLAN
-        )
-
-        other_nodes = [
-            TaskNode(
-                task_id=str(uuid4()),
-                goal="Completed node",
-                task_type=TaskType.THINK,
-                status=TaskStatus.COMPLETED
-            ),
-            TaskNode(
-                task_id=str(uuid4()),
-                goal="Executing node",
-                task_type=TaskType.THINK,
-                status=TaskStatus.EXECUTING
-            )
-        ]
-
-        all_nodes = [replan_node] + other_nodes
-
-        # Setup callbacks
-        plan_modifier_service._get_all_nodes_callback.return_value = all_nodes
-        plan_modifier_service._get_children_callback.return_value = []
-        plan_modifier_service._context_builder = mock_context_builder
-        mock_context_builder.build_context.return_value = sample_context
-
-        # Process replanning nodes
-        await plan_modifier_service.process_replanning_nodes(sample_context)
-
-        # Should only process the NEEDS_REPLAN node
-        # Verify by checking if context builder was called (indicating processing)
-        mock_context_builder.build_context.assert_called_once()
-
-    def test_set_orchestrator_callbacks(self, plan_modifier_service, mock_context_builder):
-        """Test setting orchestrator callbacks."""
-        # Create mock callbacks
-        get_all_nodes = Mock()
-        get_children = Mock()
-        remove_node = AsyncMock()
-        transition_status = AsyncMock()
-        handle_replan_result = AsyncMock()
-
-        # Set callbacks
-        plan_modifier_service.set_orchestrator_callbacks(
-            get_all_nodes=get_all_nodes,
-            get_children=get_children,
-            remove_node=remove_node,
-            transition_status=transition_status,
-            handle_replan_result=handle_replan_result,
-            context_builder=mock_context_builder,
-            hitl_enabled=True
-        )
-
-        # Verify callbacks are set
-        assert plan_modifier_service._get_all_nodes_callback == get_all_nodes
-        assert plan_modifier_service._get_children_callback == get_children
-        assert plan_modifier_service._remove_node_callback == remove_node
-        assert plan_modifier_service._transition_status_callback == transition_status
-        assert plan_modifier_service._handle_replan_result_callback == handle_replan_result
-        assert plan_modifier_service._context_builder == mock_context_builder
-        assert plan_modifier_service._hitl_enabled is True

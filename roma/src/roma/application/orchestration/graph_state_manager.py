@@ -91,15 +91,13 @@ class GraphStateManager:
                 raise ValueError(f"Invalid transition from {old_status} to {new_status}: {str(e)}")
             
             # Step 2: Emit status change event (atomic operation requirement)
-            event = TaskStatusChangedEvent.create(
-                task_id=task_id,
-                old_status=old_status,
-                new_status=new_status,
-                version=updated_node.version
-            )
-            
             try:
-                await self.event_store.append(event)
+                await self.event_publisher.emit_task_status_changed(
+                    task_id=task_id,
+                    old_status=old_status.value,
+                    new_status=new_status.value,
+                    goal=updated_node.goal
+                )
             except Exception as event_error:
                 # Event storage failed - rollback graph state to maintain consistency
                 try:
@@ -130,23 +128,13 @@ class GraphStateManager:
             await self.graph.add_node(node)
             
             # Step 2: Emit node created event (atomic operation requirement)
-            event = TaskCreatedEvent.create(
-                task_id=node.task_id,
-                goal=node.goal,
-                task_type=node.task_type,
-                parent_id=node.parent_id
-            )
-            
             try:
-                await self.event_store.append(event)
-                # Emit compatibility event for consumers expecting TaskNodeAddedEvent
-                compat_event = TaskNodeAddedEvent.create(
+                await self.event_publisher.emit_task_node_added(
                     task_id=node.task_id,
                     goal=node.goal,
                     task_type=node.task_type,
                     parent_id=node.parent_id
                 )
-                await self.event_store.append(compat_event)
             except Exception as event_error:
                 # Event storage failed - rollback graph state to maintain consistency
                 try:
@@ -181,29 +169,25 @@ class GraphStateManager:
             await self.graph.add_dependency_edge(from_id, to_id)
 
             # Emit dependency added event for observability
-            dependency_event = DependencyAddedEvent.create(
-                task_id=to_id,
-                dependency_id=from_id,
-                metadata={
-                    "from_task": from_id,
-                    "to_task": to_id,
-                    "dependency_type": "task_dependency",
-                    "graph_version": self.version + 1
-                }
+            await self.event_publisher.emit_dependency_added(
+                from_task_id=from_id,
+                to_task_id=to_id
             )
-            await self.event_store.store_event(dependency_event)
 
             # Increment version for this state change
             self.version += 1
 
-    def get_ready_nodes(self) -> List[TaskNode]:
+    async def get_ready_nodes(self) -> List[TaskNode]:
         """
         Get nodes ready for execution.
-        
+
         Returns:
             List of TaskNode objects ready for execution
+
+        Note:
+            This method is async for thread-safe graph access.
         """
-        return self.graph.get_ready_nodes()
+        return await self.graph.get_ready_nodes_async()
     
     def get_node_by_id(self, task_id: str) -> Optional[TaskNode]:
         """
@@ -316,6 +300,39 @@ class GraphStateManager:
             updated_node = await self.graph.update_node_metadata(task_id, metadata_updates)
 
             # Step 2: Increment manager version after successful update
+            self.version += 1
+
+            return updated_node
+
+    async def increment_node_retry_count(self, task_id: str) -> TaskNode:
+        """
+        Increment node retry count with event emission.
+
+        This operation is atomic - either all steps succeed or none do,
+        maintaining consistency between graph state, events, and version.
+
+        Args:
+            task_id: Task identifier
+
+        Returns:
+            Updated TaskNode with incremented retry count
+
+        Raises:
+            KeyError: If task not found
+        """
+        async with self._state_lock:
+            # Step 1: Get current node
+            current_node = self.graph.get_node(task_id)
+            if not current_node:
+                raise KeyError(f"Task {task_id} not found in graph")
+
+            # Step 2: Create updated node with incremented retry count
+            updated_node = current_node.increment_retry()
+
+            # Step 3: Update node in graph
+            await self.graph.update_node(task_id, updated_node)
+
+            # Step 4: Increment manager version after successful update
             self.version += 1
 
             return updated_node

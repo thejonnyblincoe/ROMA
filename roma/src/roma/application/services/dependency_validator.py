@@ -347,7 +347,7 @@ class DependencyValidator:
 
                             # Apply recovery result if node update is provided
                             if recovery_result.updated_node:
-                                await graph.update_node(recovery_result.updated_node)
+                                await graph.set_node_exact(recovery_result.updated_node.task_id, recovery_result.updated_node)
 
                     except Exception as e:
                         logger.error(f"Error during dependency failure recovery for {failed_dep}: {e}")

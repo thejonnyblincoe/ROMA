@@ -59,20 +59,38 @@ class AgnoToolkitManager:
     async def create_toolkit(self, toolkit_spec: Dict[str, Any]) -> Any:
         """
         Create a new toolkit instance.
-        
+
         Args:
             toolkit_spec: Toolkit specification with name, type, config
-            
+
         Returns:
             Created toolkit instance
         """
         if not self._initialized:
             await self.initialize()
-            
+
         toolkit_name = toolkit_spec.get("name")
         if not toolkit_name:
             raise ValueError("Toolkit name is required")
-            
+
+        # Check if toolkit already exists
+        if toolkit_name in self._toolkits:
+            logger.debug(f"Returning existing toolkit: {toolkit_name}")
+            return self._toolkits[toolkit_name]
+
+        # Try to enhance toolkit_spec with registered ToolConfig if available
+        tool_config = self.get_tool_config(toolkit_name)
+        if tool_config:
+            # Merge ToolConfig information into toolkit_spec
+            enhanced_spec = {
+                "name": tool_config.name,
+                "type": tool_config.type,
+                "enabled": getattr(tool_config, 'enabled', True),
+                **toolkit_spec  # Original spec overrides ToolConfig
+            }
+            toolkit_spec = enhanced_spec
+            logger.debug(f"Enhanced toolkit spec for {toolkit_name} with registered ToolConfig")
+
         # Check if it's a default Agno toolkit or custom implementation
         if "implementation" in toolkit_spec:
             # Custom toolkit - load from implementation class
@@ -82,7 +100,7 @@ class AgnoToolkitManager:
             # Default Agno toolkit - import from Agno
             toolkit = await self._create_default_toolkit(toolkit_spec)
             self._default_toolkits[toolkit_name] = toolkit
-            
+
         self._toolkits[toolkit_name] = toolkit
         logger.info(f"Created toolkit: {toolkit_name}")
         return toolkit
@@ -348,6 +366,37 @@ class AgnoToolkitManager:
             "availability_percentage": round((enabled_count / total_toolkits * 100) if total_toolkits > 0 else 0, 2),
             "last_updated": self._get_current_timestamp()
         }
+
+    async def get_available_tools(self) -> List[Any]:
+        """
+        Get list of all available tools from all toolkits.
+
+        Returns:
+            List of tool instances from all registered toolkits
+        """
+        available_tools = []
+
+        for toolkit_name, toolkit in self._toolkits.items():
+            try:
+                # Get tools from toolkit
+                if hasattr(toolkit, 'get_tools'):
+                    toolkit_tools = toolkit.get_tools()
+                    if toolkit_tools:
+                        available_tools.extend(toolkit_tools)
+                elif hasattr(toolkit, 'tools'):
+                    # Some toolkits might have tools as a direct attribute
+                    toolkit_tools = getattr(toolkit, 'tools', [])
+                    if toolkit_tools:
+                        available_tools.extend(toolkit_tools)
+                else:
+                    logger.debug(f"Toolkit {toolkit_name} has no accessible tools")
+
+            except Exception as e:
+                logger.warning(f"Failed to get tools from toolkit {toolkit_name}: {e}")
+                continue
+
+        logger.debug(f"Found {len(available_tools)} total tools from {len(self._toolkits)} toolkits")
+        return available_tools
 
     def _get_current_timestamp(self) -> str:
         """Get current timestamp in ISO format."""

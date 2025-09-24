@@ -12,23 +12,9 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
-
-
-class CheckpointType(str, Enum):
-    """Checkpoint type enum."""
-    MANUAL = "MANUAL"
-    AUTOMATIC = "AUTOMATIC"
-    BEFORE_CRITICAL_OPERATION = "BEFORE_CRITICAL_OPERATION"
-    AFTER_SUCCESSFUL_PHASE = "AFTER_SUCCESSFUL_PHASE"
-    ERROR_RECOVERY = "ERROR_RECOVERY"
-
-
-class RecoveryStatus(str, Enum):
-    """Recovery status enum."""
-    ACTIVE = "ACTIVE"
-    RECOVERED = "RECOVERED"
-    ABANDONED = "ABANDONED"
-    EXPIRED = "EXPIRED"
+# Use domain enums - clean architecture compliance
+from roma.domain.value_objects.persistence.checkpoint_type import CheckpointType
+from roma.domain.value_objects.persistence.recovery_status import RecoveryStatus
 
 
 class ExecutionCheckpointModel(Base):

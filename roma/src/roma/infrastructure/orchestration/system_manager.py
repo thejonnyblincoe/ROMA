@@ -26,6 +26,9 @@ from roma.application.services.event_store import InMemoryEventStore
 from roma.application.services.event_publisher import EventPublisher, initialize_event_publisher
 from roma.infrastructure.persistence.connection_manager import DatabaseConnectionManager
 from roma.infrastructure.persistence.postgres_event_store import PostgreSQLEventStore
+from roma.infrastructure.persistence.repositories.checkpoint_repository_impl import SQLAlchemyCheckpointRepository, SQLAlchemyRecoveryRepository
+from roma.infrastructure.persistence.repositories.execution_history_repository_impl import SQLAlchemyExecutionHistoryRepository
+from roma.application.services.checkpoint_service import CheckpointService
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.artifact_service import ArtifactService
 from roma.application.services.context_builder_service import ContextBuilderService, TaskContext
@@ -38,6 +41,7 @@ from roma.application.services.hitl_service import HITLService
 from roma.domain.value_objects.execution_result import ExecutionResult
 from roma.application.services.recovery_manager import RecoveryManager
 from roma.application.services.execution_context import ExecutionContext
+from roma.application.services.deadlock_detector import DeadlockDetector
 from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
 from roma.infrastructure.storage.local_storage import LocalFileStorage
 from roma.infrastructure.storage.storage_interface import StorageConfig as InfraStorageConfig
@@ -83,7 +87,14 @@ class SystemManager:
         self._recovery_manager: Optional[RecoveryManager] = None
         self._agent_factory: Optional[AgentFactory] = None
         self._hitl_service: Optional[HITLService] = None
-        
+        self._deadlock_detector: Optional[DeadlockDetector] = None
+
+        # Persistence components
+        self._checkpoint_repository: Optional[SQLAlchemyCheckpointRepository] = None
+        self._recovery_repository: Optional[SQLAlchemyRecoveryRepository] = None
+        self._execution_history_repository: Optional[SQLAlchemyExecutionHistoryRepository] = None
+        self._checkpoint_service: Optional[Any] = None
+
         # System state
         self._current_profile: Optional[str] = None
         self._active_executions: Dict[str, Dict[str, Any]] = {}
@@ -118,7 +129,10 @@ class SystemManager:
             await self._initialize_agent_factory()
             await self._initialize_agent_runtime_service()
             await self._initialize_recovery_manager()
+            await self._initialize_persistence_repositories()
+            await self._initialize_checkpoint_service()
             await self._initialize_hitl_service()
+            await self._initialize_deadlock_detector()
             await self._initialize_graph_state_manager()
             await self._initialize_parallel_execution_engine()
             await self._initialize_agent_service_registry()
@@ -182,9 +196,9 @@ class SystemManager:
     async def _initialize_task_graph(self) -> None:
         """Initialize dynamic task graph."""
         self._task_graph = DynamicTaskGraph()
+        logger.info("✅ DynamicTaskGraph initialized")
 
-        # Set event publisher for graph events (required)
-        self._task_graph.set_event_publisher(self._event_publisher)
+        # Note: Event publishing is handled by GraphStateManager to avoid duplicates
         
     async def _initialize_storage(self) -> None:
         """Initialize goofys-based storage."""
@@ -274,9 +288,61 @@ class SystemManager:
         await self._agent_runtime_service.initialize()
         
     async def _initialize_recovery_manager(self) -> None:
-        """Initialize recovery manager with circuit breaker."""
-        self._recovery_manager = RecoveryManager()
-        logger.info("✅ RecoveryManager initialized")
+        """Initialize recovery manager with circuit breaker and execution config."""
+        self._recovery_manager = RecoveryManager(execution_config=self.config.execution)
+        logger.info("✅ RecoveryManager initialized with execution config")
+
+    async def _initialize_persistence_repositories(self) -> None:
+        """Initialize persistence repositories if PostgreSQL is available."""
+        # Only initialize persistence repositories if connection manager is available
+        if self._connection_manager and self._connection_manager.is_healthy():
+            try:
+                session_factory = self._connection_manager.get_session_factory()
+
+                # Initialize checkpoint repository
+                self._checkpoint_repository = SQLAlchemyCheckpointRepository(session_factory)
+                logger.info("✅ CheckpointRepository initialized")
+
+                # Initialize recovery repository
+                self._recovery_repository = SQLAlchemyRecoveryRepository(session_factory)
+                logger.info("✅ RecoveryRepository initialized")
+
+                # Initialize execution history repository
+                self._execution_history_repository = SQLAlchemyExecutionHistoryRepository(session_factory)
+                logger.info("✅ ExecutionHistoryRepository initialized")
+
+                logger.info("✅ All persistence repositories initialized")
+
+            except Exception as e:
+                logger.error(f"Failed to initialize persistence repositories: {e}")
+                logger.info("Continuing without persistence repositories")
+                # Set repositories to None to indicate they're unavailable
+                self._checkpoint_repository = None
+                self._recovery_repository = None
+                self._execution_history_repository = None
+        else:
+            logger.info("PostgreSQL not available - persistence repositories disabled")
+            self._checkpoint_repository = None
+            self._recovery_repository = None
+            self._execution_history_repository = None
+
+    async def _initialize_checkpoint_service(self) -> None:
+        """Initialize checkpoint service if persistence repositories are available."""
+        # Only initialize checkpoint service if both repositories are available
+        if self._checkpoint_repository and self._recovery_repository:
+            try:
+                self._checkpoint_service = CheckpointService(
+                    checkpoint_repository=self._checkpoint_repository,
+                    recovery_repository=self._recovery_repository
+                )
+                logger.info("✅ CheckpointService initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize CheckpointService: {e}")
+                logger.info("Continuing without CheckpointService")
+                self._checkpoint_service = None
+        else:
+            logger.info("Persistence repositories not available - CheckpointService disabled")
+            self._checkpoint_service = None
 
     async def _initialize_hitl_service(self) -> None:
         """Initialize HITL service for human interaction."""
@@ -291,6 +357,17 @@ class SystemManager:
         else:
             self._hitl_service = None
             logger.info("✅ HITLService initialized (disabled)")
+
+    async def _initialize_deadlock_detector(self) -> None:
+        """Initialize deadlock detector for execution monitoring."""
+        if not self._task_graph:
+            raise RuntimeError("Task graph must be initialized before DeadlockDetector")
+
+        self._deadlock_detector = DeadlockDetector(
+            graph=self._task_graph,
+            stall_threshold_seconds=getattr(self.config.execution, 'deadlock_timeout_seconds', 600)
+        )
+        logger.info("✅ DeadlockDetector initialized")
 
     async def _initialize_graph_state_manager(self) -> None:
         """Initialize graph state manager for atomic state transitions."""
@@ -313,7 +390,10 @@ class SystemManager:
         self._agent_service_registry = AgentServiceRegistry(
             agent_runtime_service=self._agent_runtime_service,
             recovery_manager=self._recovery_manager,
-            hitl_service=self._hitl_service
+            hitl_service=self._hitl_service,
+            checkpoint_repository=self._checkpoint_repository,
+            recovery_repository=self._recovery_repository,
+            execution_history_repository=self._execution_history_repository
         )
         logger.info("✅ AgentServiceRegistry initialized")
 
@@ -327,6 +407,7 @@ class SystemManager:
             recovery_manager=self._recovery_manager,
             event_publisher=self._event_publisher,
             execution_config=self.config.execution,
+            deadlock_detector=self._deadlock_detector,
             knowledge_store=self._knowledge_store
         )
         logger.info("✅ ExecutionOrchestrator initialized")
@@ -356,6 +437,8 @@ class SystemManager:
 
         execution_id = f"exec_{uuid.uuid4().hex[:8]}"
         start_time = datetime.now()
+        execution_orchestrator = None  # Initialize to track creation state
+        execution_context = None  # Initialize to track creation state
 
         logger.info(f"Starting task execution [{execution_id}]: {task[:50]}...")
 
@@ -390,8 +473,9 @@ class SystemManager:
                 agent_service_registry=self._agent_service_registry,
                 context_builder=execution_context.context_builder,
                 recovery_manager=self._recovery_manager,
-                event_store=execution_context.event_store,
+                event_publisher=execution_context.event_publisher,
                 execution_config=self.config.execution,
+                deadlock_detector=self._deadlock_detector,
                 knowledge_store=execution_context.knowledge_store
             )
 
@@ -431,92 +515,96 @@ class SystemManager:
             execution_info["artifact_refs"] = artifact_refs
 
             # Cleanup execution-specific components to prevent memory leaks
-            await self._execution_orchestrator.cleanup_execution(execution_id)
+            await execution_orchestrator.cleanup_execution(execution_id)
 
-            # Return standardized format compatible with existing API
-            return {
-                "execution_id": execution_id,
-                "task": task,
-                "status": "completed" if execution_result.success else "failed",
-                "result": (
-                    execution_result.final_result.extract_primary_output()
-                    if execution_result.final_result else None
-                ),
-                "execution_time": execution_result.execution_time_seconds,
-                "node_count": execution_result.total_nodes,
-                "completed_nodes": execution_result.completed_nodes,
-                "failed_nodes": execution_result.failed_nodes,
-                "iterations": execution_result.iterations,
-                "framework": self._agent_runtime_service.get_framework_name(),
-                "artifacts": len(artifact_refs),
-                "error_details": execution_result.error_details if execution_result.has_errors else None,
-                "orchestration_metrics": self._execution_orchestrator.get_orchestration_metrics(),
-                # Legacy compatibility fields
-                "final_output": (
-                    execution_result.final_result.extract_primary_output()
-                    if execution_result.final_result else None
-                ),
-                "hitl_enabled": options.get("enable_hitl", False),
-                "framework_result": execution_result.to_dict()
-            }
+            # Return standardized result
+            return self._build_execution_result(
+                execution_id=execution_id,
+                task=task,
+                execution_result=execution_result,
+                artifact_refs=artifact_refs,
+                options=options,
+                execution_orchestrator=execution_orchestrator
+            )
 
         except Exception as e:
             # Update execution tracking on failure
-            execution_info = self._active_executions.get(execution_id, {})
-            execution_info["status"] = TaskStatus.FAILED
-            execution_info["end_time"] = datetime.now()
-            execution_info["error"] = str(e)
+            if execution_id in self._active_executions:
+                execution_info = self._active_executions[execution_id]
+                execution_info["status"] = TaskStatus.FAILED
+                execution_info["end_time"] = datetime.now()
+                execution_info["error"] = str(e)
 
             logger.error(f"Task execution failed [{execution_id}]: {e}")
 
-            # Cleanup execution-specific components even on failure
-            await self._execution_orchestrator.cleanup_execution(execution_id)
+            # Cleanup execution-specific components even on failure (only if created)
+            if execution_orchestrator is not None:
+                try:
+                    await execution_orchestrator.cleanup_execution(execution_id)
+                except Exception as cleanup_error:
+                    logger.error(f"Error during orchestrator cleanup for {execution_id}: {cleanup_error}")
 
-            # Return error response compatible with existing API
-            return {
-                "execution_id": execution_id,
-                "task": task,
-                "status": "failed",
-                "result": None,
-                "execution_time": (datetime.now() - start_time).total_seconds(),
-                "node_count": 0,
-                "error": str(e),
-                "framework": self._agent_runtime_service.get_framework_name() if self._agent_runtime_service else "unknown",
-                "artifacts": 0,
-                "final_output": None,
-                "hitl_enabled": options.get("enable_hitl", False),
-                "framework_result": None
-            }
+            # Return error response
+            return self._build_error_result(
+                execution_id=execution_id,
+                task=task,
+                error=e,
+                start_time=start_time,
+                options=options
+            )
 
         finally:
             # Clean up execution tracking and isolated components
-            if execution_id in self._active_executions:
-                self._active_executions[execution_id]["completed_at"] = datetime.now()
+            try:
+                if execution_id in self._active_executions:
+                    try:
+                        self._active_executions[execution_id]["completed_at"] = datetime.now()
 
-                # Clean up execution-specific components for garbage collection
-                execution_info = self._active_executions[execution_id]
-                execution_info.pop("graph", None)
-                execution_info.pop("orchestrator", None)
+                        # Clean up execution-specific components for garbage collection
+                        execution_info = self._active_executions[execution_id]
+                        execution_info.pop("graph", None)
+                        execution_info.pop("orchestrator", None)
+                    except Exception as tracking_error:
+                        logger.error(f"Error updating execution tracking for {execution_id}: {tracking_error}")
+                    finally:
+                        # Always remove from active executions to prevent memory leak
+                        try:
+                            del self._active_executions[execution_id]
+                        except KeyError:
+                            # Already removed, ignore
+                            pass
 
-                # Remove completed execution to prevent memory leak
-                del self._active_executions[execution_id]
-
-            # Clean up execution context
-            if execution_id in self._active_contexts:
-                try:
-                    await self._active_contexts[execution_id].cleanup()
-                except Exception as cleanup_error:
-                    logger.error(f"Error cleaning up execution context {execution_id}: {cleanup_error}")
-                finally:
-                    del self._active_contexts[execution_id]
+                # Clean up execution context
+                if execution_id in self._active_contexts:
+                    try:
+                        await self._active_contexts[execution_id].cleanup()
+                    except Exception as cleanup_error:
+                        logger.error(f"Error cleaning up execution context {execution_id}: {cleanup_error}")
+                    finally:
+                        # Always remove from active contexts to prevent memory leak
+                        try:
+                            del self._active_contexts[execution_id]
+                        except KeyError:
+                            # Already removed, ignore
+                            pass
+            except Exception as final_cleanup_error:
+                # Log any errors in final cleanup but don't re-raise
+                logger.error(f"Critical error during final cleanup for {execution_id}: {final_cleanup_error}")
             
     
     def get_system_info(self) -> Dict[str, Any]:
-        """Get comprehensive system information."""
+        """Get comprehensive system information with robust error handling."""
         if not self._initialized:
             return {"status": "not_initialized"}
-            
-        runtime_metrics = self._agent_runtime_service.get_runtime_metrics()
+
+        # Safely get runtime metrics
+        runtime_metrics = {}
+        try:
+            if self._agent_runtime_service:
+                runtime_metrics = self._agent_runtime_service.get_runtime_metrics()
+        except Exception as e:
+            logger.warning(f"Failed to get runtime metrics: {e}")
+            runtime_metrics = {"error": "metrics_unavailable"}
         
         return {
             "status": "initialized",
@@ -704,3 +792,72 @@ class SystemManager:
             "parallel_execution_engine": self._parallel_execution_engine is not None,
             "agent_service_registry": self._agent_service_registry is not None,
         }
+
+    def _build_execution_result(
+        self,
+        execution_id: str,
+        task: str,
+        execution_result: Any,
+        artifact_refs: List[str],
+        options: Dict[str, Any],
+        execution_orchestrator: Any
+    ) -> Dict[str, Any]:
+        """Build standardized execution result response."""
+        return {
+            "execution_id": execution_id,
+            "task": task,
+            "status": "completed" if execution_result.success else "failed",
+            "result": (
+                execution_result.final_result.extract_primary_output()
+                if execution_result.final_result else None
+            ),
+            "execution_time": execution_result.execution_time_seconds,
+            "node_count": execution_result.total_nodes,
+            "completed_nodes": execution_result.completed_nodes,
+            "failed_nodes": execution_result.failed_nodes,
+            "iterations": execution_result.iterations,
+            "framework": self._get_safe_framework_name(),
+            "artifacts": len(artifact_refs),
+            "error_details": execution_result.error_details if execution_result.has_errors else None,
+            "orchestration_metrics": execution_orchestrator.get_orchestration_metrics(execution_id),
+            # Legacy compatibility fields
+            "final_output": (
+                execution_result.final_result.extract_primary_output()
+                if execution_result.final_result else None
+            ),
+            "hitl_enabled": options.get("enable_hitl", False),
+            "framework_result": execution_result.to_dict()
+        }
+
+    def _build_error_result(
+        self,
+        execution_id: str,
+        task: str,
+        error: Exception,
+        start_time: datetime,
+        options: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Build standardized error response."""
+        return {
+            "execution_id": execution_id,
+            "task": task,
+            "status": "failed",
+            "result": None,
+            "execution_time": (datetime.now() - start_time).total_seconds(),
+            "node_count": 0,
+            "error": str(error),
+            "framework": self._get_safe_framework_name(),
+            "artifacts": 0,
+            "final_output": None,
+            "hitl_enabled": options.get("enable_hitl", False),
+            "framework_result": None
+        }
+
+    def _get_safe_framework_name(self) -> str:
+        """Safely get framework name with fallback."""
+        try:
+            if self._agent_runtime_service:
+                return self._agent_runtime_service.get_framework_name()
+        except Exception as e:
+            logger.warning(f"Failed to get framework name: {e}")
+        return "unknown"

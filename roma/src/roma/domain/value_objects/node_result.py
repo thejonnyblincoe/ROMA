@@ -22,6 +22,7 @@ class NodeResult(BaseModel):
     )
 
     # Required fields
+    task_id: str = Field(..., description="ID of the task this result is for")
     action: NodeAction = Field(..., description="Action to take based on processing result")
 
     # Optional result data
@@ -64,7 +65,7 @@ class NodeResult(BaseModel):
 
     def __str__(self) -> str:
         """String representation."""
-        parts = [f"NodeResult(action={self.action}"]
+        parts = [f"action={self.action}"]
 
         if self.envelope:
             parts.append(f"envelope={type(self.envelope).__name__}")
@@ -75,13 +76,13 @@ class NodeResult(BaseModel):
         if self.error:
             parts.append(f"error='{self.error[:50]}...'")
 
-        parts.append(")")
-        return ", ".join(parts)
+        return f"NodeResult({', '.join(parts)})"
 
     def __repr__(self) -> str:
         """Detailed representation for debugging."""
         return (
             f"NodeResult("
+            f"task_id={self.task_id}, "
             f"action={self.action}, "
             f"envelope={self.envelope}, "
             f"new_nodes={len(self.new_nodes)}, "
@@ -124,6 +125,7 @@ class NodeResult(BaseModel):
     @classmethod
     def success(
         cls,
+        task_id: str,
         envelope: AnyResultEnvelope,
         agent_name: Optional[str] = None,
         agent_type: Optional[str] = None,
@@ -132,6 +134,7 @@ class NodeResult(BaseModel):
     ) -> "NodeResult":
         """Create a successful completion result."""
         return cls(
+            task_id=task_id,
             action=NodeAction.COMPLETE,
             envelope=envelope,
             agent_name=agent_name,
@@ -143,6 +146,7 @@ class NodeResult(BaseModel):
     @classmethod
     def planning_result(
         cls,
+        task_id: str,
         subtasks: List[TaskNode],
         envelope: Optional[AnyResultEnvelope] = None,
         agent_name: Optional[str] = None,
@@ -151,6 +155,7 @@ class NodeResult(BaseModel):
     ) -> "NodeResult":
         """Create a planning result with subtasks."""
         return cls(
+            task_id=task_id,
             action=NodeAction.ADD_SUBTASKS,
             envelope=envelope,
             new_nodes=subtasks,
@@ -163,6 +168,7 @@ class NodeResult(BaseModel):
     @classmethod
     def aggregation_result(
         cls,
+        task_id: str,
         envelope: AnyResultEnvelope,
         agent_name: Optional[str] = None,
         processing_time_ms: Optional[float] = None,
@@ -170,7 +176,8 @@ class NodeResult(BaseModel):
     ) -> "NodeResult":
         """Create an aggregation result."""
         return cls(
-            action=NodeAction.AGGREGATE,
+            task_id=task_id,
+            action=NodeAction.AGGREGATE,  # Keep as AGGREGATE
             envelope=envelope,
             agent_name=agent_name,
             agent_type="aggregator",
@@ -181,6 +188,7 @@ class NodeResult(BaseModel):
     @classmethod
     def failure(
         cls,
+        task_id: str,
         error: str,
         agent_name: Optional[str] = None,
         agent_type: Optional[str] = None,
@@ -189,6 +197,7 @@ class NodeResult(BaseModel):
     ) -> "NodeResult":
         """Create a failure result."""
         return cls(
+            task_id=task_id,
             action=NodeAction.FAIL,
             error=error,
             agent_name=agent_name,
@@ -200,6 +209,7 @@ class NodeResult(BaseModel):
     @classmethod
     def retry(
         cls,
+        task_id: str,
         error: str,
         agent_name: Optional[str] = None,
         agent_type: Optional[str] = None,
@@ -208,10 +218,36 @@ class NodeResult(BaseModel):
     ) -> "NodeResult":
         """Create a retry result."""
         return cls(
+            task_id=task_id,
             action=NodeAction.RETRY,
             error=error,
             agent_name=agent_name,
             agent_type=agent_type,
             processing_time_ms=processing_time_ms,
             metadata=metadata or {}
+        )
+
+    @classmethod
+    def replan(
+        cls,
+        task_id: str,
+        parent_id: Optional[str] = None,
+        reason: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        agent_type: Optional[str] = None,
+        processing_time_ms: Optional[float] = None,
+        **kwargs
+    ) -> "NodeResult":
+        """Create a replan result to mark node/parent for replanning."""
+        return cls(
+            task_id=task_id,
+            action=NodeAction.REPLAN,
+            agent_name=agent_name,
+            agent_type=agent_type,
+            processing_time_ms=processing_time_ms,
+            metadata={
+                "parent_id": parent_id,
+                "reason": reason or "replanning_requested",
+                **kwargs
+            }
         )

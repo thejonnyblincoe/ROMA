@@ -20,6 +20,7 @@ from roma.application.orchestration.graph_state_manager import GraphStateManager
 from roma.application.services.agent_service_registry import AgentServiceRegistry
 from roma.application.services.context_builder_service import TaskContext
 from roma.application.services.dependency_validator import DependencyValidator
+from roma.domain.value_objects.execution_state import ExecutionState
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,8 @@ class ParallelExecutionEngine:
         state_manager: GraphStateManager,
         max_concurrent_tasks: int = 10,
         dependency_validator: Optional[DependencyValidator] = None,
-        recovery_manager: Optional[Any] = None
+        recovery_manager: Optional[Any] = None,
+        context_builder: Optional[Any] = None
     ):
         """
         Initialize ParallelExecutionEngine.
@@ -68,9 +70,11 @@ class ParallelExecutionEngine:
             max_concurrent_tasks: Maximum number of concurrent task executions
             dependency_validator: Optional dependency validator for pre-execution validation
             recovery_manager: Optional recovery manager for dependency failure handling
+            context_builder: Optional context builder for per-node context enrichment
         """
         self.state_manager = state_manager
         self.max_concurrent_tasks = max_concurrent_tasks
+        self.context_builder = context_builder
 
         # Initialize dependency validator with recovery manager integration
         self.dependency_validator = dependency_validator or DependencyValidator(
@@ -79,8 +83,9 @@ class ParallelExecutionEngine:
 
         # Concurrency control
         self._execution_semaphore = asyncio.Semaphore(max_concurrent_tasks)
+        self._stats_lock = asyncio.Lock()  # Thread-safe statistics updates
 
-        # Execution statistics
+        # Execution statistics (protected by _stats_lock)
         self._total_batches_processed = 0
         self._total_nodes_processed = 0
         self._total_execution_time = 0.0
@@ -92,7 +97,7 @@ class ParallelExecutionEngine:
         ready_nodes: List[TaskNode],
         agent_service_registry: AgentServiceRegistry,
         context: TaskContext,
-        execution_id: Optional[str] = None
+        execution_state: ExecutionState
     ) -> List[NodeResult]:
         """
         Execute multiple ready nodes in parallel with semaphore control.
@@ -133,7 +138,7 @@ class ParallelExecutionEngine:
         execution_tasks = []
 
         for node in executable_nodes:
-            task = self._execute_single_node_with_semaphore(node, agent_service_registry, context, execution_id)
+            task = self._execute_single_node_with_semaphore(node, agent_service_registry, context, execution_state)
             execution_tasks.append(task)
 
         # Execute all tasks in parallel
@@ -152,6 +157,7 @@ class ParallelExecutionEngine:
                 logger.error(f"Node execution failed for {node.task_id}: {result}")
                 # Create failure NodeResult
                 failure_result = NodeResult.failure(
+                    task_id=node.task_id,
                     error=str(result),
                     agent_name="parallel_execution_engine",
                     metadata={"node_id": node.task_id, "exception_type": type(result).__name__}
@@ -176,11 +182,12 @@ class ParallelExecutionEngine:
                             "action": result.action.value
                         })
 
-        # Update statistics
+        # Update statistics with thread safety
         execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
-        self._total_batches_processed += 1
-        self._total_nodes_processed += len(executable_nodes)
-        self._total_execution_time += execution_time
+        async with self._stats_lock:
+            self._total_batches_processed += 1
+            self._total_nodes_processed += len(executable_nodes)
+            self._total_execution_time += execution_time
 
         logger.info(
             f"Parallel execution completed: {len(processed_results)} results "
@@ -195,7 +202,7 @@ class ParallelExecutionEngine:
         node: TaskNode,
         agent_service_registry: AgentServiceRegistry,
         base_context: TaskContext,
-        execution_id: Optional[str] = None
+        execution_state: ExecutionState
     ) -> NodeResult:
         """
         Execute a single node with semaphore control and state transitions.
@@ -214,14 +221,39 @@ class ParallelExecutionEngine:
             node_id = node.task_id
 
             try:
-                # Transition node to EXECUTING state via GraphStateManager
-                await self.state_manager.transition_node_status(node_id, TaskStatus.READY)
-                await self.state_manager.transition_node_status(node_id, TaskStatus.EXECUTING)
+                # Handle state transitions based on current node status
+                current_status = node.status
+
+                if current_status == TaskStatus.PENDING:
+                    # Normal execution path: PENDING → READY → EXECUTING
+                    logger.debug(f"Transitioning PENDING node {node_id} to EXECUTING")
+                    await self.state_manager.transition_node_status(node_id, TaskStatus.READY)
+                    await self.state_manager.transition_node_status(node_id, TaskStatus.EXECUTING)
+
+                elif current_status == TaskStatus.READY:
+                    # Already ready: READY → EXECUTING
+                    logger.debug(f"Transitioning READY node {node_id} to EXECUTING")
+                    await self.state_manager.transition_node_status(node_id, TaskStatus.EXECUTING)
+
+                elif current_status == TaskStatus.WAITING_FOR_CHILDREN:
+                    # Aggregation-ready nodes: do NOT change state, let handler manage transitions
+                    logger.debug(f"Processing WAITING_FOR_CHILDREN node {node_id} without state change")
+                    # No state transition - handler will manage AGGREGATING → COMPLETED
+
+                elif current_status == TaskStatus.NEEDS_REPLAN:
+                    # Replanning nodes: do NOT change state, let handler manage transitions
+                    logger.debug(f"Processing NEEDS_REPLAN node {node_id} without state change")
+                    # No state transition - handler will manage NEEDS_REPLAN → READY
+
+                else:
+                    # Unexpected status for execution
+                    logger.warning(f"Node {node_id} has unexpected status {current_status} for execution")
+                    # Try to process anyway, but this might fail
 
                 logger.debug(f"Processing node {node_id} through agent pipeline")
 
                 # Process node through agent services
-                result = await self._process_node_with_agent_services(node, agent_service_registry, base_context)
+                result = await self._process_node_with_agent_services(node, agent_service_registry, base_context, execution_state)
 
                 # Ensure node_id metadata is present for downstream handlers
                 try:
@@ -240,32 +272,35 @@ class ParallelExecutionEngine:
                 return result
 
             except Exception as e:
-                # On exception, ensure node is marked as failed
-                try:
-                    await self.state_manager.transition_node_status(node_id, TaskStatus.FAILED)
-                    logger.error(f"Node {node_id} execution failed, transitioned to FAILED: {e}")
-                except Exception as transition_error:
-                    logger.error(f"Failed to transition node {node_id} to FAILED: {transition_error}")
+                # On exception, return NodeResult.failure instead of transitioning and re-raising
+                # Let TaskNodeProcessor handle state transitions
+                logger.error(f"Node {node_id} execution failed: {e}")
 
-                # Re-raise exception to be handled by caller
-                raise e
+                return NodeResult.failure(
+                    task_id=node_id,
+                    error=str(e),
+                    agent_name="parallel_execution_engine",
+                    metadata={"node_id": node_id, "exception_type": type(e).__name__}
+                )
 
     async def _process_node_with_agent_services(
         self,
         node: TaskNode,
         agent_service_registry: AgentServiceRegistry,
-        context: TaskContext
+        context: TaskContext,
+        execution_state: ExecutionState
     ) -> NodeResult:
         """
         Process a single node through the agent services pipeline.
 
-        This replicates the core logic from TaskNodeProcessor but uses the
-        modular agent services from the registry.
+        This routes nodes based on their status:
+        - WAITING_FOR_CHILDREN nodes ready for aggregation → AggregatorService
+        - Other nodes → Atomizer pipeline (Planner/Executor)
 
         Args:
             node: TaskNode to process
             agent_service_registry: Registry providing access to agent services
-            context: Execution context for the node
+            context: Base execution context for the node
 
         Returns:
             NodeResult indicating next action and any results
@@ -273,9 +308,61 @@ class ParallelExecutionEngine:
         try:
             logger.debug(f"Processing node {node.task_id} with agent services")
 
-            # Phase 1: Atomizer Decision
+            # Build per-node enriched context
+            enriched_context = await self._build_per_node_context(node, context, execution_state)
+
+            # Check if this is a replanning node FIRST
+            if node.status == TaskStatus.NEEDS_REPLAN:
+                logger.debug(f"Node {node.task_id} needs replanning")
+
+                # Get children for context (all should be terminal now)
+                children = self.state_manager.get_children_nodes(node.task_id)
+                failed_children = [c for c in children if c.status == TaskStatus.FAILED]
+                completed_children = [c for c in children if c.status == TaskStatus.COMPLETED]
+
+                logger.info(f"Replanning {node.task_id}: {len(failed_children)} failed, "
+                           f"{len(completed_children)} completed")
+
+                # Route to plan modifier with enriched context
+                plan_modifier = agent_service_registry.get_plan_modifier_service()
+                return await plan_modifier.run(
+                    task=node,
+                    context=enriched_context,
+                    failed_children=failed_children,
+                    failure_reason=f"{len(failed_children)} children failed"
+                )
+
+            # Check if this is an aggregation-ready parent
+            if node.status == TaskStatus.WAITING_FOR_CHILDREN:
+                logger.debug(f"Node {node.task_id} ready for aggregation")
+
+                # Get child results for aggregation
+                children_nodes = self.state_manager.get_children_nodes(node.task_id)
+                child_envelopes = []
+
+                for child_node in children_nodes:
+                    if child_node.status == TaskStatus.COMPLETED:
+                        child_result = await execution_state.get_cached_result(child_node.task_id)
+                        if child_result:
+                            child_envelopes.append(child_result)
+
+                # Route to aggregator service with proper interface
+                aggregator_service = agent_service_registry.get_aggregator_service()
+                return await aggregator_service.run(
+                    task=node,
+                    context=enriched_context,
+                    execution_id=execution_state.execution_id,
+                    child_envelopes=child_envelopes,
+                    children=children_nodes  # Pass children for threshold evaluation
+                )
+
+            # Phase 1: Atomizer Decision for non-aggregation nodes
             atomizer_service = agent_service_registry.get_atomizer_service()
-            atomizer_result = await atomizer_service.run(node, context, execution_id=execution_id)
+            atomizer_result = await atomizer_service.run(
+                task=node,
+                context=enriched_context,
+                execution_id=execution_state.execution_id
+            )
 
             # Extract node type from atomizer result metadata
             if atomizer_result.action == NodeAction.NOOP:
@@ -300,11 +387,19 @@ class ParallelExecutionEngine:
             if node_type == NodeType.EXECUTE:
                 # Execute atomic task using executor service
                 executor_service = agent_service_registry.get_executor_service()
-                result = await executor_service.run(node, context, execution_id=execution_id)
+                result = await executor_service.run(
+                    task=node,
+                    context=enriched_context,
+                    execution_id=execution_state.execution_id
+                )
             elif node_type == NodeType.PLAN:
                 # Execute planning task using planner service
                 planner_service = agent_service_registry.get_planner_service()
-                result = await planner_service.run(node, context, execution_id=execution_id)
+                result = await planner_service.run(
+                    task=node,
+                    context=enriched_context,
+                    execution_id=execution_state.execution_id
+                )
             else:
                 raise ValueError(f"Unknown node type from atomizer: {node_type}")
 
@@ -316,36 +411,39 @@ class ParallelExecutionEngine:
             # Re-raise exception to be handled by caller at higher level
             raise e
 
-    def get_execution_stats(self) -> ParallelExecutionStats:
-        """Get execution statistics."""
-        return ParallelExecutionStats(
-            nodes_requested=0,  # Only available during active execution
-            nodes_processed=self._total_nodes_processed,
-            successful_nodes=0,  # Only available during active execution
-            failed_nodes=0,  # Only available during active execution
-            execution_time_seconds=self._total_execution_time
-        )
-
-    def get_performance_metrics(self) -> Dict[str, Any]:
-        """Get detailed performance metrics."""
-        return {
-            "max_concurrent_tasks": self.max_concurrent_tasks,
-            "total_batches_processed": self._total_batches_processed,
-            "total_nodes_processed": self._total_nodes_processed,
-            "total_execution_time_seconds": self._total_execution_time,
-            "average_nodes_per_batch": (
-                self._total_nodes_processed / self._total_batches_processed
-                if self._total_batches_processed > 0 else 0
-            ),
-            "average_batch_time_seconds": (
-                self._total_execution_time / self._total_batches_processed
-                if self._total_batches_processed > 0 else 0
+    async def get_execution_stats(self) -> ParallelExecutionStats:
+        """Get execution statistics with thread safety."""
+        async with self._stats_lock:
+            return ParallelExecutionStats(
+                nodes_requested=0,  # Only available during active execution
+                nodes_processed=self._total_nodes_processed,
+                successful_nodes=0,  # Only available during active execution
+                failed_nodes=0,  # Only available during active execution
+                execution_time_seconds=self._total_execution_time
             )
-        }
 
-    def reset_stats(self) -> None:
-        """Reset execution statistics."""
-        self._total_batches_processed = 0
-        self._total_nodes_processed = 0
-        self._total_execution_time = 0.0
+    async def get_performance_metrics(self) -> Dict[str, Any]:
+        """Get detailed performance metrics with thread safety."""
+        async with self._stats_lock:
+            return {
+                "max_concurrent_tasks": self.max_concurrent_tasks,
+                "total_batches_processed": self._total_batches_processed,
+                "total_nodes_processed": self._total_nodes_processed,
+                "total_execution_time_seconds": self._total_execution_time,
+                "average_nodes_per_batch": (
+                    self._total_nodes_processed / self._total_batches_processed
+                    if self._total_batches_processed > 0 else 0
+                ),
+                "average_batch_time_seconds": (
+                    self._total_execution_time / self._total_batches_processed
+                    if self._total_batches_processed > 0 else 0
+                )
+            }
+
+    async def reset_stats(self) -> None:
+        """Reset execution statistics with thread safety."""
+        async with self._stats_lock:
+            self._total_batches_processed = 0
+            self._total_nodes_processed = 0
+            self._total_execution_time = 0.0
         logger.info("Execution statistics reset")

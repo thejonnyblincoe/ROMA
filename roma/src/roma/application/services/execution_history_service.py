@@ -1,5 +1,7 @@
 """
-Execution History Service for PostgreSQL Persistence
+Execution History Service with Clean Architecture.
+
+Application layer service that orchestrates execution history operations using repository interfaces.
 """
 
 import logging
@@ -7,19 +9,14 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 from uuid import uuid4
 
-from sqlalchemy import select, delete, update, func, and_, or_, desc
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.exc import SQLAlchemyError
-
-from src.roma.domain.entities.task_node import TaskNode
-from src.roma.domain.value_objects.task_status import TaskStatus
-from src.roma.domain.value_objects.task_type import TaskType
-from src.roma.domain.value_objects.node_type import NodeType
-from src.roma.infrastructure.persistence.models.task_execution_model import (
-    TaskExecutionModel,
-    TaskRelationshipModel,
-    TaskExecutionStatus,
-    TaskRelationshipType
+from roma.domain.interfaces.persistence import ExecutionHistoryRepository
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.persistence import (
+    TaskRelationshipType,
+    ExecutionRecord,
+    ExecutionTreeNode,
+    ExecutionAnalytics,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,24 +24,20 @@ logger = logging.getLogger(__name__)
 
 class ExecutionHistoryService:
     """
-    Service for tracking and managing task execution history.
+    Application service for tracking and managing task execution history.
 
-    Features:
-    - Track complete execution lifecycle
-    - Store task hierarchies and relationships
-    - Performance metrics and analytics
-    - Execution replay capabilities
-    - Cleanup and archival
+    Uses repository interfaces for persistence operations following Clean Architecture.
+    Provides high-level execution history orchestration without persistence implementation details.
     """
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
+    def __init__(self, execution_history_repository: ExecutionHistoryRepository):
         """
-        Initialize execution history service.
+        Initialize execution history service with repository dependency.
 
         Args:
-            session_factory: SQLAlchemy async session factory
+            execution_history_repository: Repository for execution history persistence
         """
-        self.session_factory = session_factory
+        self.execution_repo = execution_history_repository
         self._stats = {
             "executions_tracked": 0,
             "relationships_created": 0,
@@ -68,35 +61,16 @@ class ExecutionHistoryService:
         Returns:
             Execution ID
         """
-        try:
-            async with self.session_factory() as session:
-                # Convert domain status to database enum
-                db_status = self._map_status_to_db(task.status)
+        execution_id = await self.execution_repo.create_execution(
+            task=task,
+            execution_context=execution_context,
+            agent_config=agent_config
+        )
 
-                execution = TaskExecutionModel(
-                    task_id=task.task_id,
-                    goal=task.goal,
-                    task_type=task.task_type.value,
-                    node_type=task.node_type.value if task.node_type else None,
-                    status=db_status,
-                    parent_task_id=task.parent_id,
-                    started_at=datetime.now(timezone.utc),
-                    execution_context=execution_context,
-                    agent_config=agent_config,
-                    metadata=task.metadata or {}
-                )
+        self._stats["executions_tracked"] += 1
+        logger.debug(f"Started tracking execution for task {task.task_id}")
 
-                session.add(execution)
-                await session.commit()
-
-                self._stats["executions_tracked"] += 1
-                logger.debug(f"Started tracking execution for task {task.task_id}")
-
-                return execution.id
-
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to start execution tracking: {e}")
-            raise
+        return execution_id
 
     async def update_execution_status(
         self,
@@ -116,44 +90,16 @@ class ExecutionHistoryService:
             error_info: Error information if failed
             execution_duration_ms: Execution duration in milliseconds
         """
-        try:
-            async with self.session_factory() as session:
-                # Convert domain status to database enum
-                db_status = self._map_status_to_db(status)
+        await self.execution_repo.update_execution_status(
+            task_id=task_id,
+            status=status,
+            result=result,
+            error_info=error_info,
+            execution_duration_ms=execution_duration_ms
+        )
 
-                # Build update values
-                update_values = {
-                    "status": db_status,
-                    "updated_at": datetime.now(timezone.utc)
-                }
-
-                if result is not None:
-                    update_values["result"] = result
-
-                if error_info is not None:
-                    update_values["error_info"] = error_info
-
-                if execution_duration_ms is not None:
-                    update_values["execution_duration_ms"] = execution_duration_ms
-
-                if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-                    update_values["completed_at"] = datetime.now(timezone.utc)
-
-                # Update execution
-                await session.execute(
-                    update(TaskExecutionModel)
-                    .where(TaskExecutionModel.task_id == task_id)
-                    .values(**update_values)
-                )
-
-                await session.commit()
-
-                self._stats["queries_executed"] += 1
-                logger.debug(f"Updated execution status for task {task_id} to {status}")
-
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to update execution status: {e}")
-            raise
+        self._stats["queries_executed"] += 1
+        logger.debug(f"Updated execution status for task {task_id} to {status}")
 
     async def add_task_relationship(
         self,

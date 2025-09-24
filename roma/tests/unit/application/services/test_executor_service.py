@@ -21,7 +21,7 @@ from roma.application.services.recovery_manager import RecoveryResult, RecoveryA
 from roma.application.services.executor_service import ExecutorService
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.recovery_manager import RecoveryManager
-from roma.application.services.context_builder_service import TaskContext
+from roma.domain.context import TaskContext
 
 
 @pytest.fixture
@@ -71,6 +71,7 @@ def sample_context():
             status=TaskStatus.PENDING
         ),
         overall_objective="Research AI trends",
+        execution_id="test-executor-execution-id",
         execution_metadata={}
     )
 

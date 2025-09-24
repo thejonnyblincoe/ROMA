@@ -11,8 +11,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from enum import Enum
 
-from pydantic import BaseModel, Field, ConfigDict
-
+from roma.domain.context import TaskContext, ContextItem, ContextConfig
 from roma.domain.entities.task_node import TaskNode
 from roma.domain.entities.artifacts.base_artifact import BaseArtifact
 from roma.domain.entities.artifacts.file_artifact import FileArtifact
@@ -27,159 +26,6 @@ from roma.domain.value_objects.context_item_type import ContextItemType
 
 logger = logging.getLogger(__name__)
 
-
-
-class ContextConfig(BaseModel):
-    """Configuration for context building limits and options."""
-
-    model_config = ConfigDict(frozen=True)
-
-    # Result limits
-    max_parent_results: int = Field(default=10, ge=1, le=50)
-    max_sibling_results: int = Field(default=10, ge=1, le=50)
-    max_child_results: int = Field(default=20, ge=1, le=100)  # For aggregators
-
-    # Content limits
-    max_text_content: int = Field(default=10, ge=1, le=30)
-    max_artifacts: int = Field(default=10, ge=1, le=20)
-
-    # Text length limits
-    max_text_length: int = Field(default=500, ge=100, le=2000)  # Max length for individual text content
-    max_result_length: int = Field(default=1000, ge=200, le=5000)  # Max length for task results
-    max_summary_length: int = Field(default=200, ge=50, le=500)  # Max length for parent result summaries
-    max_outcome_summary_length: int = Field(default=150, ge=50, le=300)  # Max length for sibling outcome summaries
-
-    # Context prioritization and overflow limits
-    enable_context_prioritization: bool = Field(default=True)  # Whether to apply context filtering and prioritization
-    max_total_context_tokens: int = Field(default=8000, ge=1000, le=32000)  # Total context size limit to prevent LLM overflow
-    max_parent_items: int = Field(default=5, ge=1, le=20)  # Maximum parent results to include when context is large
-    max_sibling_items: int = Field(default=8, ge=1, le=30)  # Maximum sibling results to include when context is large
-    priority_high_threshold: int = Field(default=8, ge=1, le=10)  # Priority score threshold for high-priority items
-    priority_medium_threshold: int = Field(default=5, ge=1, le=10)  # Priority score threshold for medium-priority items
-
-
-
-class ContextItem(BaseModel):
-    """Single context item with content and metadata."""
-
-    model_config = ConfigDict(frozen=True)
-
-    item_id: str = Field(default_factory=lambda: str(uuid4()))
-    item_type: ContextItemType
-    content: Any
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    priority: int = 0
-
-    @classmethod
-    def from_text(
-        cls,
-        content: str,
-        item_type: ContextItemType,
-        metadata: Optional[Dict[str, Any]] = None,
-        priority: int = 0
-    ) -> "ContextItem":
-        """Create context item from text content."""
-        return cls(
-            item_type=item_type,
-            content=content,
-            metadata=metadata or {},
-            priority=priority
-        )
-
-    @classmethod
-    def from_artifact(
-        cls,
-        artifact: BaseArtifact,
-        item_type: ContextItemType,
-        priority: int = 0
-    ) -> "ContextItem":
-        """Create context item from artifact."""
-        return cls(
-            item_type=item_type,
-            content=artifact,
-            metadata=artifact.metadata,
-            priority=priority
-        )
-
-
-class TaskContext(BaseModel):
-    """Complete context assembled for agent execution."""
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True, from_attributes=True)
-    
-    # Core task information
-    task: Any  # TaskNode - using Any to avoid Pydantic validation issues
-    overall_objective: str
-    
-    # Context items (ordered by priority)
-    context_items: List[ContextItem] = Field(default_factory=list)
-    
-    # System metadata
-    execution_metadata: Dict[str, Any] = Field(default_factory=dict)
-    constraints: List[str] = Field(default_factory=list)
-    user_preferences: Dict[str, Any] = Field(default_factory=dict)
-    
-    def get_text_content(self) -> List[str]:
-        """Extract all text content from context."""
-        text_types = {
-            ContextItemType.TASK_GOAL,
-            ContextItemType.OVERALL_OBJECTIVE,
-            ContextItemType.TEMPORAL,
-            ContextItemType.TOOLKITS,
-            ContextItemType.PARENT_RESULT,
-            ContextItemType.SIBLING_RESULT,
-            ContextItemType.CHILD_RESULT,
-            ContextItemType.PRIOR_WORK,
-            ContextItemType.REFERENCE_TEXT
-        }
-        text_items = [
-            item.content for item in self.context_items
-            if item.item_type in text_types and isinstance(item.content, str)
-        ]
-        return text_items
-
-    def get_file_artifacts(self) -> List[FileArtifact]:
-        """Extract all file artifacts from context."""
-        artifact_types = {
-            ContextItemType.IMAGE_ARTIFACT,
-            ContextItemType.AUDIO_ARTIFACT,
-            ContextItemType.VIDEO_ARTIFACT,
-            ContextItemType.FILE_ARTIFACT
-        }
-        file_items = []
-        for item in self.context_items:
-            if item.item_type in artifact_types and isinstance(item.content, FileArtifact):
-                file_items.append(item.content)
-        return file_items
-
-    def get_by_item_type(self, item_type: ContextItemType) -> List[ContextItem]:
-        """Get context items by item type."""
-        return [item for item in self.context_items if item.item_type == item_type]
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation."""
-        return {
-            "task": self.task.to_dict(),
-            "overall_objective": self.overall_objective,
-            "context_items": [
-                {
-                    "item_id": item.item_id,
-                    "item_type": item.item_type.value,
-                    "content": (
-                        item.content.to_dict() if isinstance(item.content, BaseArtifact)
-                        else str(item.content)
-                    ),
-                    "metadata": item.metadata,
-                    "priority": item.priority
-                }
-                for item in self.context_items
-            ],
-            "execution_metadata": self.execution_metadata,
-            "constraints": self.constraints,
-            "user_preferences": self.user_preferences,
-            "text_count": len(self.get_text_content()),
-            "file_count": len(self.get_file_artifacts()),
-        }
 
 
 class ContextBuilderService:
@@ -340,14 +186,19 @@ class ContextBuilderService:
                 # Fallback: use original items but truncate if too many
                 final_items = context_items[:self.config.max_parent_items + self.config.max_sibling_items]
 
+        # Extract execution_id from metadata
+        execution_metadata = execution_metadata or {}
+        execution_id = execution_metadata.get("execution_id", "unknown")
+
         # Build final context
         context = TaskContext(
             task=task,
             overall_objective=overall_objective,
+            execution_id=execution_id,
             context_items=final_items,
             constraints=constraints or [],
             user_preferences=user_preferences or {},
-            execution_metadata=execution_metadata or {}
+            execution_metadata=execution_metadata
         )
         
         self.logger.info(
@@ -722,7 +573,7 @@ class ContextBuilderService:
             
             # Check context items structure
             for item in context.context_items:
-                if not item.item_id or not item.content_type:
+                if not item.item_id or not item.item_type:
                     return False
             
             # Validate file artifacts are accessible

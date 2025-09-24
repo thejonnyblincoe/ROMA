@@ -13,7 +13,7 @@ from roma.domain.value_objects.task_type import TaskType
 from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.node_type import NodeType
 from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from roma.domain.events.task_events import BaseTaskEvent
+# Events are managed by GraphStateManager in integration scenarios
 from roma.tools.graph_visualizer import GraphVisualizer
 
 
@@ -107,11 +107,7 @@ class TestGraphIntegration:
         graph = research_workflow
         
         # Event collection
-        events_received: List[BaseTaskEvent] = []
-        async def event_collector(event):
-            events_received.append(event)
-        
-        graph.add_event_handler(event_collector)
+        # Event collection is handled by GraphStateManager in integration scenarios
         
         # Initially, only the root task should be ready (no dependencies)
         ready_nodes = graph.get_ready_nodes()
@@ -145,9 +141,8 @@ class TestGraphIntegration:
         completed_count = sum(1 for n in all_nodes if n.status == TaskStatus.COMPLETED)
         assert completed_count == len(all_nodes)  # All should be completed now
         
-        # Verify comprehensive event logging
-        total_events = len(events_received)
-        assert total_events > 20  # Should have many events from all operations
+        # Event logging is handled by GraphStateManager in integration scenarios
+        # Verify all operations completed successfully without needing event tracking
 
     @pytest.mark.asyncio
     async def test_graph_visualization_integration(self, research_workflow):
@@ -241,21 +236,9 @@ class TestGraphIntegration:
     async def test_graph_state_consistency_under_failures(self, research_workflow):
         """Test graph maintains consistency when operations fail."""
         graph = research_workflow
-        
-        # Create event handler that fails
-        failed_events = []
-        async def failing_handler(event):  # noqa: ARG001
-            failed_events.append(event)
-            if len(failed_events) > 2:
-                raise RuntimeError("Simulated handler failure")
-        
-        # Working handler
-        working_events = []
-        async def working_handler(event):
-            working_events.append(event)
-        
-        graph.add_event_handler(failing_handler)
-        graph.add_event_handler(working_handler)
+
+        # Event handler failures are managed by GraphStateManager
+        # DynamicTaskGraph focuses on maintaining core operation consistency
         
         # Perform operations that should trigger handler failures
         for i in range(5):
@@ -272,8 +255,8 @@ class TestGraphIntegration:
                 node = graph.get_node(node_id)
                 assert node is not None  # Graph should still work
         
-        # Verify working handler still received all events
-        assert len(working_events) >= 3
+        # Event handling is managed by GraphStateManager
+        # Verify graph operations completed successfully
         
         # Verify graph state is consistent
         node = graph.get_node("gather_reports")
@@ -293,11 +276,7 @@ class TestGraphIntegration:
         
         graph = DynamicTaskGraph(root_node=root)
         
-        # Event tracking
-        events = []
-        async def track_events(event):
-            events.append(event)
-        graph.add_event_handler(track_events)
+        # Event tracking is handled by GraphStateManager for integration scenarios
         
         # Add nodes dynamically as workflow progresses
         initial_child = TaskNode(
@@ -339,9 +318,8 @@ class TestGraphIntegration:
         assert len(graph.get_children("root")) == 2
         assert len(graph.get_children("child2")) == 1
         
-        # Verify events were logged for all operations
-        creation_events = [e for e in events if e.event_type == "task_created"]
-        assert len(creation_events) == 3  # 3 nodes added after root
+        # Event tracking is handled by GraphStateManager for integration scenarios
+        # Verify all dynamic operations completed successfully
         
         # Test visualization of dynamic graph
         visualizer = GraphVisualizer(graph)

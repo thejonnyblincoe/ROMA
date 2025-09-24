@@ -242,29 +242,17 @@ class TestDynamicTaskGraphDependencies:
 
     @pytest.mark.asyncio
     async def test_event_emission_for_dependency_edges(self, graph: DynamicTaskGraph):
-        """Test that dependency edge addition emits events."""
-        events = []
-
-        def capture_event(event):
-            events.append(event)
-
-        graph.add_event_handler(capture_event)
-
+        """Test that dependency edge operations work correctly (events via GraphStateManager)."""
         # Add nodes
         task_a = TaskNode(task_id="task_a", goal="First", task_type=TaskType.THINK)
         task_b = TaskNode(task_id="task_b", goal="Second", task_type=TaskType.THINK)
         await graph.add_node(task_a)
         await graph.add_node(task_b)
 
-        # Clear events from node addition
-        events.clear()
-
         # Add dependency edge
         await graph.add_dependency_edge("task_a", "task_b")
 
-        # Verify event was emitted
-        assert len(events) == 1
-        event = events[0]
-        assert event.task_id == "task_b"
-        assert event.metadata.get("action") == "dependency_added"
-        assert event.metadata.get("dependency_id") == "task_a"
+        # Verify edge was added to graph
+        assert graph._graph.has_edge("task_a", "task_b")
+
+        # Event emission for dependency edges is handled by GraphStateManager

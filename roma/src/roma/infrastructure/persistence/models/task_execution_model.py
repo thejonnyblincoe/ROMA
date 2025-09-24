@@ -15,7 +15,7 @@ from .base import Base
 from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.task_type import TaskType
 from roma.domain.value_objects.node_type import NodeType
-from roma.domain.value_objects.relationship_type import TaskRelationshipType
+from roma.domain.value_objects.persistence.task_relationship_type import TaskRelationshipType
 
 
 class TaskExecutionModel(Base):

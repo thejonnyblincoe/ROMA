@@ -9,7 +9,12 @@ This module provides database persistence capabilities including:
 """
 
 from .connection_manager import DatabaseConnectionManager
+from .repositories.checkpoint_repository_impl import SQLAlchemyCheckpointRepository, SQLAlchemyRecoveryRepository
+from .repositories.execution_history_repository_impl import SQLAlchemyExecutionHistoryRepository
 
 __all__ = [
     "DatabaseConnectionManager",
+    "SQLAlchemyCheckpointRepository",
+    "SQLAlchemyRecoveryRepository",
+    "SQLAlchemyExecutionHistoryRepository",
 ]

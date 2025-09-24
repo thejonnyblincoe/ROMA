@@ -14,7 +14,7 @@ from roma.domain.value_objects.node_result import NodeResult
 from roma.domain.value_objects.agent_responses import ExecutorResult
 from roma.domain.value_objects.result_envelope import ExecutionMetrics, ExecutorEnvelope
 from roma.domain.interfaces.agent_service import ExecutorServiceInterface
-from roma.application.services.context_builder_service import TaskContext
+from roma.domain.context import TaskContext
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.recovery_manager import RecoveryManager, RecoveryAction
 
@@ -37,7 +37,6 @@ class ExecutorService(ExecutorServiceInterface):
         self,
         task: TaskNode,
         context: TaskContext,
-        execution_id: Optional[str] = None,
         **kwargs
     ) -> NodeResult:
         """
@@ -45,8 +44,7 @@ class ExecutorService(ExecutorServiceInterface):
 
         Args:
             task: Task to execute
-            context: Task execution context
-            execution_id: Optional execution ID for session isolation
+            context: Task execution context (contains execution_id)
             **kwargs: Additional parameters
 
         Returns:
@@ -61,7 +59,7 @@ class ExecutorService(ExecutorServiceInterface):
             # Execute the atomic task
             logger.info(f"Executing atomic task {task.task_id} ({task.task_type})")
             envelope = await self.agent_runtime_service.execute_agent(
-                executor_agent, task, context, AgentType.EXECUTOR, execution_id
+                executor_agent, task, context, AgentType.EXECUTOR, context.execution_id
             )
 
             # Extract executor result
@@ -90,7 +88,7 @@ class ExecutorService(ExecutorServiceInterface):
             executor_envelope = ExecutorEnvelope.create_success(
                 result=executor_result,
                 task_id=task.task_id,
-                execution_id=context.execution_metadata.get("execution_id", "unknown"),
+                execution_id=context.execution_id,
                 agent_type=AgentType.EXECUTOR,
                 execution_metrics=metrics,
                 output_text=str(executor_result.result)
@@ -100,6 +98,7 @@ class ExecutorService(ExecutorServiceInterface):
             await self.recovery_manager.record_success(task.task_id)
 
             return NodeResult.success(
+                task_id=task.task_id,
                 envelope=executor_envelope,
                 agent_name=getattr(executor_agent, 'name', 'ExecutorAgent'),
                 agent_type=AgentType.EXECUTOR.value,
@@ -120,10 +119,19 @@ class ExecutorService(ExecutorServiceInterface):
 
             if recovery_result.action == RecoveryAction.RETRY:
                 return NodeResult.retry(
+                    task_id=task.task_id,
                     error=str(e),
                     agent_name="ExecutorAgent",
                     agent_type=AgentType.EXECUTOR.value,
                     metadata={"retry_count": recovery_result.metadata.get("retry_attempt", 1)}
+                )
+            elif recovery_result.action == RecoveryAction.REPLAN:
+                return NodeResult.replan(
+                    task_id=task.task_id,
+                    parent_id=recovery_result.metadata.get("parent_id"),
+                    reason="critical_failure_exhausted_retries",
+                    agent_name="ExecutorAgent",
+                    agent_type=AgentType.EXECUTOR.value
                 )
             elif recovery_result.action == RecoveryAction.FORCE_ATOMIC:
                 # Try a simplified execution approach
@@ -131,10 +139,10 @@ class ExecutorService(ExecutorServiceInterface):
                 return await self._force_atomic_execution(task, context)
             else:
                 return NodeResult.failure(
+                    task_id=task.task_id,
                     error=str(e),
                     agent_name="ExecutorAgent",
-                    agent_type=AgentType.EXECUTOR.value,
-                    metadata={"recovery_action": recovery_result.action.value}
+                    agent_type=AgentType.EXECUTOR.value
                 )
 
     async def _force_atomic_execution(self, task: TaskNode, context: TaskContext) -> NodeResult:
@@ -163,7 +171,7 @@ class ExecutorService(ExecutorServiceInterface):
             executor_envelope = ExecutorEnvelope.create_success(
                 result=simple_result,
                 task_id=task.task_id,
-                execution_id=context.execution_metadata.get("execution_id", "unknown"),
+                execution_id=context.execution_id,
                 agent_type=AgentType.EXECUTOR,
                 execution_metrics=metrics,
                 output_text=simple_result.result
@@ -172,6 +180,7 @@ class ExecutorService(ExecutorServiceInterface):
             logger.warning(f"Used forced atomic execution for task {task.task_id}")
 
             return NodeResult.success(
+                task_id=task.task_id,
                 envelope=executor_envelope,
                 agent_name="FallbackExecutor",
                 agent_type=AgentType.EXECUTOR.value,
@@ -182,6 +191,7 @@ class ExecutorService(ExecutorServiceInterface):
         except Exception as e:
             logger.error(f"Forced atomic execution also failed for task {task.task_id}: {e}")
             return NodeResult.failure(
+                task_id=task.task_id,
                 error=f"Both normal and forced execution failed: {e}",
                 agent_name="FallbackExecutor",
                 agent_type=AgentType.EXECUTOR.value

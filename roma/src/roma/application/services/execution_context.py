@@ -10,6 +10,7 @@ import logging
 
 from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 from roma.application.services.event_store import InMemoryEventStore
+from roma.application.services.event_publisher import EventPublisher
 from roma.application.services.knowledge_store_service import KnowledgeStoreService
 from roma.application.services.artifact_service import ArtifactService
 from roma.application.services.context_builder_service import ContextBuilderService
@@ -63,6 +64,9 @@ class ExecutionContext:
             max_total_events=10000
         )
 
+        # Event publisher for event emission using isolated event store
+        self.event_publisher = EventPublisher(self.event_store)
+
         # Isolated knowledge store per execution
         self.knowledge_store = KnowledgeStoreService()
 
@@ -79,10 +83,12 @@ class ExecutionContext:
             roma_config=None  # Will be set by SystemManager
         )
 
-        # Graph state manager with isolated components
+        # Note: Event publishing is handled by GraphStateManager to avoid duplicates
+
+        # Graph state manager with isolated components - using EventPublisher not EventStore
         self.graph_state_manager = GraphStateManager(
             self.task_graph,
-            self.event_store
+            self.event_publisher
         )
 
         logger.info(f"ExecutionContext created for execution {execution_id}")

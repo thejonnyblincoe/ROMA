@@ -14,9 +14,9 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from src.roma.domain.value_objects.config.database_config import DatabaseConfig
-from src.roma.infrastructure.persistence.connection_manager import DatabaseConnectionManager
-from src.roma.infrastructure.persistence.models.base import Base
+from roma.domain.value_objects.config.database_config import DatabaseConfig
+from roma.infrastructure.persistence.connection_manager import DatabaseConnectionManager
+from roma.infrastructure.persistence.models.base import Base
 
 
 class DatabaseManager:

@@ -6,7 +6,7 @@ Used for replanning scenarios when failure thresholds are exceeded.
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Callable, Awaitable
+from typing import List, Dict, Any, Optional
 
 from roma.domain.entities.task_node import TaskNode
 from roma.domain.value_objects.agent_type import AgentType
@@ -16,11 +16,10 @@ from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.agent_responses import PlanModifierResult
 from roma.domain.value_objects.result_envelope import ExecutionMetrics, PlanModifierEnvelope
 from roma.domain.interfaces.agent_service import PlanModifierServiceInterface
-from roma.application.services.context_builder_service import TaskContext, ContextBuilderService
+from roma.domain.context import TaskContext
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.recovery_manager import RecoveryManager, RecoveryAction
 from roma.application.services.hitl_service import HITLService
-from roma.domain.value_objects.hitl_request import HITLRequestStatus
 
 logger = logging.getLogger(__name__)
 
@@ -44,20 +43,15 @@ class PlanModifierService(PlanModifierServiceInterface):
         self.recovery_manager = recovery_manager
         self.hitl_service = hitl_service
 
-        # Callbacks for orchestrator communication
-        self._get_all_nodes_callback: Optional[Callable[[], List[TaskNode]]] = None
-        self._get_children_callback: Optional[Callable[[str], List[TaskNode]]] = None
-        self._remove_node_callback: Optional[Callable[[str], Awaitable[None]]] = None
-        self._transition_status_callback: Optional[Callable[[str, TaskStatus], Awaitable[None]]] = None
-        self._handle_replan_result_callback: Optional[Callable[[NodeResult, str], Awaitable[None]]] = None
-        self._context_builder: Optional[ContextBuilderService] = None
-        self._hitl_enabled: bool = False
+        # Statistics
+        self._replans_performed = 0
+        self._successful_replans = 0
+        self._failed_replans = 0
 
     async def run(
         self,
         task: TaskNode,
         context: TaskContext,
-        execution_id: Optional[str] = None,
         failed_children: List[TaskNode] = None,
         failure_reason: str = None,
         **kwargs
@@ -67,7 +61,7 @@ class PlanModifierService(PlanModifierServiceInterface):
 
         Args:
             task: Original parent task
-            context: Task context
+            context: Task context (contains execution_id)
             failed_children: Failed child tasks
             failure_reason: Reason for replanning
             **kwargs: Additional parameters
@@ -99,7 +93,7 @@ class PlanModifierService(PlanModifierServiceInterface):
             )
 
             envelope = await self.agent_runtime_service.execute_agent(
-                plan_modifier_agent, task, enhanced_context, AgentType.PLAN_MODIFIER, execution_id
+                plan_modifier_agent, task, enhanced_context, AgentType.PLAN_MODIFIER, context.execution_id
             )
 
             # Extract plan modifier result
@@ -128,7 +122,7 @@ class PlanModifierService(PlanModifierServiceInterface):
             plan_modifier_envelope = PlanModifierEnvelope.create_success(
                 result=plan_modifier_result,
                 task_id=task.task_id,
-                execution_id=context.execution_metadata.get("execution_id", "unknown"),
+                execution_id=context.execution_id,
                 agent_type=AgentType.PLAN_MODIFIER,
                 execution_metrics=metrics,
                 output_text=f"Modified plan with {len(new_subtask_nodes)} subtasks"
@@ -138,7 +132,8 @@ class PlanModifierService(PlanModifierServiceInterface):
             await self.recovery_manager.record_success(task.task_id)
 
             return NodeResult(
-                action=NodeAction.REPLAN,
+                task_id=task.task_id,
+                action=NodeAction.ADD_SUBTASKS,  # Changed from REPLAN
                 envelope=plan_modifier_envelope,
                 new_nodes=new_subtask_nodes,
                 agent_name=getattr(plan_modifier_agent, 'name', 'PlanModifierAgent'),
@@ -160,7 +155,7 @@ class PlanModifierService(PlanModifierServiceInterface):
             recovery_result = await self.recovery_manager.handle_failure(task, e)
 
             if recovery_result.action == RecoveryAction.RETRY:
-                return NodeResult.retry(
+                return NodeResult.retry(task_id=task.task_id, 
                     error=str(e),
                     agent_name="PlanModifierAgent",
                     agent_type=AgentType.PLAN_MODIFIER.value,
@@ -170,7 +165,7 @@ class PlanModifierService(PlanModifierServiceInterface):
                     }
                 )
             else:
-                return NodeResult.failure(
+                return NodeResult.failure(task_id=task.task_id, 
                     error=str(e),
                     agent_name="PlanModifierAgent",
                     agent_type=AgentType.PLAN_MODIFIER.value,
@@ -227,6 +222,7 @@ class PlanModifierService(PlanModifierServiceInterface):
         return TaskContext(
             task=context.task,
             overall_objective=context.overall_objective,
+            execution_id=context.execution_id,
             execution_metadata=enhanced_metadata
         )
 
@@ -265,8 +261,8 @@ class PlanModifierService(PlanModifierServiceInterface):
                 goal=subtask.goal,
                 task_type=subtask.task_type,
                 parent_id=parent.task_id,
-                priority=subtask.priority,
                 metadata={
+                    "priority": subtask.priority,
                     "original_dependencies": subtask.dependencies,
                     "estimated_effort": subtask.estimated_effort,
                     "subtask_metadata": subtask.metadata or {},
@@ -305,145 +301,6 @@ class PlanModifierService(PlanModifierServiceInterface):
         )
 
         return task_nodes
-
-    def set_orchestrator_callbacks(
-        self,
-        get_all_nodes: Callable[[], List[TaskNode]],
-        get_children: Callable[[str], List[TaskNode]],
-        remove_node: Callable[[str], Awaitable[None]],
-        transition_status: Callable[[str, TaskStatus], Awaitable[None]],
-        handle_replan_result: Callable[[NodeResult, str], Awaitable[None]],
-        context_builder: ContextBuilderService,
-        hitl_enabled: bool = False
-    ) -> None:
-        """
-        Set callbacks for communicating with orchestrator.
-
-        Args:
-            get_all_nodes: Callback to get all nodes in graph
-            get_children: Callback to get children nodes by parent ID
-            remove_node: Callback to remove node from graph
-            transition_status: Callback to transition node status
-            handle_replan_result: Callback to handle replan result
-            context_builder: Context builder service
-            hitl_enabled: Whether HITL replanning is enabled
-        """
-        self._get_all_nodes_callback = get_all_nodes
-        self._get_children_callback = get_children
-        self._remove_node_callback = remove_node
-        self._transition_status_callback = transition_status
-        self._handle_replan_result_callback = handle_replan_result
-        self._context_builder = context_builder
-        self._hitl_enabled = hitl_enabled
-
-    async def process_replanning_nodes(self, base_context: TaskContext) -> None:
-        """Process all nodes that need replanning (NEEDS_REPLAN status)."""
-        if not self._get_all_nodes_callback or not self._get_children_callback:
-            logger.error("Orchestrator callbacks not set - cannot process replanning nodes")
-            return
-
-        # Get all nodes with NEEDS_REPLAN status
-        all_nodes = self._get_all_nodes_callback()
-        replanning_nodes = [node for node in all_nodes if node.status == TaskStatus.NEEDS_REPLAN]
-
-        if not replanning_nodes:
-            return
-
-        logger.info(f"Found {len(replanning_nodes)} nodes that need replanning")
-
-        for node in replanning_nodes:
-            await self._handle_single_replan(node, base_context)
-
-    async def _handle_single_replan(self, node: TaskNode, base_context: TaskContext) -> None:
-        """Handle replanning for a single node."""
-        try:
-            # Get failed children for context
-            child_nodes = self._get_children_callback(node.task_id)
-            failed_children = [child for child in child_nodes if child.status == TaskStatus.FAILED]
-
-            # Build context for replanning
-            replan_context = await self._context_builder.build_context(
-                task=node,
-                overall_objective=base_context.overall_objective,
-                execution_metadata={
-                    **base_context.execution_metadata,
-                    "replanning_reason": f"Child failure threshold exceeded - {len(failed_children)} failed children",
-                    "failed_children": [child.task_id for child in failed_children]
-                }
-            )
-
-            # Check if HITL approval is required
-            if self._hitl_enabled and self.hitl_service:
-                logger.info(f"Requesting HITL approval for replanning node {node.task_id}")
-
-                hitl_response = await self.hitl_service.request_replanning_approval(
-                    node=node,
-                    context=replan_context,
-                    failed_children=failed_children,
-                    failure_reason="Child failure threshold exceeded"
-                )
-
-                # Handle HITL response
-                if hitl_response:
-                    if hitl_response.status == HITLRequestStatus.REJECTED:
-                        logger.warning(f"HITL rejected replanning for node {node.task_id}, proceeding with automatic replanning as fallback")
-                        # Continue with automatic replanning as fallback strategy
-
-                    elif hitl_response.status == HITLRequestStatus.MODIFIED:
-                        logger.info(f"HITL modified replanning request for node {node.task_id}")
-                        # Use modified context if provided
-                        if hitl_response.modified_context:
-                            replan_context = TaskContext(
-                                task=replan_context.task,
-                                overall_objective=replan_context.overall_objective,
-                                execution_metadata={
-                                    **replan_context.execution_metadata,
-                                    **hitl_response.modified_context,
-                                    "hitl_modified": True
-                                }
-                            )
-
-                    elif hitl_response.status == HITLRequestStatus.APPROVED:
-                        logger.info(f"HITL approved replanning for node {node.task_id}")
-
-                    elif hitl_response.status == HITLRequestStatus.TIMEOUT:
-                        logger.warning(f"HITL request timed out for node {node.task_id}, proceeding with automatic replanning")
-
-            # Execute plan modifier
-            modifier_result = await self.run(
-                node,
-                replan_context,
-                failed_children=failed_children,
-                failure_reason="Child failure threshold exceeded"
-            )
-
-            # Handle the modification result
-            if modifier_result.action == NodeAction.REPLAN and modifier_result.new_nodes:
-                # Remove old failed children from graph
-                for failed_child in failed_children:
-                    if self._remove_node_callback:
-                        await self._remove_node_callback(failed_child.task_id)
-
-                # Handle replan result through orchestrator
-                if self._handle_replan_result_callback:
-                    await self._handle_replan_result_callback(modifier_result, base_context.overall_objective)
-
-                # Transition the parent back to READY for re-execution
-                if self._transition_status_callback:
-                    await self._transition_status_callback(node.task_id, TaskStatus.READY)
-
-                logger.info(f"Node {node.task_id} successfully replanned with {len(modifier_result.new_nodes)} new subtasks")
-            else:
-                # Replanning failed - transition to FAILED
-                if self._transition_status_callback:
-                    await self._transition_status_callback(node.task_id, TaskStatus.FAILED)
-                logger.error(f"Replanning failed for node {node.task_id}")
-
-        except Exception as e:
-            logger.error(f"Error during replanning for node {node.task_id}: {e}")
-            # On error, transition to FAILED
-            if self._transition_status_callback:
-                await self._transition_status_callback(node.task_id, TaskStatus.FAILED)
 
     def get_stats(self) -> Dict[str, Any]:
         """Get plan modifier service statistics."""

@@ -11,22 +11,25 @@ from typing import Literal, Set
 class TaskStatus(str, Enum):
     """
     Status of a task node in the execution graph.
-    
+
     State transition flow:
-    PENDING → READY → EXECUTING → (COMPLETED | FAILED)
-    
+    PENDING → READY → EXECUTING → (COMPLETED | FAILED | WAITING_FOR_CHILDREN)
+    WAITING_FOR_CHILDREN → AGGREGATING → COMPLETED
+
     Special states:
     - NEEDS_REPLAN: Triggers replanning when children fail
+    - WAITING_FOR_CHILDREN: Parent waiting for child tasks to complete
     - AGGREGATING: Parent collecting results from completed children
     """
-    
-    PENDING = "PENDING"           # Task created, waiting for dependencies
-    READY = "READY"               # Dependencies satisfied, ready to execute
-    EXECUTING = "EXECUTING"       # Currently being processed
-    AGGREGATING = "AGGREGATING"   # Parent collecting child results
-    COMPLETED = "COMPLETED"       # Successfully finished
-    FAILED = "FAILED"             # Execution failed
-    NEEDS_REPLAN = "NEEDS_REPLAN" # Requires replanning due to failure
+
+    PENDING = "PENDING"                       # Task created, waiting for dependencies
+    READY = "READY"                           # Dependencies satisfied, ready to execute
+    EXECUTING = "EXECUTING"                   # Currently being processed
+    WAITING_FOR_CHILDREN = "WAITING_FOR_CHILDREN"  # Parent waiting for children to complete
+    AGGREGATING = "AGGREGATING"               # Parent collecting child results
+    COMPLETED = "COMPLETED"                   # Successfully finished
+    FAILED = "FAILED"                         # Execution failed
+    NEEDS_REPLAN = "NEEDS_REPLAN"            # Requires replanning due to failure
     
     def __str__(self) -> str:
         return self.value
@@ -73,13 +76,18 @@ class TaskStatus(str, Enum):
         """
         transitions = {
             TaskStatus.PENDING: {TaskStatus.READY, TaskStatus.FAILED},
-            # READY should transition to EXECUTING; failing from READY is not allowed
-            TaskStatus.READY: {TaskStatus.EXECUTING},
+            # READY can fail during agent loading or transition to executing
+            TaskStatus.READY: {TaskStatus.EXECUTING, TaskStatus.FAILED},
             TaskStatus.EXECUTING: {
-                TaskStatus.COMPLETED, 
-                TaskStatus.FAILED, 
-                TaskStatus.AGGREGATING,
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+                TaskStatus.WAITING_FOR_CHILDREN,
                 TaskStatus.NEEDS_REPLAN
+            },
+            TaskStatus.WAITING_FOR_CHILDREN: {
+                TaskStatus.AGGREGATING,
+                TaskStatus.NEEDS_REPLAN,
+                TaskStatus.FAILED
             },
             TaskStatus.AGGREGATING: {TaskStatus.COMPLETED, TaskStatus.FAILED},
             TaskStatus.NEEDS_REPLAN: {TaskStatus.READY, TaskStatus.FAILED},
@@ -104,6 +112,6 @@ class TaskStatus(str, Enum):
 
 # Type hints for use in other modules
 TaskStatusLiteral = Literal[
-    "PENDING", "READY", "EXECUTING", "AGGREGATING", 
-    "COMPLETED", "FAILED", "NEEDS_REPLAN"
+    "PENDING", "READY", "EXECUTING", "WAITING_FOR_CHILDREN",
+    "AGGREGATING", "COMPLETED", "FAILED", "NEEDS_REPLAN"
 ]

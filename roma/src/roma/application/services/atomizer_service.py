@@ -16,7 +16,7 @@ from roma.domain.value_objects.node_type import NodeType
 from roma.domain.value_objects.agent_responses import AtomizerResult
 from roma.domain.value_objects.result_envelope import ExecutionMetrics, AtomizerEnvelope
 from roma.domain.interfaces.agent_service import AtomizerServiceInterface
-from roma.application.services.context_builder_service import TaskContext
+from roma.domain.context import TaskContext
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.recovery_manager import RecoveryManager, RecoveryAction
 
@@ -39,7 +39,6 @@ class AtomizerService(AtomizerServiceInterface):
         self,
         task: TaskNode,
         context: TaskContext,
-        execution_id: Optional[str] = None,
         **kwargs
     ) -> NodeResult:
         """
@@ -47,8 +46,7 @@ class AtomizerService(AtomizerServiceInterface):
 
         Args:
             task: Task to evaluate
-            context: Task execution context
-            execution_id: Optional execution ID for session isolation
+            context: Task execution context (contains execution_id)
             **kwargs: Additional parameters
 
         Returns:
@@ -65,7 +63,7 @@ class AtomizerService(AtomizerServiceInterface):
             # Execute atomizer
             logger.info(f"Running atomizer for task {task.task_id} ({task.task_type})")
             envelope = await self.agent_runtime_service.execute_agent(
-                atomizer_agent, task, context, AgentType.ATOMIZER, execution_id
+                atomizer_agent, task, context, AgentType.ATOMIZER, context.execution_id
             )
 
             # Extract atomizer result
@@ -89,7 +87,7 @@ class AtomizerService(AtomizerServiceInterface):
             atomizer_envelope = AtomizerEnvelope.create_success(
                 result=atomizer_result,
                 task_id=task.task_id,
-                execution_id=context.execution_metadata.get("execution_id", "unknown"),
+                execution_id=context.execution_id,
                 agent_type=AgentType.ATOMIZER,
                 execution_metrics=metrics,
                 output_text=atomizer_result.reasoning
@@ -100,6 +98,7 @@ class AtomizerService(AtomizerServiceInterface):
 
             # Return atomizer decision without NodeAction - let execution engine decide routing
             return NodeResult(
+                task_id=task.task_id,
                 action=NodeAction.NOOP,  # Atomizer doesn't take action, just provides decision
                 envelope=atomizer_envelope,
                 agent_name=getattr(atomizer_agent, 'name', 'AtomizerAgent'),
@@ -121,17 +120,26 @@ class AtomizerService(AtomizerServiceInterface):
 
             if recovery_result.action == RecoveryAction.RETRY:
                 return NodeResult.retry(
+                    task_id=task.task_id,
                     error=str(e),
                     agent_name="AtomizerAgent",
                     agent_type=AgentType.ATOMIZER.value,
                     metadata={"retry_count": recovery_result.metadata.get("retry_attempt", 1)}
                 )
+            elif recovery_result.action == RecoveryAction.REPLAN:
+                return NodeResult.replan(
+                    task_id=task.task_id,
+                    parent_id=recovery_result.metadata.get("parent_id"),
+                    reason="critical_failure_exhausted_retries",
+                    agent_name="AtomizerAgent",
+                    agent_type=AgentType.ATOMIZER.value
+                )
             else:
                 return NodeResult.failure(
+                    task_id=task.task_id,
                     error=str(e),
                     agent_name="AtomizerAgent",
-                    agent_type=AgentType.ATOMIZER.value,
-                    metadata={"recovery_action": recovery_result.action.value}
+                    agent_type=AgentType.ATOMIZER.value
                 )
 
     def get_stats(self) -> Dict[str, Any]:

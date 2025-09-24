@@ -11,7 +11,8 @@ from datetime import datetime
 
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.event_store import InMemoryEventStore
-from roma.application.services.context_builder_service import TaskContext
+from roma.application.services.event_publisher import EventPublisher
+from roma.domain.context import TaskContext, ContextItem
 from roma.infrastructure.agents.agent_factory import AgentFactory
 from roma.infrastructure.agents.configurable_agent import ConfigurableAgent
 from roma.domain.entities.task_node import TaskNode
@@ -35,6 +36,12 @@ def mock_agent_factory():
 
 
 @pytest.fixture
+def mock_event_publisher(mock_event_store):
+    """Mock EventPublisher."""
+    return EventPublisher(event_store=mock_event_store)
+
+
+@pytest.fixture
 def mock_agent():
     """Mock ConfigurableAgent."""
     agent = MagicMock(spec=ConfigurableAgent)
@@ -44,11 +51,11 @@ def mock_agent():
 
 
 @pytest.fixture
-def agent_runtime_service(mock_event_store, mock_agent_factory):
+def agent_runtime_service(mock_event_publisher, mock_agent_factory):
     """AgentRuntimeService instance with mocked dependencies."""
     return AgentRuntimeService(
-        event_store=mock_event_store,
-        agent_factory=mock_agent_factory
+        agent_factory=mock_agent_factory,
+        event_publisher=mock_event_publisher
     )
 
 
@@ -68,6 +75,7 @@ def sample_context():
     return TaskContext(
         task=None,
         overall_objective="Test objective",
+        execution_id="test-execution-id",
         context_items=[],
         execution_metadata={}
     )
@@ -76,12 +84,15 @@ def sample_context():
 class TestAgentRuntimeService:
     """Test cases for AgentRuntimeService."""
 
-    def test_initialization(self):
+    def test_initialization(self, mock_event_publisher, mock_agent_factory):
         """Test service initialization."""
-        service = AgentRuntimeService()
+        service = AgentRuntimeService(
+            agent_factory=mock_agent_factory,
+            event_publisher=mock_event_publisher
+        )
 
-        assert service._event_store is None
-        assert service._agent_factory is None
+        assert service._agent_factory == mock_agent_factory
+        assert service._event_publisher == mock_event_publisher
         assert service._initialized is False
         assert len(service._runtime_agents) == 0
         assert service._runtime_metrics["agents_created"] == 0
@@ -351,12 +362,12 @@ class TestAgentRuntimeService:
         await agent_runtime_service.initialize()
 
         # Create context with file items
-        from roma.application.services.context_builder_service import ContextItem
         from roma.domain.value_objects.context_item_type import ContextItemType
 
         context_with_files = TaskContext(
             task=sample_task,
             overall_objective="Test objective",
+            execution_id="test-execution-with-files",
             context_items=[
                 ContextItem(
                     content="test content",

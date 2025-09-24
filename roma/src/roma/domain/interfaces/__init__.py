@@ -1,5 +1,17 @@
-"""Domain interfaces - Abstract contracts"""
+"""
+Domain Interfaces.
 
-# Currently no active domain interfaces - using agent-based implementations
+Centralized exports for all domain interfaces organized by category.
+"""
 
-__all__ = []
+from .persistence import (
+    CheckpointRepository,
+    RecoveryRepository,
+    ExecutionHistoryRepository,
+)
+
+__all__ = [
+    "CheckpointRepository",
+    "RecoveryRepository",
+    "ExecutionHistoryRepository",
+]

@@ -29,7 +29,7 @@ def task_graph():
 @pytest.fixture
 def deadlock_detector(task_graph):
     """Create deadlock detector with task graph."""
-    return DeadlockDetector(task_graph)
+    return DeadlockDetector(graph=task_graph)
 
 
 @pytest.fixture

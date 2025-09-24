@@ -20,7 +20,7 @@ from roma.domain.value_objects.result_envelope import AtomizerEnvelope, Executio
 from roma.application.services.atomizer_service import AtomizerService
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.recovery_manager import RecoveryManager
-from roma.application.services.context_builder_service import TaskContext
+from roma.domain.context import TaskContext
 
 
 @pytest.fixture
@@ -69,6 +69,7 @@ def sample_context():
             status=TaskStatus.PENDING
         ),
         overall_objective="Complete market analysis",
+        execution_id="test-atomizer-execution-id",
         execution_metadata={}
     )
 
@@ -123,7 +124,7 @@ class TestAtomizerService:
             sample_task.task_type, AgentType.ATOMIZER
         )
         mock_agent_runtime_service.execute_agent.assert_called_once_with(
-            mock_agent, sample_task, sample_context, AgentType.ATOMIZER, "test_execution"
+            mock_agent, sample_task, sample_context, AgentType.ATOMIZER, "test-atomizer-execution-id"
         )
 
     @pytest.mark.asyncio

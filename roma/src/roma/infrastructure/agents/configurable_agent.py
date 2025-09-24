@@ -130,26 +130,19 @@ class ConfigurableAgent(Agent[T], Generic[T]):
 
 
     def _get_tools(self) -> list:
-        """Get tools from configuration."""
+        """Get tool names from configuration."""
         # Use the new config.tools field (List[ToolConfig])
-        if not self.config.tools or not self.toolkit_manager:
+        if not self.config.tools:
             return []
 
-        # Convert ToolConfig objects to toolkit instances using the toolkit manager
-        toolkit_instances = []
+        # Return tool names (strings) instead of toolkit instances
+        # The adapter will create toolkits from these names
+        tool_names = []
         for tool_config in self.config.tools:
-            try:
-                # Get toolkit instance from manager using the tool name
-                toolkit_instance = self.toolkit_manager.get_toolkit_for_agent(tool_config.name)
+            tool_names.append(tool_config.name)
+            logger.debug(f"Added tool name {tool_config.name} ({tool_config.type}) to agent {self.agent_name}")
 
-                if toolkit_instance:
-                    toolkit_instances.append(toolkit_instance)
-                    logger.debug(f"Added toolkit {tool_config.name} ({tool_config.type}) to agent {self.agent_name}")
-
-            except Exception as e:
-                logger.error(f"Failed to get toolkit {tool_config.name}: {e}")
-
-        return toolkit_instances
+        return tool_names
 
     def _create_model_config(self):
         """Get ModelConfig from agent configuration."""

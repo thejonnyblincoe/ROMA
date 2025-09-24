@@ -18,7 +18,7 @@ from roma.domain.value_objects.hitl_request import (
     HITLRequest, HITLResponse, HITLRequestType, HITLRequestStatus
 )
 from roma.application.services.hitl_service import HITLService
-from roma.application.services.context_builder_service import TaskContext
+from roma.domain.context import TaskContext
 
 
 @pytest.fixture
@@ -62,6 +62,7 @@ def sample_context():
             status=TaskStatus.PENDING
         ),
         overall_objective="Complete analysis",
+        execution_id="test-hitl-execution-id",
         execution_metadata={}
     )
 

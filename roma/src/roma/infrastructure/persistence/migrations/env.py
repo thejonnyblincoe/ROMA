@@ -13,13 +13,13 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 # Import all models to ensure they are registered with Base.metadata
-from src.roma.infrastructure.persistence.models.base import Base
-from src.roma.infrastructure.persistence.models.event_model import EventModel
-from src.roma.infrastructure.persistence.models.task_execution_model import (
+from roma.infrastructure.persistence.models.base import Base
+from roma.infrastructure.persistence.models.event_model import EventModel
+from roma.infrastructure.persistence.models.task_execution_model import (
     TaskExecutionModel,
     TaskRelationshipModel
 )
-from src.roma.infrastructure.persistence.models.checkpoint_model import (
+from roma.infrastructure.persistence.models.checkpoint_model import (
     ExecutionCheckpointModel,
     RecoveryStateModel
 )

@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
 
 from roma.domain.entities.task_node import TaskNode
 from roma.domain.value_objects.task_status import TaskStatus
-from roma.application.services.event_publisher import EventPublisher
 
 
 def generate_execution_id() -> str:
@@ -54,7 +53,6 @@ class DynamicTaskGraph(BaseModel):
     # Private attributes (excluded from serialization)
     _graph: nx.DiGraph = PrivateAttr(default_factory=nx.DiGraph)  # type: ignore[type-arg]
     _lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
-    _event_publisher: Optional[EventPublisher] = PrivateAttr(default=None)
     
     def __init__(self, root_node: Optional[TaskNode] = None, **data: Any) -> None:
         """Initialize DynamicTaskGraph with optional root node."""
@@ -70,7 +68,6 @@ class DynamicTaskGraph(BaseModel):
         # Initialize private attributes
         self._graph = nx.DiGraph()
         self._lock = asyncio.Lock()
-        self._event_publisher = None
         
         # Add nodes to NetworkX graph
         for node_id, node in self.nodes.items():
@@ -78,14 +75,7 @@ class DynamicTaskGraph(BaseModel):
             if node.parent_id and node.parent_id in self.nodes:
                 self._graph.add_edge(node.parent_id, node_id)
 
-    def set_event_publisher(self, event_publisher: EventPublisher) -> None:
-        """
-        Set the event publisher for this graph.
-
-        Args:
-            event_publisher: EventPublisher instance for emitting events (required)
-        """
-        self._event_publisher = event_publisher
+    # Note: Event publishing is handled by GraphStateManager to avoid duplicates
     
     async def add_node(self, node: TaskNode) -> None:
         """
@@ -110,13 +100,7 @@ class DynamicTaskGraph(BaseModel):
                 if dependency_id in self.nodes:
                     self._graph.add_edge(dependency_id, node.task_id)
 
-            # Emit node added event
-            await self._event_publisher.emit_task_node_added(
-                task_id=node.task_id,
-                goal=node.goal,
-                task_type=node.task_type,
-                parent_id=node.parent_id
-            )
+            # Note: Event emission is handled by GraphStateManager to avoid duplicates
 
     async def add_dependency_edge(self, from_id: str, to_id: str) -> None:
         """
@@ -155,11 +139,7 @@ class DynamicTaskGraph(BaseModel):
                 updated_node = target_node.add_dependency(from_id)
                 self.nodes[to_id] = updated_node
 
-            # Emit dependency edge added event
-            await self._event_publisher.emit_dependency_added(
-                from_task_id=from_id,
-                to_task_id=to_id
-            )
+            # Note: Event emission is handled by GraphStateManager to avoid duplicates
 
     def get_node(self, task_id: str) -> Optional[TaskNode]:
         """
@@ -181,38 +161,183 @@ class DynamicTaskGraph(BaseModel):
             List of all TaskNode objects
         """
         return list(self.nodes.values())
-    
+
     def get_ready_nodes(self) -> List[TaskNode]:
         """
-        Get nodes that are ready for execution.
-        
+        Get nodes that are ready for execution (synchronous version).
+
         A node is ready if:
-        1. Status is PENDING
-        2. All dependencies are completed (in-degree == 0 for pending nodes)
-        
+        1. Status is PENDING and all dependencies are completed
+        2. Status is READY and all dependencies are still completed
+        3. Status is WAITING_FOR_CHILDREN and all children are terminal (ready for aggregation)
+        4. Status is NEEDS_REPLAN and all children are terminal (ready for replanning)
+
         Returns:
             List of TaskNode objects ready for execution
+
+        Note:
+            This is the synchronous version for backward compatibility with tests.
+            For thread-safe operations in concurrent scenarios, use get_ready_nodes_async().
         """
         ready_nodes = []
-        
+
         for node_id, node in self.nodes.items():
             if node.status == TaskStatus.PENDING:
                 # Check if all dependencies are completed
                 predecessors = list(self._graph.predecessors(node_id))
-                
+
                 if not predecessors:  # No dependencies
                     ready_nodes.append(node)
                 else:
                     # Check if all predecessors are completed
                     all_completed = all(
-                        self.nodes[pred_id].status == TaskStatus.COMPLETED 
+                        self.nodes[pred_id].status == TaskStatus.COMPLETED
                         for pred_id in predecessors
                         if pred_id in self.nodes
                     )
                     if all_completed:
                         ready_nodes.append(node)
-        
+
+            elif node.status == TaskStatus.READY:
+                # READY nodes that have passed dependency checks (e.g., from retry logic)
+                predecessors = list(self._graph.predecessors(node_id))
+
+                if not predecessors:  # No dependencies
+                    ready_nodes.append(node)
+                else:
+                    # Check if all predecessors are still completed
+                    all_completed = all(
+                        self.nodes[pred_id].status == TaskStatus.COMPLETED
+                        for pred_id in predecessors
+                        if pred_id in self.nodes
+                    )
+                    if all_completed:
+                        ready_nodes.append(node)
+
+            elif node.status == TaskStatus.WAITING_FOR_CHILDREN:
+                # Check if all children are terminal (ready for aggregation)
+                children = list(self._graph.successors(node_id))
+
+                if children:  # Has children
+                    # Check if all children are terminal (COMPLETED or FAILED)
+                    all_children_terminal = all(
+                        self.nodes[child_id].status in {TaskStatus.COMPLETED, TaskStatus.FAILED}
+                        for child_id in children
+                        if child_id in self.nodes
+                    )
+                    if all_children_terminal:
+                        ready_nodes.append(node)
+                else:
+                    # No children - shouldn't happen but handle gracefully
+                    ready_nodes.append(node)
+
+            elif node.status == TaskStatus.NEEDS_REPLAN:
+                # Check if all children are terminal (ready for replanning)
+                children = list(self._graph.successors(node_id))
+
+                if children:  # Has children
+                    # Check if all children are terminal (COMPLETED or FAILED)
+                    all_children_terminal = all(
+                        self.nodes[child_id].status in {TaskStatus.COMPLETED, TaskStatus.FAILED}
+                        for child_id in children
+                        if child_id in self.nodes
+                    )
+                    if all_children_terminal:
+                        ready_nodes.append(node)
+                else:
+                    # No children - ready for replanning immediately
+                    ready_nodes.append(node)
+
         return ready_nodes
+
+    async def get_ready_nodes_async(self) -> List[TaskNode]:
+        """
+        Get nodes that are ready for execution (async/thread-safe version).
+
+        A node is ready if:
+        1. Status is PENDING and all dependencies are completed
+        2. Status is WAITING_FOR_CHILDREN and all children are completed (ready for aggregation)
+
+        Returns:
+            List of TaskNode objects ready for execution
+
+        Note:
+            This method is now async and thread-safe to prevent race conditions
+            during concurrent graph modifications.
+        """
+        async with self._lock:
+            ready_nodes = []
+
+            for node_id, node in self.nodes.items():
+                if node.status == TaskStatus.PENDING:
+                    # Check if all dependencies are completed
+                    predecessors = list(self._graph.predecessors(node_id))
+
+                    if not predecessors:  # No dependencies
+                        ready_nodes.append(node)
+                    else:
+                        # Check if all predecessors are completed
+                        all_completed = all(
+                            self.nodes[pred_id].status == TaskStatus.COMPLETED
+                            for pred_id in predecessors
+                            if pred_id in self.nodes
+                        )
+                        if all_completed:
+                            ready_nodes.append(node)
+
+                elif node.status == TaskStatus.READY:
+                    # READY nodes that have passed dependency checks (e.g., from retry logic)
+                    # Check if all dependencies are still completed before re-executing
+                    predecessors = list(self._graph.predecessors(node_id))
+
+                    if not predecessors:  # No dependencies
+                        ready_nodes.append(node)
+                    else:
+                        # Check if all predecessors are still completed
+                        all_completed = all(
+                            self.nodes[pred_id].status == TaskStatus.COMPLETED
+                            for pred_id in predecessors
+                            if pred_id in self.nodes
+                        )
+                        if all_completed:
+                            ready_nodes.append(node)
+
+                elif node.status == TaskStatus.WAITING_FOR_CHILDREN:
+                    # Check if all children are terminal (ready for aggregation)
+                    children = list(self._graph.successors(node_id))
+
+                    if children:  # Has children
+                        # Check if all children are terminal (COMPLETED or FAILED)
+                        all_children_terminal = all(
+                            self.nodes[child_id].status in {TaskStatus.COMPLETED, TaskStatus.FAILED}
+                            for child_id in children
+                            if child_id in self.nodes
+                        )
+                        if all_children_terminal:
+                            ready_nodes.append(node)
+                    else:
+                        # No children - this shouldn't happen for WAITING_FOR_CHILDREN status
+                        # but handle gracefully by making it ready
+                        ready_nodes.append(node)
+
+                elif node.status == TaskStatus.NEEDS_REPLAN:
+                    # Check if all children are terminal (ready for replanning)
+                    children = list(self._graph.successors(node_id))
+
+                    if children:  # Has children
+                        # Check if all children are terminal (COMPLETED or FAILED)
+                        all_children_terminal = all(
+                            self.nodes[child_id].status in {TaskStatus.COMPLETED, TaskStatus.FAILED}
+                            for child_id in children
+                            if child_id in self.nodes
+                        )
+                        if all_children_terminal:
+                            ready_nodes.append(node)
+                    else:
+                        # No children - ready for replanning immediately
+                        ready_nodes.append(node)
+
+            return ready_nodes
     
     async def update_node_status(self, task_id: str, new_status: TaskStatus) -> TaskNode:
         """
@@ -239,13 +364,7 @@ class DynamicTaskGraph(BaseModel):
             # Update nodes dict
             self.nodes[task_id] = updated_node
             
-            # Emit status change event
-            await self._event_publisher.emit_task_status_changed(
-                task_id=task_id,
-                old_status=current_node.status.value,
-                new_status=new_status.value,
-                goal=updated_node.goal
-            )
+            # Note: Event emission is handled by GraphStateManager to avoid duplicates
             
             return updated_node
     
@@ -521,7 +640,6 @@ class DynamicTaskGraph(BaseModel):
         # Initialize private attributes for deserialization
         self._graph = nx.DiGraph()
         self._lock = asyncio.Lock()
-        self._event_publisher = None
         
         # Rebuild NetworkX graph from nodes
         for node_id, node in self.nodes.items():

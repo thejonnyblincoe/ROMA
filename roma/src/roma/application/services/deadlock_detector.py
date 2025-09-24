@@ -13,7 +13,7 @@ from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.deadlock_analysis import (
     DeadlockReport, DeadlockSummary, DeadlockType, DeadlockSeverity
 )
-from roma.application.orchestration.graph_state_manager import GraphStateManager
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 
 
 logger = logging.getLogger(__name__)
@@ -28,16 +28,16 @@ class DeadlockDetector:
     """
 
     def __init__(self,
-                 graph_state_manager: GraphStateManager,
+                 graph: DynamicTaskGraph,
                  stall_threshold_seconds: int = 600):
         """
         Initialize deadlock detector.
 
         Args:
-            graph_state_manager: State manager with graph access
+            graph: Dynamic task graph to analyze
             stall_threshold_seconds: Seconds before considering execution stalled
         """
-        self.graph_state_manager = graph_state_manager
+        self.graph = graph
         self.stall_threshold = stall_threshold_seconds
 
         # Simple state tracking
@@ -63,8 +63,8 @@ class DeadlockDetector:
         current_time = datetime.now(timezone.utc)
 
         # 1. Check for circular dependencies using graph's cycle detection
-        if self.graph_state_manager.graph.has_cycles():
-            cycles = self.graph_state_manager.graph.get_cycles()
+        if self.graph.has_cycles():
+            cycles = self.graph.get_cycles()
             if cycles:
                 # Get the first cycle found
                 cycle_nodes = cycles[0] if cycles[0] else []
@@ -99,8 +99,8 @@ class DeadlockDetector:
     def _detect_infinite_waits(self, current_time: datetime) -> Optional[DeadlockReport]:
         """Detect nodes waiting for failed dependencies using graph methods."""
         # Use graph's node filtering methods
-        pending_nodes = self.graph_state_manager.graph.get_nodes_by_status(TaskStatus.PENDING)
-        failed_nodes = self.graph_state_manager.graph.get_nodes_by_status(TaskStatus.FAILED)
+        pending_nodes = self.graph.get_nodes_by_status(TaskStatus.PENDING)
+        failed_nodes = self.graph.get_nodes_by_status(TaskStatus.FAILED)
         failed_node_ids = {node.task_id for node in failed_nodes}
 
         infinite_wait_nodes = []

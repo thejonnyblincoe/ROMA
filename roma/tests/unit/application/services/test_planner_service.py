@@ -20,7 +20,7 @@ from roma.domain.value_objects.result_envelope import PlannerEnvelope, Execution
 from roma.application.services.planner_service import PlannerService
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.recovery_manager import RecoveryManager
-from roma.application.services.context_builder_service import TaskContext
+from roma.domain.context import TaskContext
 
 
 @pytest.fixture
@@ -70,6 +70,7 @@ def sample_context():
             status=TaskStatus.PENDING
         ),
         overall_objective="Complete market analysis",
+        execution_id="test-planner-execution-id",
         execution_metadata={}
     )
 

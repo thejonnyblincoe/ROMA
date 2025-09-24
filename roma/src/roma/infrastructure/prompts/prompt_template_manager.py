@@ -96,13 +96,20 @@ class PromptTemplateManager:
             else:
                 logger.warning(f"ROMA_PROMPTS_DIR points to non-existent directory: {env_dir}")
 
-        # 2. Traverse upward to find src/prompts
+        # 2. Traverse upward to find src/prompts or roma/src/prompts
         current_path = Path(__file__).resolve()
         for parent in [current_path] + list(current_path.parents):
+            # Check for direct src/prompts structure
             src_prompts = parent / "src" / "prompts"
             if src_prompts.exists() and src_prompts.is_dir():
                 logger.info(f"Found templates directory by traversal: {src_prompts}")
                 return src_prompts
+
+            # Check for roma/src/prompts structure
+            roma_src_prompts = parent / "roma" / "src" / "prompts"
+            if roma_src_prompts.exists() and roma_src_prompts.is_dir():
+                logger.info(f"Found templates directory by roma traversal: {roma_src_prompts}")
+                return roma_src_prompts
 
         # 3. Fallback to relative path calculation
         # __file__ is at roma/src/roma/infrastructure/prompts/prompt_template_manager.py
@@ -125,7 +132,7 @@ class PromptTemplateManager:
 
     def load_template(self, template_path: str) -> Template:
         """
-        Load a template from file with caching.
+        Load a template from file with caching, with fallback for legacy filename patterns.
 
         Args:
             template_path: Relative path from templates directory (e.g., "atomizer/retrieve.jinja2")
@@ -141,9 +148,22 @@ class PromptTemplateManager:
             logger.debug(f"Template cache hit: {template_path}")
             return self._template_cache[template_path]
 
+        # Try original path first
         full_path = self.templates_dir / template_path
+
+        # If original path doesn't exist, try fallback patterns
         if not full_path.exists():
-            raise FileNotFoundError(f"Template not found: {full_path}")
+            fallback_path = self._get_fallback_template_path(template_path)
+            if fallback_path:
+                fallback_full_path = self.templates_dir / fallback_path
+                if fallback_full_path.exists():
+                    template_path = fallback_path  # Use fallback path
+                    full_path = fallback_full_path
+                    logger.debug(f"Using fallback template path: {fallback_path}")
+                else:
+                    raise FileNotFoundError(f"Template not found: {full_path} (fallback {fallback_full_path} also not found)")
+            else:
+                raise FileNotFoundError(f"Template not found: {full_path}")
 
         try:
             # Use Jinja environment to load template directly - enables includes/extends
@@ -377,6 +397,43 @@ class PromptTemplateManager:
             templates.append(str(relative_path))
 
         return sorted(templates)
+
+    def _get_fallback_template_path(self, template_path: str) -> Optional[str]:
+        """
+        Generate fallback template path for legacy filename patterns.
+
+        For paths like "executor/retrieve.jinja2", tries "executor/retrieve_executor.jinja2"
+        For paths like "planner/think.jinja2", tries "planner/think_planner.jinja2"
+
+        Args:
+            template_path: Original template path
+
+        Returns:
+            Fallback template path or None if no fallback pattern applies
+        """
+        try:
+            # Split path into directory and filename
+            path_parts = template_path.split('/')
+            if len(path_parts) != 2:
+                return None
+
+            agent_type, filename = path_parts
+            if not filename.endswith('.jinja2'):
+                return None
+
+            # Extract task type from filename (remove .jinja2 extension)
+            task_type = filename[:-7]  # Remove .jinja2
+
+            # Generate fallback pattern: {task_type}_{agent_type}.jinja2
+            fallback_filename = f"{task_type}_{agent_type}.jinja2"
+            fallback_path = f"{agent_type}/{fallback_filename}"
+
+            logger.debug(f"Generated fallback template path: {template_path} -> {fallback_path}")
+            return fallback_path
+
+        except Exception as e:
+            logger.debug(f"Could not generate fallback for {template_path}: {e}")
+            return None
 
     def clear_cache(self) -> None:
         """Clear the template cache."""

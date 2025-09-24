@@ -24,7 +24,7 @@ from roma.application.services.recovery_manager import RecoveryResult, RecoveryA
 from roma.application.services.aggregator_service import AggregatorService
 from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.recovery_manager import RecoveryManager
-from roma.application.services.context_builder_service import TaskContext
+from roma.domain.context import TaskContext
 
 
 @pytest.fixture
@@ -48,55 +48,6 @@ def aggregator_service(mock_agent_runtime_service, mock_recovery_manager):
     service = AggregatorService(
         agent_runtime_service=mock_agent_runtime_service,
         recovery_manager=mock_recovery_manager
-    )
-
-    # Create mock callbacks
-    def mock_get_parent(parent_id: str):
-        # Return a mock parent node
-        return TaskNode(
-            task_id=parent_id,
-            goal="Parent task",
-            task_type=TaskType.THINK,
-            status=TaskStatus.AGGREGATING,
-            node_type=NodeType.PLAN
-        )
-
-    def mock_get_children(parent_id: str):
-        # Return some mock child nodes
-        return [
-            TaskNode(
-                task_id="child_1",
-                goal="Child task 1",
-                task_type=TaskType.THINK,
-                status=TaskStatus.COMPLETED,
-                node_type=NodeType.EXECUTE
-            ),
-            TaskNode(
-                task_id="child_2",
-                goal="Child task 2",
-                task_type=TaskType.THINK,
-                status=TaskStatus.COMPLETED,
-                node_type=NodeType.EXECUTE
-            )
-        ]
-
-    def mock_get_result(task_id: str):
-        # Return a mock result envelope
-        return None
-
-    async def mock_transition_status(task_id: str, status: TaskStatus):
-        pass
-
-    async def mock_handle_result(result: NodeResult):
-        pass
-
-    # Set up orchestrator callbacks properly
-    service.set_orchestrator_callbacks(
-        get_parent=mock_get_parent,
-        get_children=mock_get_children,
-        get_result=mock_get_result,
-        transition_status=mock_transition_status,
-        handle_result=mock_handle_result
     )
 
     # Mock the recovery manager to return AGGREGATE_ALL for terminal children evaluation
@@ -128,6 +79,7 @@ def sample_context():
             status=TaskStatus.PENDING
         ),
         overall_objective="Complete analysis",
+        execution_id="test-aggregator-execution-id",
         execution_metadata={}
     )
 
@@ -239,95 +191,47 @@ class TestAggregatorService:
             sample_parent_task.task_type, AgentType.AGGREGATOR
         )
 
-    @pytest.mark.asyncio
-    async def test_notify_child_completion_adds_to_queue(self, aggregator_service):
-        """Test that child completion notification adds parent to queue."""
+    def test_queue_aggregation_adds_to_queue(self, aggregator_service):
+        """Test that queuing aggregation adds parent to queue."""
         parent_id = str(uuid4())
 
-        # Notify child completion
-        await aggregator_service.notify_child_completion(parent_id)
+        # Queue aggregation
+        aggregator_service.queue_aggregation(parent_id)
 
         # Verify parent is in queue
         assert len(aggregator_service._aggregation_queue) == 1
-        assert aggregator_service._aggregation_queue[0] == (parent_id, False)
+        assert aggregator_service._aggregation_queue[0] == parent_id
 
-    @pytest.mark.asyncio
-    async def test_notify_child_completion_no_duplicates(self, aggregator_service):
-        """Test that duplicate notifications don't create multiple queue entries."""
+    def test_queue_aggregation_no_duplicates(self, aggregator_service):
+        """Test that duplicate queuing doesn't create multiple queue entries."""
         parent_id = str(uuid4())
 
-        # Notify same parent multiple times
-        await aggregator_service.notify_child_completion(parent_id)
-        await aggregator_service.notify_child_completion(parent_id)
-        await aggregator_service.notify_child_completion(parent_id)
+        # Queue same parent multiple times
+        aggregator_service.queue_aggregation(parent_id)
+        aggregator_service.queue_aggregation(parent_id)
+        aggregator_service.queue_aggregation(parent_id)
 
         # Should only have one entry
         assert len(aggregator_service._aggregation_queue) == 1
-        assert aggregator_service._aggregation_queue[0] == (parent_id, False)
+        assert aggregator_service._aggregation_queue[0] == parent_id
 
-    @pytest.mark.asyncio
-    async def test_process_aggregation_queue_handles_ready_parents(self, aggregator_service, sample_context):
-        """Test processing aggregation queue for ready parents."""
-        parent_id = str(uuid4())
-        child_id = str(uuid4())
+    def test_get_queue_status(self, aggregator_service):
+        """Test getting aggregation queue status."""
+        parent_id1 = str(uuid4())
+        parent_id2 = str(uuid4())
 
-        # Create parent with completed children
-        parent_task = TaskNode(
-            task_id=parent_id,
-            goal="Parent task",
-            task_type=TaskType.THINK,
-            status=TaskStatus.EXECUTING,
-            node_type=NodeType.PLAN
-        )
+        # Queue some parents
+        aggregator_service.queue_aggregation(parent_id1)
+        aggregator_service.queue_aggregation(parent_id2)
 
-        completed_child = TaskNode(
-            task_id=child_id,
-            goal="Child task",
-            task_type=TaskType.THINK,
-            status=TaskStatus.COMPLETED,
-            parent_id=parent_id,
-            result={"output": "Child result"}
-        )
+        # Get queue status
+        status = aggregator_service.get_queue_status()
 
-        # Create a successful result envelope for the child
-        from roma.domain.value_objects.result_envelope import ResultEnvelope, ExecutionMetrics
-        execution_metrics = ExecutionMetrics(
-            execution_time=1.0,
-            tokens_used=100,
-            model_calls=1,
-            cost_estimate=0.01
-        )
-        child_envelope = ResultEnvelope.create_success(
-            result={"output": "Child result"},
-            task_id=child_id,
-            execution_id="test_exec",
-            agent_type=AgentType.EXECUTOR,
-            execution_metrics=execution_metrics
-        )
-
-        # Setup mock callbacks with proper mocks
-        from unittest.mock import MagicMock, AsyncMock
-
-        mock_get_parent = MagicMock(return_value=parent_task)
-        mock_get_children = MagicMock(return_value=[completed_child])
-        mock_get_result = MagicMock(return_value=child_envelope)
-        mock_transition_status = AsyncMock()
-        mock_handle_result = AsyncMock()
-
-        aggregator_service.set_orchestrator_callbacks(
-            get_parent=mock_get_parent,
-            get_children=mock_get_children,
-            get_result=mock_get_result,
-            transition_status=mock_transition_status,
-            handle_result=mock_handle_result
-        )
-
-        # Add to queue and process
-        await aggregator_service.notify_child_completion(parent_id)
-        await aggregator_service.process_aggregation_queue(sample_context)
-
-        # Verify parent status was transitioned to AGGREGATING
-        mock_transition_status.assert_called_with(parent_id, TaskStatus.AGGREGATING)
+        # Verify status
+        assert status["pending_aggregations"] == 2
+        assert len(status["queue_items"]) == 2
+        assert {"parent_id": parent_id1} in status["queue_items"]
+        assert {"parent_id": parent_id2} in status["queue_items"]
 
 
 
@@ -466,11 +370,8 @@ class TestAggregatorService:
     @pytest.mark.asyncio
     async def test_run_with_no_children(self, aggregator_service, sample_parent_task, sample_context):
         """Test aggregator behavior when no children exist."""
-        # Setup no children
-        aggregator_service._get_children_callback.return_value = []
-
-        # Execute the service
-        result = await aggregator_service.run(sample_parent_task, sample_context, execution_id="test_execution")
+        # Execute the service with no child envelopes (None or empty)
+        result = await aggregator_service.run(sample_parent_task, sample_context, execution_id="test_execution", child_envelopes=None)
 
         # Should handle gracefully
         assert result.action == NodeAction.FAIL
@@ -480,24 +381,10 @@ class TestAggregatorService:
     @pytest.mark.asyncio
     async def test_run_with_all_failed_children(self, aggregator_service, sample_parent_task, sample_context):
         """Test aggregator behavior when all children failed."""
-        # Create all failed children
-        failed_children = [
-            TaskNode(
-                task_id=str(uuid4()),
-                goal=f"Failed child {i}",
-                task_type=TaskType.THINK,
-                status=TaskStatus.FAILED,
-                parent_id=sample_parent_task.task_id
-            )
-            for i in range(3)
-        ]
+        # Execute the service with empty child envelopes (simulates all failed children)
+        result = await aggregator_service.run(sample_parent_task, sample_context, execution_id="test_execution", child_envelopes=[])
 
-        aggregator_service._get_children_callback.return_value = failed_children
-
-        # Execute the service
-        result = await aggregator_service.run(sample_parent_task, sample_context, execution_id="test_execution")
-
-        # Should fail when all children failed and partial aggregation disabled
+        # Should fail when all children failed and no results to aggregate
         assert result.action == NodeAction.FAIL
         assert "No child results provided for aggregation" in result.error
 

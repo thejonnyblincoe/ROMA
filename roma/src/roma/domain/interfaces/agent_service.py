@@ -13,7 +13,7 @@ from roma.domain.value_objects.task_type import TaskType
 from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.node_result import NodeResult
 from roma.domain.value_objects.result_envelope import AnyResultEnvelope
-from roma.application.services.context_builder_service import TaskContext
+from roma.domain.context import TaskContext
 
 
 class BaseAgentServiceInterface(ABC):
@@ -30,7 +30,6 @@ class BaseAgentServiceInterface(ABC):
         self,
         task: TaskNode,
         context: TaskContext,
-        execution_id: Optional[str] = None,
         **kwargs
     ) -> NodeResult:
         """
@@ -38,8 +37,7 @@ class BaseAgentServiceInterface(ABC):
 
         Args:
             task: The task node to process
-            context: Task execution context
-            execution_id: Optional execution ID for session isolation
+            context: Task execution context (contains execution_id)
             **kwargs: Service-specific parameters
 
         Returns:
@@ -91,7 +89,6 @@ class AggregatorServiceInterface(BaseAgentServiceInterface):
         self,
         task: TaskNode,
         context: TaskContext,
-        execution_id: Optional[str] = None,
         child_envelopes: List[AnyResultEnvelope] = None,
         is_partial: bool = False,
         **kwargs
@@ -101,8 +98,7 @@ class AggregatorServiceInterface(BaseAgentServiceInterface):
 
         Args:
             task: Parent task being aggregated
-            context: Task context
-            execution_id: Optional execution ID for session isolation
+            context: Task context (contains execution_id)
             child_envelopes: Child result envelopes
             is_partial: Whether this is partial aggregation
             **kwargs: Additional parameters
@@ -122,7 +118,6 @@ class PlanModifierServiceInterface(BaseAgentServiceInterface):
         self,
         task: TaskNode,
         context: TaskContext,
-        execution_id: Optional[str] = None,
         failed_children: List[TaskNode] = None,
         failure_reason: str = None,
         **kwargs
@@ -132,8 +127,7 @@ class PlanModifierServiceInterface(BaseAgentServiceInterface):
 
         Args:
             task: Original parent task
-            context: Task context
-            execution_id: Optional execution ID for session isolation
+            context: Task context (contains execution_id)
             failed_children: Failed child tasks
             failure_reason: Reason for replanning
             **kwargs: Additional parameters
