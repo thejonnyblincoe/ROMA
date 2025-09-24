@@ -283,9 +283,6 @@ class ExecutionOrchestrator:
         Args:
             result: NodeResult to persist
         """
-        if not self.agent_service_registry.has_persistence():
-            return
-
         try:
             execution_history_repo = self.agent_service_registry.get_execution_history_repository()
             if not execution_history_repo:

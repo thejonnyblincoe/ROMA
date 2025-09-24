@@ -11,6 +11,7 @@ Handlers manage state transitions based on service results.
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 
@@ -204,7 +205,7 @@ class FailHandler(NodeActionHandler):
         # Store error in metadata
         error_info = {
             'error': str(result.error) if result.error else 'Unknown error',
-            'failure_timestamp': self.state.execution_metadata.get("execution_timestamp")
+            'failure_timestamp': datetime.now(timezone.utc).isoformat()
         }
 
         # Add any additional metadata from result

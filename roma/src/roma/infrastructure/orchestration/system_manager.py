@@ -462,6 +462,12 @@ class SystemManager:
             # Store execution context
             self._active_contexts[execution_id] = execution_context
 
+            # Create a per-execution deadlock detector bound to the isolated graph
+            execution_deadlock_detector = DeadlockDetector(
+                graph=execution_context.task_graph,
+                stall_threshold_seconds=getattr(self.config.execution, 'deadlock_timeout_seconds', 600)
+            )
+
             # Create execution-specific orchestrator with isolated resources
             execution_orchestrator = ExecutionOrchestrator(
                 graph_state_manager=execution_context.graph_state_manager,
@@ -475,7 +481,7 @@ class SystemManager:
                 recovery_manager=self._recovery_manager,
                 event_publisher=execution_context.event_publisher,
                 execution_config=self.config.execution,
-                deadlock_detector=self._deadlock_detector,
+                deadlock_detector=execution_deadlock_detector,
                 knowledge_store=execution_context.knowledge_store
             )
 

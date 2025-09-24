@@ -330,7 +330,7 @@ class GraphStateManager:
             updated_node = current_node.increment_retry()
 
             # Step 3: Update node in graph
-            await self.graph.update_node(task_id, updated_node)
+            await self.graph.set_node_exact(task_id, updated_node)
 
             # Step 4: Increment manager version after successful update
             self.version += 1

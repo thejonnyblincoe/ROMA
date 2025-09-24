@@ -21,8 +21,8 @@ from .domain.value_objects.agent_responses import AtomizerResult
 # Application services
 from .application.services.event_store import InMemoryEventStore, emit_event, get_event_store
 
-# Framework entry
-from .framework_entry import SentientAgent, ProfiledSentientAgent, LightweightSentientAgent
+# Framework entry imports moved to prevent circular dependency
+# Import these directly from roma.framework_entry when needed
 
 # Event types
 from .domain.events.task_events import (

@@ -411,6 +411,86 @@ class ParallelExecutionEngine:
             # Re-raise exception to be handled by caller at higher level
             raise e
 
+    async def _build_per_node_context(
+        self,
+        node: TaskNode,
+        base_context: TaskContext,
+        execution_state: ExecutionState
+    ) -> TaskContext:
+        """
+        Build a per-node TaskContext using the configured ContextBuilderService.
+
+        Falls back to the provided base_context if no builder is available.
+        """
+        # If no context builder configured, return base context
+        if not getattr(self, "context_builder", None):
+            return base_context
+
+        # Prepare lineage-derived results
+        parent_results = []
+        sibling_results = []
+        child_results = []
+
+        # Parent
+        try:
+            if node.parent_id:
+                parent_env = await execution_state.get_cached_result(node.parent_id)
+                if parent_env is not None:
+                    try:
+                        parent_results.append(parent_env.extract_primary_output())
+                    except Exception:
+                        parent_results.append(str(parent_env))
+        except Exception as e:
+            logger.debug(f"Parent context build failed for {node.task_id}: {e}")
+
+        # Siblings
+        try:
+            siblings = []
+            if hasattr(self.state_manager, "graph") and self.state_manager.graph:
+                siblings = self.state_manager.graph.get_siblings(node.task_id)
+            for sid in siblings:
+                env = await execution_state.get_cached_result(str(sid))
+                if env is not None:
+                    try:
+                        sibling_results.append(env.extract_primary_output())
+                    except Exception:
+                        sibling_results.append(str(env))
+        except Exception as e:
+            logger.debug(f"Sibling context build failed for {node.task_id}: {e}")
+
+        # Children (completed)
+        try:
+            children_nodes = self.state_manager.get_children_nodes(node.task_id)
+            for c in children_nodes:
+                if execution_state.is_node_completed(c.task_id):
+                    env = await execution_state.get_cached_result(c.task_id)
+                    if env is not None:
+                        try:
+                            child_results.append(env.extract_primary_output())
+                        except Exception:
+                            child_results.append(str(env))
+        except Exception as e:
+            logger.debug(f"Child context build failed for {node.task_id}: {e}")
+
+        # Execution metadata
+        exec_meta = dict(getattr(base_context, "execution_metadata", {}) or {})
+        try:
+            exec_meta.setdefault("execution_id", execution_state.execution_id)
+        except Exception:
+            pass
+        from datetime import datetime, timezone
+        exec_meta["execution_timestamp"] = datetime.now(timezone.utc).isoformat()
+
+        # Build final context via service
+        return await self.context_builder.build_context(
+            task=node,
+            overall_objective=base_context.overall_objective,
+            parent_results=parent_results or None,
+            sibling_results=sibling_results or None,
+            child_results=child_results or None,
+            execution_metadata=exec_meta
+        )
+
     async def get_execution_stats(self) -> ParallelExecutionStats:
         """Get execution statistics with thread safety."""
         async with self._stats_lock:

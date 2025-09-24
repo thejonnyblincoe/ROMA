@@ -165,6 +165,7 @@ class ContextBuilderService:
                 context_items.append(
                     ContextItem.from_artifact(
                         artifact=artifact,
+                        item_type=artifact.get_context_item_type(),
                         priority=50
                     )
                 )
@@ -327,7 +328,7 @@ class ContextBuilderService:
             priority += 3  # Parent results are highly relevant
         elif item.item_type == ContextItemType.SIBLING_RESULT:
             priority += 2  # Sibling results are moderately relevant
-        elif item.item_type == ContextItemType.TEXT_CONTENT:
+        elif item.item_type == ContextItemType.REFERENCE_TEXT:
             priority += 1  # Text content is somewhat relevant
 
         # Boost recent items (if timestamp available)
