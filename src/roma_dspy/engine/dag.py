@@ -176,34 +176,58 @@ class TaskDAG:
         self.graph.nodes[task.task_id]['updated_at'] = datetime.now()
         self.metadata['updated_at'] = datetime.now()
 
-    def get_ready_tasks(self) -> List[TaskNode]:
+    def get_ready_tasks(self, include_subgraphs: bool = False) -> List[TaskNode]:
         """
-        Get all tasks that are ready to execute (dependencies satisfied).
+        Get tasks that can be processed immediately (dependencies satisfied).
+
+        Args:
+            include_subgraphs: Whether to include ready tasks from nested subgraphs
 
         Returns:
             List of TaskNode instances ready for execution
         """
-        ready_tasks = []
+        ready_tasks: List[TaskNode] = []
 
         for node_id in self.graph.nodes():
-            task = self.get_node(node_id)
+            task = self.graph.nodes[node_id]['task']
 
-            # Skip if not in READY state
-            if task.status != TaskStatus.READY:
+            if task.status not in {TaskStatus.PENDING, TaskStatus.READY}:
                 continue
 
-            # Check if all dependencies are completed
-            dependencies_satisfied = True
-            for pred_id in self.graph.predecessors(node_id):
-                pred_task = self.get_node(pred_id)
-                if pred_task.status != TaskStatus.COMPLETED:
-                    dependencies_satisfied = False
-                    break
-
-            if dependencies_satisfied:
+            if self._dependencies_satisfied(node_id):
                 ready_tasks.append(task)
 
+        if include_subgraphs:
+            for subgraph in self.subgraphs.values():
+                ready_tasks.extend(subgraph.get_ready_tasks(include_subgraphs=True))
+
         return ready_tasks
+
+    def iter_ready_nodes(self) -> List[Tuple[TaskNode, 'TaskDAG']]:
+        """Return ready tasks paired with the DAG that owns them."""
+
+        ready_pairs: List[Tuple[TaskNode, 'TaskDAG']] = []
+
+        for node_id in self.graph.nodes():
+            task = self.graph.nodes[node_id]['task']
+            if task.status not in {TaskStatus.PENDING, TaskStatus.READY}:
+                continue
+            if self._dependencies_satisfied(node_id):
+                ready_pairs.append((task, self))
+
+        for subgraph in self.subgraphs.values():
+            ready_pairs.extend(subgraph.iter_ready_nodes())
+
+        return ready_pairs
+
+    def _dependencies_satisfied(self, node_id: str) -> bool:
+        """Check whether all predecessors for a node have completed."""
+
+        for pred_id in self.graph.predecessors(node_id):
+            pred_task = self.graph.nodes[pred_id]['task']
+            if pred_task.status != TaskStatus.COMPLETED:
+                return False
+        return True
 
     def get_execution_order(self) -> List[str]:
         """
@@ -412,3 +436,87 @@ class TaskDAG:
             }
 
         return result
+
+    # ------------------------------------------------------------------
+    # Scheduling helpers (async wrappers to support event scheduler)
+    # ------------------------------------------------------------------
+
+    async def pop_ready_tasks(self) -> List[TaskNode]:
+        """Async wrapper returning tasks whose dependencies are satisfied."""
+
+        return [node for node, _ in self.iter_ready_nodes()]
+
+    async def mark_completed(self, task_id: str, result: Optional[Any] = None) -> TaskNode:
+        """Mark a task as completed and persist the update in the DAG."""
+
+        task = self.get_node(task_id)
+
+        updated = task
+        if result is not None:
+            updated = task.with_result(result)
+        else:
+            updated = task.transition_to(TaskStatus.COMPLETED)
+
+        self.update_node(updated)
+        return updated
+
+    async def mark_failed(self, task_id: str, error: Optional[Any] = None) -> TaskNode:
+        """Mark a task as failed; metadata can carry error context."""
+
+        task = self.get_node(task_id)
+        metadata = {"error": error} if error is not None else {}
+        updated = task.transition_to(TaskStatus.FAILED, transition_metadata=metadata)
+        self.update_node(updated)
+        return updated
+
+    async def check_subgraph_complete(
+        self,
+        task_id: str
+    ) -> Optional[Tuple[TaskNode, 'TaskDAG']]:
+        """Return parent task and owning DAG if its subgraph has completed."""
+
+        task = self.get_node(task_id)
+        if not task.parent_id:
+            return None
+
+        parent_dag = self.parent_dag or self
+        parent_node = parent_dag.get_node(task.parent_id)
+
+        if not parent_node.subgraph_id:
+            return None
+
+        subgraph = parent_dag.get_subgraph(parent_node.subgraph_id)
+        if not subgraph:
+            return None
+
+        if subgraph.is_dag_complete():
+            return parent_node, parent_dag
+
+        return None
+
+    def find_dag(self, dag_id: str) -> Optional['TaskDAG']:
+        """Locate a DAG (self or subgraph) by ID."""
+
+        if self.dag_id == dag_id:
+            return self
+
+        for subgraph in self.subgraphs.values():
+            located = subgraph.find_dag(dag_id)
+            if located is not None:
+                return located
+
+        return None
+
+    def find_node(self, task_id: str) -> Tuple[TaskNode, 'TaskDAG']:
+        """Locate a task within this DAG hierarchy and return owning DAG."""
+
+        if task_id in self.graph:
+            return self.get_node(task_id), self
+
+        for subgraph in self.subgraphs.values():
+            try:
+                return subgraph.find_node(task_id)
+            except ValueError:
+                continue
+
+        raise ValueError(f"Task {task_id} not found in DAG hierarchy")
