@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
-from src.roma_dspy.types.node_type import NodeType
-from src.roma_dspy.signatures.base_models.subtask import SubTask
+from ....types import NodeType
+from .subtask import SubTask
 
 class AtomizerResponse(BaseModel):
     """

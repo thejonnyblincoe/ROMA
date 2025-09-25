@@ -15,8 +15,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 import dspy
-from src.roma_dspy.engine.solve import RecursiveSolver
-from src.roma_dspy.visualizer import (
+from roma_dspy import RecursiveSolver
+from roma_dspy.visualizer import (
     HierarchicalVisualizer,
     RealTimeVisualizer,
     TreeVisualizer,

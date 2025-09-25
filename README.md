@@ -59,15 +59,8 @@ The following example mirrors a typical orchestration loop. It uses three differ
 
 ```python
 import dspy
-from src.roma_dspy.modules import (
-    Aggregator,
-    Atomizer,
-    Executor,
-    Planner,
-    Verifier,
-)
-from src.roma_dspy.signatures.base_models.subtask import SubTask
-from src.roma_dspy.types.task_type import TaskType
+from roma_dspy import Aggregator, Atomizer, Executor, Planner, Verifier, SubTask
+from roma_dspy.types import TaskType
 
 # Optional tool that the Executor may call
 def get_weather(city: str) -> str:
@@ -154,7 +147,7 @@ All modules inherit from `BaseModule`, located at `src/roma_dspy/modules/base_mo
 When you instantiate a module, you can either provide an existing `dspy.LM` or let the module build one from a provider string (`model`) and optional keyword arguments (`model_config`).
 
 ```python
-from src.roma_dspy.modules import Executor
+from roma_dspy import Executor
 
 executor = Executor(
     model="openrouter/openai/gpt-4o-mini",
@@ -185,7 +178,7 @@ executor.forward("What is the weather in Amman?", tools=[another_function])
 ROMA exposes DSPy’s strategies through the `PredictionStrategy` enum (`src/roma_dspy/types/prediction_strategy.py`). Use either the enum or a case-insensitive string alias:
 
 ```python
-from src.roma_dspy.types.prediction_strategy import PredictionStrategy
+from roma_dspy.types import PredictionStrategy
 
 planner = Planner(prediction_strategy=PredictionStrategy.CHAIN_OF_THOUGHT)
 executor = Executor(prediction_strategy="react")
@@ -377,7 +370,7 @@ executor.forward(
 If you want deterministic tool routing, you can set a dummy LM (or a very low-temperature model) and pass pure Python callables.
 
 ```python
-from src.roma_dspy.modules import Executor
+from roma_dspy import Executor
 
 executor = Executor(
     prediction_strategy="code_act",

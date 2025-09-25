@@ -1,11 +1,12 @@
-# /Users/salahalzubi/cursor_projects/ROMA-DSPy/src/roma_dspy/modules/base_module.py
+"""Shared base class for ROMA-DSPy DSPy modules."""
+
 from __future__ import annotations
 
 import dspy
 import inspect
 from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping, List
 
-from src.roma_dspy.types.prediction_strategy import PredictionStrategy
+from ...types import PredictionStrategy
 
 
 class BaseModule(dspy.Module):

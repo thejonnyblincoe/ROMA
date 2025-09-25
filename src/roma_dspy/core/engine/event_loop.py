@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional, Set, Tuple
 
-from src.roma_dspy.engine.dag import TaskDAG
-from src.roma_dspy.engine.events import EventType, TaskEvent
-from src.roma_dspy.engine.runtime import ModuleRuntime
-from src.roma_dspy.engine.scheduler import EventScheduler
-from src.roma_dspy.signatures import TaskNode
-from src.roma_dspy.types import TaskStatus
+from .dag import TaskDAG
+from .events import EventType, TaskEvent
+from .runtime import ModuleRuntime
+from .scheduler import EventScheduler
+from ..signatures import TaskNode
+from ...types import TaskStatus
 
 logger = logging.getLogger(__name__)
 

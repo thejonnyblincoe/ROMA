@@ -1,18 +1,17 @@
-"""Aggregator module for result synthesis."""
+"""Verifier module for result validation."""
 
 from __future__ import annotations
 
 import dspy
 from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping
 
-from src.roma_dspy.modules.base_module import BaseModule
-from src.roma_dspy.signatures.base_models.subtask import SubTask
-from src.roma_dspy.signatures.signatures import AggregatorResult
-from src.roma_dspy.types.prediction_strategy import PredictionStrategy
+from .base_module import BaseModule
+from ..signatures.signatures import VerifierSignature
+from ...types import PredictionStrategy
 
 
-class Aggregator(BaseModule):
-    """Aggregates results from subtasks."""
+class Verifier(BaseModule):
+    """Verifies task execution results."""
 
     def __init__(
         self,
@@ -25,7 +24,7 @@ class Aggregator(BaseModule):
         **strategy_kwargs: Any,
     ) -> None:
         super().__init__(
-            signature=AggregatorResult,
+            signature=VerifierSignature,
             prediction_strategy=prediction_strategy,
             lm=lm,
             model=model,
@@ -36,8 +35,8 @@ class Aggregator(BaseModule):
 
     def forward(
         self,
-        original_goal: str,
-        subtasks_results: Sequence[SubTask],
+        goal: str,
+        candidate_output: str,
         *,
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
         config: Optional[Dict[str, Any]] = None,
@@ -64,16 +63,12 @@ class Aggregator(BaseModule):
         filtered = self._filter_kwargs(target_method, extra)
 
         with dspy.context(**ctx):
-            return self._predictor(
-                original_goal=original_goal,
-                subtasks_results=list(subtasks_results),
-                **filtered,
-            )
+            return self._predictor(goal=goal, candidate_output=candidate_output, **filtered)
 
     async def aforward(
         self,
-        original_goal: str,
-        subtasks_results: Sequence[SubTask],
+        goal: str,
+        candidate_output: str,
         *,
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
         config: Optional[Dict[str, Any]] = None,
@@ -101,7 +96,7 @@ class Aggregator(BaseModule):
 
         with dspy.context(**ctx):
             acall = getattr(self._predictor, "acall", None)
-            payload = dict(original_goal=original_goal, subtasks_results=list(subtasks_results))
+            payload = dict(goal=goal, candidate_output=candidate_output)
             if acall is not None and hasattr(self._predictor, "aforward"):
                 return await acall(**payload, **filtered)
             if acall is not None:
@@ -116,7 +111,7 @@ class Aggregator(BaseModule):
         model: str,
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
         **model_config: Any,
-    ) -> "Aggregator":
+    ) -> "Verifier":
         return cls(
             prediction_strategy,
             model=model,

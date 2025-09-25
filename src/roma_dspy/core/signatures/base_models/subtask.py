@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from src.roma_dspy.types.task_type import TaskType
+from ....types import TaskType
 
 
 class SubTask(BaseModel):

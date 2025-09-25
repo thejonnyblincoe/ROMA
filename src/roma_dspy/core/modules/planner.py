@@ -1,17 +1,17 @@
-"""Executor module for task execution and tool routing."""
+"""Planner module for execution planning."""
 
 from __future__ import annotations
 
 import dspy
-from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping, List
+from typing import Union, Any, Optional, Mapping, Sequence, Mapping as TMapping
 
-from src.roma_dspy.signatures.signatures import ExecutorSignature
-from src.roma_dspy.types.prediction_strategy import PredictionStrategy
-from src.roma_dspy.modules.base_module import BaseModule
+from .base_module import BaseModule
+from ..signatures.signatures import PlannerSignature
+from ...types import PredictionStrategy
 
 
-class Executor(BaseModule):
-    """Executes atomic tasks and routes to tools."""
+class Planner(BaseModule):
+    """Plans task execution strategy."""
 
     def __init__(
         self,
@@ -24,7 +24,7 @@ class Executor(BaseModule):
         **strategy_kwargs: Any,
     ) -> None:
         super().__init__(
-            signature=ExecutorSignature,
+            signature=PlannerSignature,
             prediction_strategy=prediction_strategy,
             lm=lm,
             model=model,
@@ -41,7 +41,7 @@ class Executor(BaseModule):
         model: str,
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
         **model_config: Any,
-    ) -> "Executor":
+    ) -> "Planner":
         return cls(
             prediction_strategy,
             model=model,

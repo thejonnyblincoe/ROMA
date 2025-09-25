@@ -5,9 +5,9 @@ from __future__ import annotations
 import dspy
 from typing import Union, Any, Optional, Mapping, Sequence, Mapping as TMapping
 
-from src.roma_dspy.modules.base_module import BaseModule
-from src.roma_dspy.signatures.signatures import AtomizerSignature
-from src.roma_dspy.types.prediction_strategy import PredictionStrategy
+from .base_module import BaseModule
+from ..signatures.signatures import AtomizerSignature
+from ...types import PredictionStrategy
 
 
 class Atomizer(BaseModule):

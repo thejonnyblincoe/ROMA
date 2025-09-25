@@ -6,10 +6,10 @@ import asyncio
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Iterable, List, Optional
 
-from src.roma_dspy.engine.dag import TaskDAG
-from src.roma_dspy.modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from src.roma_dspy.signatures import SubTask, TaskNode
-from src.roma_dspy.types import ModuleResult, NodeType, TaskStatus
+from .dag import TaskDAG
+from ..modules import Aggregator, Atomizer, Executor, Planner, Verifier
+from ..signatures import SubTask, TaskNode
+from ...types import ModuleResult, NodeType, TaskStatus
 
 
 SolveFn = Callable[[TaskNode, TaskDAG, int], TaskNode]

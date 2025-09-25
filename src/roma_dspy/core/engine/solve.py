@@ -9,12 +9,12 @@ from typing import Callable, Optional, Union, Tuple
 
 import dspy
 
-from src.roma_dspy.engine import TaskDAG
-from src.roma_dspy.engine.event_loop import EventLoopController
-from src.roma_dspy.engine.runtime import ModuleRuntime
-from src.roma_dspy.modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from src.roma_dspy.signatures import TaskNode
-from src.roma_dspy.types import TaskStatus
+from .dag import TaskDAG
+from .event_loop import EventLoopController
+from .runtime import ModuleRuntime
+from ..modules import Aggregator, Atomizer, Executor, Planner, Verifier
+from ..signatures import TaskNode
+from ...types import TaskStatus
 
 # Configure logging
 logger = logging.getLogger(__name__)

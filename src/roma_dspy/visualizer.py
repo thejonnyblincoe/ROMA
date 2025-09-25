@@ -10,15 +10,42 @@ Provides multiple visualization modes for understanding the solver's execution:
 
 import json
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Set
+from typing import Dict, Any, Optional, List, Set, Tuple
 from enum import Enum
 import time
 from collections import defaultdict
 
-from src.roma_dspy.signatures.base_models.task_node import TaskNode
-from src.roma_dspy.types.task_status import TaskStatus
-from src.roma_dspy.types.node_type import NodeType
-from src.roma_dspy.engine.dag import TaskDAG
+from .core.signatures.base_models.task_node import TaskNode
+from .types import TaskStatus, NodeType
+from .core.engine.dag import TaskDAG
+
+
+def _resolve_visualization_inputs(
+    source: Optional[Any],
+    dag: Optional[TaskDAG]
+) -> Tuple[Optional[TaskDAG], Optional[TaskNode]]:
+    """Resolve caller input into a TaskDAG and optional root task."""
+    resolved_dag = dag
+    root_task: Optional[TaskNode] = None
+
+    if isinstance(source, TaskDAG):
+        resolved_dag = source
+    elif isinstance(source, TaskNode):
+        root_task = source
+    elif source is not None:
+        resolved_dag = dag or getattr(source, "last_dag", None)
+
+    if resolved_dag and root_task is None and hasattr(resolved_dag, "graph"):
+        try:
+            for node_id in resolved_dag.graph.nodes():
+                candidate = resolved_dag.get_node(node_id)
+                if candidate.is_root:
+                    root_task = candidate
+                    break
+        except Exception:
+            pass
+
+    return resolved_dag, root_task
 
 
 class ColorCode(Enum):
@@ -261,23 +288,25 @@ class TreeVisualizer:
         self.show_timing = show_timing
         self.rt_viz = RealTimeVisualizer(use_colors=use_colors)  # Reuse color methods
 
-    def visualize(self, solver, dag: Optional[TaskDAG] = None) -> str:
+    def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> str:
         """
         Generate tree visualization from solver's last DAG.
 
         Args:
-            solver: RecursiveSolver instance with completed execution
-            dag: Optional DAG to visualize (defaults to solver.last_dag)
+            source: RecursiveSolver, TaskDAG, or TaskNode to visualize
+            dag: Optional DAG to visualize (defaults to solver.last_dag if available)
 
         Returns:
             String representation of the tree
         """
-        dag = dag or solver.last_dag
-        if not dag:
+        dag, root_task = _resolve_visualization_inputs(source, dag)
+
+        if not dag and root_task is None:
             return "No execution data available. Run solve() first."
 
         # Find root task
-        root_task = self._find_root_task(dag)
+        if root_task is None and dag:
+            root_task = self._find_root_task(dag)
         if not root_task:
             return "No root task found in DAG."
 
@@ -293,7 +322,13 @@ class TreeVisualizer:
         # Add statistics
         lines.append("")
         lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
-        lines.extend(self._generate_statistics(dag))
+        if dag:
+            lines.extend(self._generate_statistics(dag))
+        else:
+            lines.append(self.rt_viz.color(
+                "Detailed statistics unavailable without TaskDAG context.",
+                ColorCode.DIM
+            ))
 
         return "\n".join(lines)
 
@@ -305,7 +340,7 @@ class TreeVisualizer:
                 return task
         return None
 
-    def _build_tree(self, task: TaskNode, dag: TaskDAG, lines: List[str],
+    def _build_tree(self, task: TaskNode, dag: Optional[TaskDAG], lines: List[str],
                     depth: int, visited: Set[str], is_last: bool, prefix: str):
         """Recursively build tree representation."""
         if task.task_id in visited:
@@ -442,18 +477,19 @@ class TimelineVisualizer:
         self.width = width
         self.events: List[Dict[str, Any]] = []
 
-    def visualize(self, solver, dag: Optional[TaskDAG] = None) -> str:
+    def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> str:
         """
         Generate timeline visualization from execution events.
 
         Args:
-            solver: RecursiveSolver instance
-            dag: Optional DAG (defaults to solver.last_dag)
+            source: RecursiveSolver, TaskDAG, or TaskNode instance
+            dag: Optional DAG (defaults to solver.last_dag if available)
 
         Returns:
             String representation of the timeline
         """
-        dag = dag or solver.last_dag
+        dag, _ = _resolve_visualization_inputs(source, dag)
+        self.events = []
         if not dag:
             return "No execution data available."
 
@@ -555,18 +591,18 @@ class StatisticsVisualizer:
         """Initialize statistics visualizer."""
         self.stats = {}
 
-    def visualize(self, solver, dag: Optional[TaskDAG] = None) -> str:
+    def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> str:
         """
         Generate detailed statistics visualization.
 
         Args:
-            solver: RecursiveSolver instance
-            dag: Optional DAG (defaults to solver.last_dag)
+            source: RecursiveSolver, TaskDAG, or TaskNode instance
+            dag: Optional DAG (defaults to solver.last_dag if available)
 
         Returns:
             Formatted statistics string
         """
-        dag = dag or solver.last_dag
+        dag, _ = _resolve_visualization_inputs(source, dag)
         if not dag:
             return "No execution data available."
 

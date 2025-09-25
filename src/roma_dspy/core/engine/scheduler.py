@@ -6,9 +6,9 @@ import asyncio
 from collections import defaultdict
 from typing import Awaitable, Callable, Dict, Optional
 
-from src.roma_dspy.engine.dag import TaskDAG
-from src.roma_dspy.engine.events import EventType, TaskEvent
-from src.roma_dspy.signatures.base_models.task_node import TaskNode
+from .dag import TaskDAG
+from .events import EventType, TaskEvent
+from ..signatures.base_models.task_node import TaskNode
 
 
 EventHandler = Callable[[TaskEvent], Awaitable[Optional[TaskEvent]]]
