@@ -5,26 +5,34 @@ Tests the aggregator service functionality including child result aggregation,
 queue management, and partial aggregation logic.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock
-from uuid import uuid4
 from collections import deque
+from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
+import pytest
+
+from roma.application.services.agent_runtime_service import AgentRuntimeService
+from roma.application.services.aggregator_service import AggregatorService
+from roma.application.services.recovery_manager import (
+    RecoveryAction,
+    RecoveryManager,
+    RecoveryResult,
+)
+from roma.domain.context import TaskContext
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.agent_responses import AggregatorResult, ExecutorResult
 from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.child_evaluation_result import ChildEvaluationResult
 from roma.domain.value_objects.node_action import NodeAction
 from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.agent_responses import AggregatorResult, ExecutorResult
-from roma.domain.value_objects.result_envelope import AggregatorEnvelope, ExecutorEnvelope, ExecutionMetrics
-from roma.domain.value_objects.child_evaluation_result import ChildEvaluationResult
-from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
-from roma.application.services.aggregator_service import AggregatorService
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager
-from roma.domain.context import TaskContext
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.result_envelope import (
+    AggregatorEnvelope,
+    ExecutionMetrics,
+    ExecutorEnvelope,
+)
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 @pytest.fixture
@@ -325,7 +333,7 @@ class TestAggregatorService:
         )
 
         # Create child envelope for aggregation
-        from roma.domain.value_objects.result_envelope import ResultEnvelope, ExecutionMetrics
+        from roma.domain.value_objects.result_envelope import ExecutionMetrics, ResultEnvelope
         execution_metrics = ExecutionMetrics(
             execution_time=1.0,
             tokens_used=100,

@@ -8,11 +8,10 @@ audio formats, content sources (URL, filepath, bytes), and validation.
 import base64
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, List
-from uuid import uuid4
+from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+from pydantic import ConfigDict, field_validator, model_validator
 
 from roma.domain.entities.artifacts.base_artifact import BaseArtifact
 from roma.domain.value_objects.media_type import MediaType
@@ -39,22 +38,22 @@ class AudioArtifact(BaseArtifact):
     model_config = ConfigDict(frozen=True)
 
     # Audio-specific fields following Agno pattern
-    url: Optional[str] = None
-    filepath: Optional[Union[str, Path]] = None
-    content: Optional[bytes] = None
+    url: str | None = None
+    filepath: str | Path | None = None
+    content: bytes | None = None
 
     # Audio metadata
-    format: Optional[str] = None  # e.g., "MP3", "WAV", "FLAC"
+    format: str | None = None  # e.g., "MP3", "WAV", "FLAC"
     mime_type: str = "audio/mpeg"
-    duration_seconds: Optional[float] = None
-    sample_rate: Optional[int] = None
-    channels: Optional[int] = None
+    duration_seconds: float | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
 
     # Validation metadata
     _content_loaded: bool = False
 
-    @model_validator(mode='after')
-    def validate_content_sources(self) -> 'AudioArtifact':
+    @model_validator(mode="after")
+    def validate_content_sources(self) -> "AudioArtifact":
         """Validate exactly one content source is provided (Agno pattern)."""
         sources = [self.url, self.filepath, self.content]
         provided_sources = [s for s in sources if s is not None]
@@ -66,13 +65,19 @@ class AudioArtifact(BaseArtifact):
 
         return self
 
-    @field_validator('mime_type')
+    @field_validator("mime_type")
     @classmethod
     def validate_mime_type(cls, v: str) -> str:
         """Validate MIME type is audio-related."""
         valid_mime_types = [
-            'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/flac',
-            'audio/ogg', 'audio/aac', 'audio/m4a', 'audio/webm'
+            "audio/mpeg",
+            "audio/mp3",
+            "audio/wav",
+            "audio/flac",
+            "audio/ogg",
+            "audio/aac",
+            "audio/m4a",
+            "audio/webm",
         ]
 
         if v not in valid_mime_types:
@@ -80,9 +85,9 @@ class AudioArtifact(BaseArtifact):
 
         return v
 
-    @field_validator('filepath')
+    @field_validator("filepath")
     @classmethod
-    def validate_filepath(cls, v: Optional[Union[str, Path]]) -> Optional[Path]:
+    def validate_filepath(cls, v: str | Path | None) -> Path | None:
         """Convert string paths to Path objects."""
         if v is None:
             return None
@@ -90,7 +95,7 @@ class AudioArtifact(BaseArtifact):
         path = Path(v) if isinstance(v, str) else v
 
         # Check file extension for common audio formats
-        if path.suffix.lower() not in ['.mp3', '.wav', '.flac', '.ogg', '.aac', '.m4a', '.webm']:
+        if path.suffix.lower() not in [".mp3", ".wav", ".flac", ".ogg", ".aac", ".m4a", ".webm"]:
             logger.warning(f"File extension {path.suffix} may not be a supported audio format")
 
         return path
@@ -100,7 +105,7 @@ class AudioArtifact(BaseArtifact):
         """Get the media type for this artifact."""
         return MediaType.AUDIO
 
-    async def get_content(self) -> Optional[bytes]:
+    async def get_content(self) -> bytes | None:
         """
         Get the raw audio content bytes (Agno pattern).
 
@@ -120,20 +125,19 @@ class AudioArtifact(BaseArtifact):
             logger.error(f"Failed to load audio content: {e}")
             return None
 
-    async def _load_from_file(self) -> Optional[bytes]:
+    async def _load_from_file(self) -> bytes | None:
         """Load audio content from file."""
         try:
             if not self.filepath.exists():
                 logger.error(f"Audio file not found: {self.filepath}")
                 return None
 
-            with open(self.filepath, 'rb') as f:
-                return f.read()
+            return self.filepath.read_bytes()
         except Exception as e:
             logger.error(f"Error reading audio file {self.filepath}: {e}")
             return None
 
-    async def _load_from_url(self) -> Optional[bytes]:
+    async def _load_from_url(self) -> bytes | None:
         """Load audio content from URL."""
         try:
             async with httpx.AsyncClient() as client:
@@ -141,8 +145,8 @@ class AudioArtifact(BaseArtifact):
                 response.raise_for_status()
 
                 # Validate content type
-                content_type = response.headers.get('content-type', '')
-                if not content_type.startswith('audio/'):
+                content_type = response.headers.get("content-type", "")
+                if not content_type.startswith("audio/"):
                     logger.warning(f"URL content type {content_type} is not audio")
 
                 return response.content
@@ -170,15 +174,15 @@ class AudioArtifact(BaseArtifact):
             parts.append(f"{channel_desc}")
 
         if self.url:
-            parts.append(f"source=URL")
+            parts.append("source=URL")
         elif self.filepath:
             parts.append(f"source=file({self.filepath.name})")
         else:
-            parts.append(f"source=bytes")
+            parts.append("source=bytes")
 
         return ", ".join(parts)
 
-    def get_size_bytes(self) -> Optional[int]:
+    def get_size_bytes(self) -> int | None:
         """Get audio size in bytes."""
         if self.content:
             return len(self.content)
@@ -194,48 +198,46 @@ class AudioArtifact(BaseArtifact):
             return True
         elif self.filepath:
             return self.filepath.exists() and self.filepath.is_file()
-        elif self.url:
-            # Assume URL is accessible - would need async check to verify
-            return True
         else:
-            return False
+            # URL is accessible if it exists - would need async check to fully verify
+            return self.url is not None
 
     def get_mime_type(self) -> str:
         """Get MIME type of the audio."""
         return self.mime_type
 
-    def get_file_extension(self) -> Optional[str]:
+    def get_file_extension(self) -> str | None:
         """Get file extension based on format."""
         if self.filepath:
             return self.filepath.suffix.lower()
         elif self.format:
             format_to_ext = {
-                'MP3': '.mp3',
-                'MPEG': '.mp3',
-                'WAV': '.wav',
-                'WAVE': '.wav',
-                'FLAC': '.flac',
-                'OGG': '.ogg',
-                'AAC': '.aac',
-                'M4A': '.m4a',
-                'WEBM': '.webm'
+                "MP3": ".mp3",
+                "MPEG": ".mp3",
+                "WAV": ".wav",
+                "WAVE": ".wav",
+                "FLAC": ".flac",
+                "OGG": ".ogg",
+                "AAC": ".aac",
+                "M4A": ".m4a",
+                "WEBM": ".webm",
             }
             return format_to_ext.get(self.format.upper())
         else:
             # Try to infer from MIME type
             mime_to_ext = {
-                'audio/mpeg': '.mp3',
-                'audio/mp3': '.mp3',
-                'audio/wav': '.wav',
-                'audio/flac': '.flac',
-                'audio/ogg': '.ogg',
-                'audio/aac': '.aac',
-                'audio/m4a': '.m4a',
-                'audio/webm': '.webm'
+                "audio/mpeg": ".mp3",
+                "audio/mp3": ".mp3",
+                "audio/wav": ".wav",
+                "audio/flac": ".flac",
+                "audio/ogg": ".ogg",
+                "audio/aac": ".aac",
+                "audio/m4a": ".m4a",
+                "audio/webm": ".webm",
             }
             return mime_to_ext.get(self.mime_type)
 
-    async def to_base64(self, include_data_url: bool = False) -> Optional[str]:
+    async def to_base64(self, include_data_url: bool = False) -> str | None:
         """
         Convert audio content to base64 string (Agno pattern).
 
@@ -249,7 +251,7 @@ class AudioArtifact(BaseArtifact):
         if not content:
             return None
 
-        b64_str = base64.b64encode(content).decode('utf-8')
+        b64_str = base64.b64encode(content).decode("utf-8")
 
         if include_data_url:
             return f"data:{self.mime_type};base64,{b64_str}"
@@ -258,12 +260,8 @@ class AudioArtifact(BaseArtifact):
 
     @classmethod
     def from_base64(
-        cls,
-        base64_str: str,
-        name: str,
-        mime_type: str = "audio/mpeg",
-        **kwargs: Any
-    ) -> 'AudioArtifact':
+        cls, base64_str: str, name: str, mime_type: str = "audio/mpeg", **kwargs: Any
+    ) -> "AudioArtifact":
         """
         Create AudioArtifact from base64 string (Agno pattern).
 
@@ -277,34 +275,25 @@ class AudioArtifact(BaseArtifact):
             New AudioArtifact instance
         """
         # Handle data URL format
-        if base64_str.startswith('data:'):
+        if base64_str.startswith("data:"):
             # Extract MIME type and base64 data
-            header, b64_data = base64_str.split(',', 1)
-            if ';base64' in header:
-                mime_type = header.split(';')[0].split(':')[1]
+            header, b64_data = base64_str.split(",", 1)
+            if ";base64" in header:
+                mime_type = header.split(";")[0].split(":")[1]
             base64_str = b64_data
 
         # Decode base64 to bytes
         try:
             content_bytes = base64.b64decode(base64_str)
         except Exception as e:
-            raise ValueError(f"Invalid base64 data: {e}")
+            raise ValueError(f"Invalid base64 data: {e}") from e
 
-        return cls(
-            name=name,
-            content=content_bytes,
-            mime_type=mime_type,
-            **kwargs
-        )
+        return cls(name=name, content=content_bytes, mime_type=mime_type, **kwargs)
 
     @classmethod
     def from_url(
-        cls,
-        url: str,
-        name: str,
-        mime_type: str = "audio/mpeg",
-        **kwargs: Any
-    ) -> 'AudioArtifact':
+        cls, url: str, name: str, mime_type: str = "audio/mpeg", **kwargs: Any
+    ) -> "AudioArtifact":
         """
         Create AudioArtifact from URL (Agno pattern).
 
@@ -317,21 +306,16 @@ class AudioArtifact(BaseArtifact):
         Returns:
             New AudioArtifact instance
         """
-        return cls(
-            name=name,
-            url=url,
-            mime_type=mime_type,
-            **kwargs
-        )
+        return cls(name=name, url=url, mime_type=mime_type, **kwargs)
 
     @classmethod
     def from_file(
         cls,
-        filepath: Union[str, Path],
-        name: Optional[str] = None,
-        mime_type: Optional[str] = None,
-        **kwargs: Any
-    ) -> 'AudioArtifact':
+        filepath: str | Path,
+        name: str | None = None,
+        mime_type: str | None = None,
+        **kwargs: Any,
+    ) -> "AudioArtifact":
         """
         Create AudioArtifact from file path (Agno pattern).
 
@@ -352,24 +336,19 @@ class AudioArtifact(BaseArtifact):
         if mime_type is None:
             # Auto-detect MIME type from extension
             ext_to_mime = {
-                '.mp3': 'audio/mpeg',
-                '.wav': 'audio/wav',
-                '.flac': 'audio/flac',
-                '.ogg': 'audio/ogg',
-                '.aac': 'audio/aac',
-                '.m4a': 'audio/m4a',
-                '.webm': 'audio/webm'
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+                ".flac": "audio/flac",
+                ".ogg": "audio/ogg",
+                ".aac": "audio/aac",
+                ".m4a": "audio/m4a",
+                ".webm": "audio/webm",
             }
-            mime_type = ext_to_mime.get(path.suffix.lower(), 'audio/mpeg')
+            mime_type = ext_to_mime.get(path.suffix.lower(), "audio/mpeg")
 
-        return cls(
-            name=name,
-            filepath=path,
-            mime_type=mime_type,
-            **kwargs
-        )
+        return cls(name=name, filepath=path, mime_type=mime_type, **kwargs)
 
-    def to_dict(self, include_content: bool = False) -> Dict[str, Any]:
+    def to_dict(self, include_content: bool = False) -> dict[str, Any]:
         """
         Convert to dictionary for serialization (Agno pattern).
 
@@ -392,12 +371,12 @@ class AudioArtifact(BaseArtifact):
         }
 
         if include_content and self.content:
-            audio_dict["content_base64"] = base64.b64encode(self.content).decode('utf-8')
+            audio_dict["content_base64"] = base64.b64encode(self.content).decode("utf-8")
 
         return audio_dict
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'AudioArtifact':
+    def from_dict(cls, data: dict[str, Any]) -> "AudioArtifact":
         """
         Create AudioArtifact from dictionary.
 

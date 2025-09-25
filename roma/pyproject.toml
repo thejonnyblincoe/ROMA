@@ -226,6 +226,9 @@ directory = "coverage_html"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
 select = [
     # pycodestyle
     "E",
@@ -265,7 +268,7 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 
 # Ruff per-file ignores
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG001", "ARG002", "S101", "S106"]  # Allow unused args and asserts in tests
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
 
@@ -283,6 +286,9 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_unreachable = true
 strict_equality = true
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
 
 # Per-module configuration
 [[tool.mypy.overrides]]
@@ -295,8 +301,29 @@ module = [
     "loguru",
     "memory_profiler",
     "line_profiler",
+    "agno.*",
+    "litellm.*",
+    "networkx.*",
+    "matplotlib.*",
+    "graphviz.*",
+    "hydra.*",
+    "omegaconf.*",
+    "asyncpg.*",
+    "sqlalchemy.*",
+    "alembic.*",
 ]
 ignore_missing_imports = true
+
+# Allow dynamic imports for infrastructure modules
+[[tool.mypy.overrides]]
+module = "src.roma.infrastructure.*"
+disallow_any_generics = false
+disallow_untyped_defs = false
+
+# Relax for domain interfaces that deal with external libraries
+[[tool.mypy.overrides]]
+module = "src.roma.domain.interfaces.*"
+disallow_any_generics = false
 
 # Black configuration (backup formatter)
 [tool.black]

@@ -4,23 +4,23 @@ Unit tests for ArtifactService.
 Tests artifact operations and ResultEnvelope integration.
 """
 
+import os
+import shutil
+import tempfile
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
+
 import pytest
 import pytest_asyncio
-from unittest.mock import Mock, AsyncMock, patch
-from pathlib import Path
-import tempfile
-import shutil
-import os
-from typing import Dict, Any
+from roma.infrastructure.storage.storage_interface import StorageConfig
 
 from roma.application.services.artifact_service import ArtifactService
 from roma.domain.entities.artifacts.file_artifact import FileArtifact
-from roma.domain.value_objects.result_envelope import ResultEnvelope, ExecutionMetrics
-from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.agent_responses import ExecutorResult
+from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.media_type import MediaType
+from roma.domain.value_objects.result_envelope import ExecutionMetrics, ResultEnvelope
 from roma.infrastructure.storage.local_storage import LocalFileStorage
-from roma.infrastructure.storage.storage_interface import StorageConfig
 
 
 class TestArtifactService:

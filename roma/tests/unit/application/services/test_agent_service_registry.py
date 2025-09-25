@@ -4,16 +4,16 @@ Tests for AgentServiceRegistry.
 Tests the registration, management, and retrieval of agent services.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
 
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.interfaces.agent_service import BaseAgentServiceInterface
-from roma.application.services.agent_service_registry import AgentServiceRegistry
+import pytest
+
 from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager
+from roma.application.services.agent_service_registry import AgentServiceRegistry
 from roma.application.services.hitl_service import HITLService
+from roma.application.services.recovery_manager import RecoveryManager
+from roma.domain.interfaces.agent_service import BaseAgentServiceInterface
+from roma.domain.value_objects.agent_type import AgentType
 
 
 @pytest.fixture

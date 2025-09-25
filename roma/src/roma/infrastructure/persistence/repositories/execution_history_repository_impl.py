@@ -4,27 +4,24 @@ SQLAlchemy Implementation of Execution History Repository.
 Infrastructure layer implementation of execution history persistence using SQLAlchemy.
 """
 
-import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Dict, Any
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, delete, update, func, and_, or_, desc
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from roma.domain.interfaces.persistence import ExecutionHistoryRepository
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.interfaces.persistence import ExecutionHistoryRepository
 from roma.domain.value_objects.persistence import (
-    TaskRelationshipType,
+    AnalysisPeriod,
+    ExecutionAnalytics,
     ExecutionRecord,
     ExecutionTreeNode,
-    ExecutionAnalytics,
     PerformanceMetrics,
-    AnalysisPeriod,
+    TaskRelationshipType,
 )
+from roma.domain.value_objects.task_status import TaskStatus
 from roma.infrastructure.persistence.models.task_execution_model import (
     TaskExecutionModel,
     TaskRelationshipModel,
@@ -52,8 +49,8 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
     async def create_execution(
         self,
         task: TaskNode,
-        execution_context: Optional[dict] = None,
-        agent_config: Optional[dict] = None
+        execution_context: dict | None = None,
+        agent_config: dict | None = None,
     ) -> str:
         """Create a new execution record."""
         try:
@@ -66,11 +63,13 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                         node_type=task.node_type.value if task.node_type else None,
                         status=task.status,
                         parent_task_id=task.parent_id,
-                        root_task_id=task.root_task_id if hasattr(task, 'root_task_id') else task.task_id,
-                        depth_level=getattr(task, 'depth_level', 0),
-                        task_metadata=task.metadata if hasattr(task, 'metadata') else {},
+                        root_task_id=task.root_task_id
+                        if hasattr(task, "root_task_id")
+                        else task.task_id,
+                        depth_level=getattr(task, "depth_level", 0),
+                        task_metadata=task.metadata if hasattr(task, "metadata") else {},
                         agent_config=agent_config or {},
-                        execution_context=execution_context or {}
+                        execution_context=execution_context or {},
                     )
 
                     session.add(execution)
@@ -79,7 +78,7 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                     logger.info(f"Created execution record for task {task.task_id}")
                     return execution.id
 
-                except Exception as e:
+                except Exception:
                     await session.rollback()
                     raise
 
@@ -91,9 +90,9 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
         self,
         task_id: str,
         status: TaskStatus,
-        result: Optional[dict] = None,
-        error_info: Optional[dict] = None,
-        execution_duration_ms: Optional[int] = None
+        result: dict | None = None,
+        error_info: dict | None = None,
+        execution_duration_ms: int | None = None,
     ) -> None:
         """Update execution status and result."""
         try:
@@ -101,7 +100,7 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                 try:
                     update_values = {
                         "status": status,
-                        "updated_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(UTC),
                     }
 
                     if result is not None:
@@ -114,9 +113,9 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                         update_values["execution_duration_ms"] = execution_duration_ms
 
                     if status in [TaskStatus.EXECUTING]:
-                        update_values["started_at"] = datetime.now(timezone.utc)
+                        update_values["started_at"] = datetime.now(UTC)
                     elif status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
-                        update_values["completed_at"] = datetime.now(timezone.utc)
+                        update_values["completed_at"] = datetime.now(UTC)
 
                     await session.execute(
                         update(TaskExecutionModel)
@@ -128,7 +127,7 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
 
                     logger.debug(f"Updated execution status for task {task_id} to {status}")
 
-                except Exception as e:
+                except Exception:
                     await session.rollback()
                     raise
 
@@ -141,8 +140,8 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
         parent_task_id: str,
         child_task_id: str,
         relationship_type: TaskRelationshipType,
-        order_index: Optional[int] = None,
-        metadata: Optional[dict] = None
+        order_index: int | None = None,
+        metadata: dict | None = None,
     ) -> None:
         """Add a relationship between tasks."""
         try:
@@ -153,7 +152,7 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                         child_task_id=child_task_id,
                         relationship_type=relationship_type,
                         order_index=order_index,
-                        relationship_metadata=metadata or {}
+                        relationship_metadata=metadata or {},
                     )
 
                     session.add(relationship)
@@ -161,7 +160,7 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
 
                     logger.debug(f"Added relationship {parent_task_id} -> {child_task_id}")
 
-                except Exception as e:
+                except Exception:
                     await session.rollback()
                     raise
 
@@ -171,10 +170,10 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
 
     async def get_execution_history(
         self,
-        task_id: Optional[str] = None,
-        execution_id: Optional[str] = None,
-        include_children: bool = False
-    ) -> Optional[ExecutionRecord]:
+        task_id: str | None = None,
+        execution_id: str | None = None,
+        include_children: bool = False,
+    ) -> ExecutionRecord | None:
         """Get execution history for a task."""
         try:
             async with self.session_factory() as session:
@@ -205,7 +204,9 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                     root_task_id=execution.root_task_id,
                     depth_level=execution.depth_level,
                     started_at=execution.started_at.isoformat() if execution.started_at else None,
-                    completed_at=execution.completed_at.isoformat() if execution.completed_at else None,
+                    completed_at=execution.completed_at.isoformat()
+                    if execution.completed_at
+                    else None,
                     execution_duration_ms=execution.execution_duration_ms,
                     result=execution.result,
                     metadata=execution.task_metadata or {},
@@ -252,7 +253,10 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                 # Get all relationships in a single query
                 relationships_query = (
                     select(TaskRelationshipModel)
-                    .join(TaskExecutionModel, TaskRelationshipModel.child_task_id == TaskExecutionModel.task_id)
+                    .join(
+                        TaskExecutionModel,
+                        TaskRelationshipModel.child_task_id == TaskExecutionModel.task_id,
+                    )
                     .where(TaskExecutionModel.root_task_id == root_task_id)
                     .order_by(TaskRelationshipModel.order_index, TaskRelationshipModel.created_at)
                 )
@@ -270,7 +274,7 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                     children_by_parent[rel.parent_task_id].append(rel.child_task_id)
 
                 # Build tree recursively using pre-loaded data with defensive checks
-                def build_tree_node(task_id: str) -> Optional[ExecutionTreeNode]:
+                def build_tree_node(task_id: str) -> ExecutionTreeNode | None:
                     if task_id not in executions_by_id:
                         logger.warning(f"Task {task_id} not found in execution tree, skipping")
                         return None
@@ -294,12 +298,16 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                         status=execution.status.value,
                         parent_task_id=execution.parent_task_id,
                         depth_level=execution.depth_level,
-                        started_at=execution.started_at.isoformat() if execution.started_at else None,
-                        completed_at=execution.completed_at.isoformat() if execution.completed_at else None,
+                        started_at=execution.started_at.isoformat()
+                        if execution.started_at
+                        else None,
+                        completed_at=execution.completed_at.isoformat()
+                        if execution.completed_at
+                        else None,
                         execution_duration_ms=execution.execution_duration_ms,
                         result=execution.result,
                         error_info=execution.error_info,
-                        children=children
+                        children=children,
                     )
 
                 # Build tree with defensive check for root task
@@ -312,13 +320,16 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
             logger.error(f"Failed to get execution tree: {e}")
             raise
 
-    async def get_child_executions(self, parent_task_id: str) -> List[ExecutionRecord]:
+    async def get_child_executions(self, parent_task_id: str) -> list[ExecutionRecord]:
         """Get child executions for a parent task."""
         try:
             async with self.session_factory() as session:
                 query = (
                     select(TaskExecutionModel)
-                    .join(TaskRelationshipModel, TaskExecutionModel.task_id == TaskRelationshipModel.child_task_id)
+                    .join(
+                        TaskRelationshipModel,
+                        TaskExecutionModel.task_id == TaskRelationshipModel.child_task_id,
+                    )
                     .where(TaskRelationshipModel.parent_task_id == parent_task_id)
                     .order_by(TaskRelationshipModel.order_index, TaskRelationshipModel.created_at)
                 )
@@ -338,8 +349,12 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                         parent_task_id=execution.parent_task_id,
                         root_task_id=execution.root_task_id,
                         depth_level=execution.depth_level,
-                        started_at=execution.started_at.isoformat() if execution.started_at else None,
-                        completed_at=execution.completed_at.isoformat() if execution.completed_at else None,
+                        started_at=execution.started_at.isoformat()
+                        if execution.started_at
+                        else None,
+                        completed_at=execution.completed_at.isoformat()
+                        if execution.completed_at
+                        else None,
                         execution_duration_ms=execution.execution_duration_ms,
                         result=execution.result,
                         metadata=execution.task_metadata or {},
@@ -362,9 +377,7 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
             raise
 
     async def get_execution_analytics(
-        self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        self, start_time: datetime | None = None, end_time: datetime | None = None
     ) -> ExecutionAnalytics:
         """Get execution analytics and performance metrics."""
         try:
@@ -377,7 +390,9 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                     base_query = base_query.where(TaskExecutionModel.created_at <= end_time)
 
                 # Total executions
-                total_query = select(func.count(TaskExecutionModel.id)).select_from(base_query.subquery())
+                total_query = select(func.count(TaskExecutionModel.id)).select_from(
+                    base_query.subquery()
+                )
                 total_result = await session.execute(total_query)
                 total_executions = total_result.scalar()
 
@@ -388,7 +403,9 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                     .group_by(TaskExecutionModel.status)
                 )
                 status_result = await session.execute(status_query)
-                status_distribution = {status.value: count for status, count in status_result.fetchall()}
+                status_distribution = {
+                    status.value: count for status, count in status_result.fetchall()
+                }
 
                 # Task type distribution
                 type_query = (
@@ -404,14 +421,22 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                     func.avg(TaskExecutionModel.execution_duration_ms),
                     func.min(TaskExecutionModel.execution_duration_ms),
                     func.max(TaskExecutionModel.execution_duration_ms),
-                    func.count(TaskExecutionModel.id).filter(TaskExecutionModel.status == TaskStatus.COMPLETED),
-                    func.count(TaskExecutionModel.id).filter(TaskExecutionModel.status == TaskStatus.FAILED),
+                    func.count(TaskExecutionModel.id).filter(
+                        TaskExecutionModel.status == TaskStatus.COMPLETED
+                    ),
+                    func.count(TaskExecutionModel.id).filter(
+                        TaskExecutionModel.status == TaskStatus.FAILED
+                    ),
                 ).select_from(base_query.subquery())
 
                 perf_result = await session.execute(perf_query)
-                avg_duration, min_duration, max_duration, completed_count, failed_count = perf_result.fetchone()
+                avg_duration, min_duration, max_duration, completed_count, failed_count = (
+                    perf_result.fetchone()
+                )
 
-                success_rate = (completed_count / total_executions * 100) if total_executions > 0 else 0.0
+                success_rate = (
+                    (completed_count / total_executions * 100) if total_executions > 0 else 0.0
+                )
 
                 performance_metrics = PerformanceMetrics(
                     avg_execution_time_ms=float(avg_duration) if avg_duration else 0.0,
@@ -419,14 +444,16 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                     max_execution_time_ms=max_duration or 0,
                     success_rate_percent=success_rate,
                     total_failed=failed_count,
-                    total_completed=completed_count
+                    total_completed=completed_count,
                 )
 
                 # Analysis period
                 period = AnalysisPeriod(
                     start_time=start_time.isoformat() if start_time else None,
                     end_time=end_time.isoformat() if end_time else None,
-                    duration_hours=((end_time - start_time).total_seconds() / 3600) if start_time and end_time else None
+                    duration_hours=((end_time - start_time).total_seconds() / 3600)
+                    if start_time and end_time
+                    else None,
                 )
 
                 return ExecutionAnalytics(
@@ -435,7 +462,7 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
                     task_type_distribution=task_type_distribution,
                     performance_metrics=performance_metrics,
                     analysis_period=period,
-                    service_stats={}  # No instance-level stats
+                    service_stats={},  # No instance-level stats
                 )
 
         except SQLAlchemyError as e:
@@ -444,20 +471,20 @@ class SQLAlchemyExecutionHistoryRepository(ExecutionHistoryRepository):
 
     async def cleanup_old_executions(self, days: int = 90) -> int:
         """Clean up old execution records."""
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
         try:
             async with self.session_factory() as session:
                 # First delete relationships
                 rel_result = await session.execute(
-                    delete(TaskRelationshipModel)
-                    .where(TaskRelationshipModel.created_at < cutoff_date)
+                    delete(TaskRelationshipModel).where(
+                        TaskRelationshipModel.created_at < cutoff_date
+                    )
                 )
 
                 # Then delete executions
                 exec_result = await session.execute(
-                    delete(TaskExecutionModel)
-                    .where(TaskExecutionModel.created_at < cutoff_date)
+                    delete(TaskExecutionModel).where(TaskExecutionModel.created_at < cutoff_date)
                 )
 
                 await session.commit()

@@ -47,38 +47,33 @@ lint:
     @echo "🔍 ROMA Code Quality Checks"
     @echo "=========================="
     @just lint-ruff
-    @just lint-black
-    @just lint-isort
     @just lint-mypy
     @echo "🎉 All code quality checks passed!"
 
-# Run ruff linting
+# Run ruff linting and formatting check
 lint-ruff:
     @echo "🎨 Running Ruff linting..."
     uv run ruff check src/ tests/
-
-# Check code formatting with black
-lint-black:
-    @echo "🔧 Checking Black formatting..."
-    uv run black --check src/ tests/
-
-# Check import sorting
-lint-isort:
-    @echo "📦 Checking import sorting..."
-    uv run isort --check-only src/ tests/
+    @echo "🔧 Checking Ruff formatting..."
+    uv run ruff format --check src/ tests/
 
 # Type checking with mypy
 lint-mypy:
     @echo "🔬 Running MyPy type checking..."
     uv run mypy src/
 
-# Auto-fix code formatting
+# Auto-fix code formatting and linting
 format:
-    @echo "🎨 Auto-formatting code..."
-    uv run black src/ tests/
-    uv run isort src/ tests/
+    @echo "🎨 Auto-formatting and fixing code..."
     uv run ruff check --fix src/ tests/
-    @echo "✅ Code formatted!"
+    uv run ruff format src/ tests/
+    @echo "✅ Code formatted and linted!"
+
+# Show linting statistics
+lint-stats:
+    @echo "📊 Linting Statistics"
+    @echo "===================="
+    uv run ruff check src/ --statistics || true
 
 # Clean build artifacts
 clean:

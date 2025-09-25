@@ -6,19 +6,20 @@ Migrated from TaskNodeProcessor with clean separation of concerns.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.node_action import NodeAction
-from roma.domain.value_objects.node_type import NodeType
-from roma.domain.value_objects.agent_responses import AtomizerResult
-from roma.domain.value_objects.result_envelope import ExecutionMetrics, AtomizerEnvelope
-from roma.domain.interfaces.agent_service import AtomizerServiceInterface
 from roma.domain.context import TaskContext
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager, RecoveryAction
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.interfaces.agent_runtime_service import IAgentRuntimeService
+from roma.domain.interfaces.agent_service import AtomizerServiceInterface
+from roma.domain.interfaces.recovery_manager import IRecoveryManager
+from roma.domain.value_objects.agent_responses import AtomizerResult
+from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.node_action import NodeAction
+from roma.domain.value_objects.node_result import NodeResult
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.recovery_action import RecoveryAction
+from roma.domain.value_objects.result_envelope import AtomizerEnvelope, ExecutionMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -27,20 +28,13 @@ class AtomizerService(AtomizerServiceInterface):
     """Implementation of Atomizer service for task evaluation."""
 
     def __init__(
-        self,
-        agent_runtime_service: AgentRuntimeService,
-        recovery_manager: RecoveryManager
+        self, agent_runtime_service: IAgentRuntimeService, recovery_manager: IRecoveryManager
     ):
         """Initialize with required dependencies."""
         self.agent_runtime_service = agent_runtime_service
         self.recovery_manager = recovery_manager
 
-    async def run(
-        self,
-        task: TaskNode,
-        context: TaskContext,
-        **kwargs
-    ) -> NodeResult:
+    async def run(self, task: TaskNode, context: TaskContext, **_kwargs) -> NodeResult:
         """
         Run atomizer evaluation to determine if task needs decomposition.
 
@@ -53,8 +47,6 @@ class AtomizerService(AtomizerServiceInterface):
             NodeResult with atomizer decision
         """
         try:
-            start_time = context.execution_metadata.get("start_time", 0.0)
-
             # Get atomizer agent for task type
             atomizer_agent = await self.agent_runtime_service.get_agent(
                 task.task_type, AgentType.ATOMIZER
@@ -67,7 +59,7 @@ class AtomizerService(AtomizerServiceInterface):
             )
 
             # Extract atomizer result
-            if not envelope or not hasattr(envelope, 'result'):
+            if not envelope or not hasattr(envelope, "result"):
                 raise ValueError("Atomizer returned invalid envelope")
 
             atomizer_result: AtomizerResult = envelope.result
@@ -78,9 +70,9 @@ class AtomizerService(AtomizerServiceInterface):
             execution_time = context.execution_metadata.get("execution_time", 0.0)
             metrics = ExecutionMetrics(
                 execution_time=execution_time,
-                tokens_used=getattr(envelope, 'tokens_used', 0),
-                cost_estimate=getattr(envelope, 'cost_estimate', 0.0),
-                model_calls=1
+                tokens_used=getattr(envelope, "tokens_used", 0),
+                cost_estimate=getattr(envelope, "cost_estimate", 0.0),
+                model_calls=1,
             )
 
             # Create typed envelope
@@ -90,7 +82,7 @@ class AtomizerService(AtomizerServiceInterface):
                 execution_id=context.execution_id,
                 agent_type=AgentType.ATOMIZER,
                 execution_metrics=metrics,
-                output_text=atomizer_result.reasoning
+                output_text=atomizer_result.reasoning,
             )
 
             # Record success with recovery manager
@@ -101,15 +93,15 @@ class AtomizerService(AtomizerServiceInterface):
                 task_id=task.task_id,
                 action=NodeAction.NOOP,  # Atomizer doesn't take action, just provides decision
                 envelope=atomizer_envelope,
-                agent_name=getattr(atomizer_agent, 'name', 'AtomizerAgent'),
+                agent_name=getattr(atomizer_agent, "name", "AtomizerAgent"),
                 agent_type=AgentType.ATOMIZER.value,
                 processing_time_ms=execution_time * 1000,
                 metadata={
                     "atomizer_decision": atomizer_result.is_atomic,
                     "confidence": atomizer_result.confidence,
                     "reasoning": atomizer_result.reasoning,
-                    "node_type": NodeType.EXECUTE if atomizer_result.is_atomic else NodeType.PLAN
-                }
+                    "node_type": NodeType.EXECUTE if atomizer_result.is_atomic else NodeType.PLAN,
+                },
             )
 
         except Exception as e:
@@ -124,7 +116,7 @@ class AtomizerService(AtomizerServiceInterface):
                     error=str(e),
                     agent_name="AtomizerAgent",
                     agent_type=AgentType.ATOMIZER.value,
-                    metadata={"retry_count": recovery_result.metadata.get("retry_attempt", 1)}
+                    metadata={"retry_count": recovery_result.metadata.get("retry_attempt", 1)},
                 )
             elif recovery_result.action == RecoveryAction.REPLAN:
                 return NodeResult.replan(
@@ -132,22 +124,22 @@ class AtomizerService(AtomizerServiceInterface):
                     parent_id=recovery_result.metadata.get("parent_id"),
                     reason="critical_failure_exhausted_retries",
                     agent_name="AtomizerAgent",
-                    agent_type=AgentType.ATOMIZER.value
+                    agent_type=AgentType.ATOMIZER.value,
                 )
             else:
                 return NodeResult.failure(
                     task_id=task.task_id,
                     error=str(e),
                     agent_name="AtomizerAgent",
-                    agent_type=AgentType.ATOMIZER.value
+                    agent_type=AgentType.ATOMIZER.value,
                 )
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get atomizer service statistics."""
         base_stats = super().get_stats()
         return {
             **base_stats,
-            "decisions_made": getattr(self, '_decisions_made', 0),
-            "atomic_decisions": getattr(self, '_atomic_decisions', 0),
-            "planning_decisions": getattr(self, '_planning_decisions', 0)
+            "decisions_made": getattr(self, "_decisions_made", 0),
+            "atomic_decisions": getattr(self, "_atomic_decisions", 0),
+            "planning_decisions": getattr(self, "_planning_decisions", 0),
         }

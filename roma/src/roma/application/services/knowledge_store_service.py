@@ -5,35 +5,36 @@ Thread-safe service for managing KnowledgeRecord value objects.
 """
 
 import asyncio
-from collections import OrderedDict
-from typing import Dict, List, Optional, Any
 import logging
-from datetime import datetime, timezone
+from collections import OrderedDict
+from datetime import UTC, datetime
+from typing import Any
 
 from roma.domain.entities.task_node import TaskNode
+from roma.domain.interfaces.artifact_service import IArtifactService
+from roma.domain.interfaces.knowledge_store_service import IKnowledgeStoreService
 from roma.domain.value_objects.knowledge_record import KnowledgeRecord
-from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.result_envelope import ResultEnvelope
-from roma.application.services.artifact_service import ArtifactService
+from roma.domain.value_objects.task_status import TaskStatus
 
 logger = logging.getLogger(__name__)
 
 
-class KnowledgeStoreService:
+class KnowledgeStoreService(IKnowledgeStoreService):
     """
     Thread-safe service for managing task knowledge records.
 
     Stores immutable KnowledgeRecord value objects with LRU caching.
     """
 
-    def __init__(self, artifact_service: Optional[ArtifactService] = None):
+    def __init__(self, artifact_service: IArtifactService | None = None):
         """
         Initialize knowledge store service.
 
         Args:
             artifact_service: Optional service for storing artifacts
         """
-        self._records: Dict[str, KnowledgeRecord] = {}
+        self._records: dict[str, KnowledgeRecord] = {}
         self._lock = asyncio.Lock()
         self._artifact_service = artifact_service
 
@@ -48,9 +49,7 @@ class KnowledgeStoreService:
         logger.info("KnowledgeStoreService initialized")
 
     async def add_or_update_record(
-        self,
-        node: TaskNode,
-        envelope: Optional[ResultEnvelope] = None
+        self, node: TaskNode, envelope: ResultEnvelope | None = None
     ) -> KnowledgeRecord:
         """
         Add or update a knowledge record from TaskNode.
@@ -67,9 +66,7 @@ class KnowledgeStoreService:
             artifact_refs = []
             if envelope and envelope.artifacts and self._artifact_service:
                 try:
-                    artifact_refs = await self._artifact_service.store_envelope_artifacts(
-                        envelope
-                    )
+                    artifact_refs = await self._artifact_service.store_envelope_artifacts(envelope)
                     logger.debug(f"Stored {len(artifact_refs)} artifacts for task {node.task_id}")
                 except Exception as e:
                     logger.error(f"Failed to store artifacts for task {node.task_id}: {e}")
@@ -84,11 +81,13 @@ class KnowledgeStoreService:
                     record = record.add_artifacts(artifact_refs)
                 # Update result if provided
                 if envelope:
-                    record = record.model_copy(update={
-                        "result": envelope,
-                        "updated_at": datetime.now(timezone.utc),
-                        "version": record.version + 1
-                    })
+                    record = record.model_copy(
+                        update={
+                            "result": envelope,
+                            "updated_at": datetime.now(UTC),
+                            "version": record.version + 1,
+                        }
+                    )
             else:
                 # Create new record
                 record = KnowledgeRecord.create(
@@ -98,7 +97,7 @@ class KnowledgeStoreService:
                     status=node.status,
                     artifacts=artifact_refs,
                     parent_task_id=node.parent_id,
-                    result=envelope
+                    result=envelope,
                 )
 
             self._records[record.task_id] = record
@@ -107,7 +106,7 @@ class KnowledgeStoreService:
             logger.info(f"KnowledgeStore: Added/Updated record for {node.task_id}")
             return record
 
-    async def get_record(self, task_id: str) -> Optional[KnowledgeRecord]:
+    async def get_record(self, task_id: str) -> KnowledgeRecord | None:
         """
         Get record by ID with caching.
 
@@ -131,12 +130,12 @@ class KnowledgeStoreService:
             self._cache_misses += 1
             return record
 
-    async def get_child_records(self, parent_id: str) -> List[KnowledgeRecord]:
+    async def get_child_records(self, parent_id: str) -> list[KnowledgeRecord]:
         """Get all child records of a parent task."""
         async with self._lock:
             return [r for r in self._records.values() if r.parent_task_id == parent_id]
 
-    async def get_records_by_status(self, status: TaskStatus) -> List[KnowledgeRecord]:
+    async def get_records_by_status(self, status: TaskStatus) -> list[KnowledgeRecord]:
         """Get all records with specific status."""
         async with self._lock:
             return [r for r in self._records.values() if r.status == status]
@@ -165,11 +164,11 @@ class KnowledgeStoreService:
             logger.debug(f"Added child {child_id} to parent {parent_id}")
             return True
 
-    async def get_completed_records(self) -> List[KnowledgeRecord]:
+    async def get_completed_records(self) -> list[KnowledgeRecord]:
         """Get all completed records."""
         return await self.get_records_by_status(TaskStatus.COMPLETED)
 
-    async def get_failed_records(self) -> List[KnowledgeRecord]:
+    async def get_failed_records(self) -> list[KnowledgeRecord]:
         """Get all failed records."""
         return await self.get_records_by_status(TaskStatus.FAILED)
 
@@ -201,33 +200,39 @@ class KnowledgeStoreService:
             self._cache_misses = 0
             logger.info("KnowledgeStore: All records cleared")
 
-    async def get_summary_stats(self) -> Dict[str, Any]:
+    async def get_summary_stats(self) -> dict[str, Any]:
         """Get knowledge store statistics."""
         async with self._lock:
             statuses = [r.status for r in self._records.values()]
             task_types = [r.task_type for r in self._records.values()]
 
             total_cache_requests = self._cache_hits + self._cache_misses
-            cache_hit_rate = (self._cache_hits / total_cache_requests * 100) if total_cache_requests > 0 else 0
+            cache_hit_rate = (
+                (self._cache_hits / total_cache_requests * 100) if total_cache_requests > 0 else 0
+            )
 
             return {
                 "total_records": len(self._records),
                 "cache_size": len(self._cache),
                 "cache_hit_rate": round(cache_hit_rate, 2),
                 "status_breakdown": {
-                    status.value: statuses.count(status)
-                    for status in set(statuses)
+                    status.value: statuses.count(status) for status in set(statuses)
                 },
                 "task_type_breakdown": {
-                    task_type.value: task_types.count(task_type)
-                    for task_type in set(task_types)
+                    task_type.value: task_types.count(task_type) for task_type in set(task_types)
                 },
-                "records_with_artifacts": len([r for r in self._records.values() if r.has_artifacts()]),
-                "records_with_children": len([r for r in self._records.values() if r.has_children()]),
+                "records_with_artifacts": len(
+                    [r for r in self._records.values() if r.has_artifacts()]
+                ),
+                "records_with_children": len(
+                    [r for r in self._records.values() if r.has_children()]
+                ),
                 "records_with_results": len([r for r in self._records.values() if r.has_result()]),
             }
 
-    async def get_records_with_artifacts(self, task_id: str, include_siblings: bool = True) -> List[str]:
+    async def get_records_with_artifacts(
+        self, task_id: str, include_siblings: bool = True
+    ) -> list[str]:
         """
         Get artifact references for task context building.
 
@@ -248,7 +253,11 @@ class KnowledgeStoreService:
 
                 # Get sibling artifacts if requested
                 if include_siblings and record.parent_task_id:
-                    siblings = [r for r in self._records.values() if r.parent_task_id == record.parent_task_id]
+                    siblings = [
+                        r
+                        for r in self._records.values()
+                        if r.parent_task_id == record.parent_task_id
+                    ]
                     for sibling in siblings:
                         if sibling.task_id != task_id and sibling.has_artifacts():
                             artifacts.extend(sibling.artifacts)

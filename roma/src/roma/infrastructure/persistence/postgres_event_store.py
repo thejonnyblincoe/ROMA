@@ -5,35 +5,35 @@ PostgreSQL Event Store Implementation
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
-from typing import Any, Callable, Dict, List, Optional, Set
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select, delete, update, func, and_, or_
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from roma.domain.events.task_events import (
-    BaseTaskEvent,
-    TaskCreatedEvent,
-    TaskNodeAddedEvent,
-    TaskStatusChangedEvent,
     AtomizerEvaluatedEvent,
+    BaseTaskEvent,
+    DependencyAddedEvent,
+    ResultsAggregatedEvent,
+    TaskCompletedEvent,
+    TaskCreatedEvent,
     TaskDecomposedEvent,
     TaskExecutedEvent,
-    TaskCompletedEvent,
     TaskFailedEvent,
-    ResultsAggregatedEvent,
-    DependencyAddedEvent
+    TaskNodeAddedEvent,
+    TaskStatusChangedEvent,
 )
-from roma.domain.value_objects.config.database_config import DatabaseConfig
+from roma.domain.interfaces.event_store import EventFilter
 from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.node_type import NodeType
-from roma.application.services.event_store import EventFilter
+
 from .connection_manager import DatabaseConnectionManager
-from .models.event_model import EventModel
 from .models.base import Base
+from .models.event_model import EventModel
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +62,8 @@ class PostgreSQLEventStore:
         self.config = connection_manager.config
 
         # Event subscribers (store id + callback)
-        self._subscribers: List[tuple[str, Callable[[BaseTaskEvent], None]]] = []
-        self._async_subscribers: List[tuple[str, Callable[[BaseTaskEvent], Any]]] = []
+        self._subscribers: list[tuple[str, Callable[[BaseTaskEvent], None]]] = []
+        self._async_subscribers: list[tuple[str, Callable[[BaseTaskEvent], Any]]] = []
 
         # Statistics
         self._stats = {
@@ -104,9 +104,7 @@ class PostgreSQLEventStore:
 
         # Create session factory
         self._session_factory = async_sessionmaker(
-            self._engine,
-            class_=AsyncSession,
-            expire_on_commit=False
+            self._engine, class_=AsyncSession, expire_on_commit=False
         )
 
         # Create tables if they don't exist
@@ -162,7 +160,7 @@ class PostgreSQLEventStore:
             logger.error(f"Failed to append event: {e}")
             raise
 
-    async def append_many(self, events: List[BaseTaskEvent]) -> None:
+    async def append_many(self, events: list[BaseTaskEvent]) -> None:
         """
         Append multiple events in a batch operation.
 
@@ -198,10 +196,8 @@ class PostgreSQLEventStore:
             raise
 
     async def get_events(
-        self,
-        task_id: str,
-        event_filter: Optional[EventFilter] = None
-    ) -> List[BaseTaskEvent]:
+        self, task_id: str, event_filter: EventFilter | None = None
+    ) -> list[BaseTaskEvent]:
         """
         Get events for a specific task.
 
@@ -239,10 +235,7 @@ class PostgreSQLEventStore:
             logger.error(f"Failed to get events for task {task_id}: {e}")
             raise
 
-    async def get_all_events(
-        self,
-        event_filter: Optional[EventFilter] = None
-    ) -> List[BaseTaskEvent]:
+    async def get_all_events(self, event_filter: EventFilter | None = None) -> list[BaseTaskEvent]:
         """
         Get all events across all tasks.
 
@@ -280,10 +273,8 @@ class PostgreSQLEventStore:
             raise
 
     async def get_events_by_type(
-        self,
-        event_type: str,
-        event_filter: Optional[EventFilter] = None
-    ) -> List[BaseTaskEvent]:
+        self, event_type: str, event_filter: EventFilter | None = None
+    ) -> list[BaseTaskEvent]:
         """
         Get events by type.
 
@@ -356,7 +347,7 @@ class PostgreSQLEventStore:
                 metadata=metadata,
                 goal=metadata.get("goal", ""),
                 task_type=TaskType(metadata.get("task_type", "THINK")),
-                parent_id=metadata.get("parent_id")
+                parent_id=metadata.get("parent_id"),
             )
         elif model.event_type == "task_node_added":
             return TaskNodeAddedEvent(
@@ -367,7 +358,7 @@ class PostgreSQLEventStore:
                 metadata=metadata,
                 goal=metadata.get("goal", ""),
                 task_type=TaskType(metadata.get("task_type", "THINK")),
-                parent_id=metadata.get("parent_id")
+                parent_id=metadata.get("parent_id"),
             )
         elif model.event_type == "task_status_changed":
             return TaskStatusChangedEvent(
@@ -378,7 +369,7 @@ class PostgreSQLEventStore:
                 metadata=metadata,
                 old_status=TaskStatus(metadata.get("old_status", "PENDING")),
                 new_status=TaskStatus(metadata.get("new_status", "PENDING")),
-                reason=metadata.get("reason")
+                reason=metadata.get("reason"),
             )
         elif model.event_type == "atomizer_evaluated":
             return AtomizerEvaluatedEvent(
@@ -390,7 +381,7 @@ class PostgreSQLEventStore:
                 decision=metadata.get("decision", "EXECUTE"),
                 reasoning=metadata.get("reasoning", ""),
                 complexity_score=metadata.get("complexity_score", 0),
-                confidence=metadata.get("confidence", 0.0)
+                confidence=metadata.get("confidence", 0.0),
             )
         elif model.event_type == "task_decomposed":
             return TaskDecomposedEvent(
@@ -401,7 +392,7 @@ class PostgreSQLEventStore:
                 metadata=metadata,
                 child_tasks=metadata.get("child_tasks", []),
                 decomposition_strategy=metadata.get("decomposition_strategy", ""),
-                total_children=metadata.get("total_children", 0)
+                total_children=metadata.get("total_children", 0),
             )
         elif model.event_type == "task_executed":
             return TaskExecutedEvent(
@@ -412,7 +403,7 @@ class PostgreSQLEventStore:
                 metadata=metadata,
                 result=metadata.get("result"),
                 execution_time=metadata.get("execution_time", 0.0),
-                agent_type=metadata.get("agent_type", "executor")
+                agent_type=metadata.get("agent_type", "executor"),
             )
         elif model.event_type == "task_completed":
             return TaskCompletedEvent(
@@ -423,7 +414,7 @@ class PostgreSQLEventStore:
                 metadata=metadata,
                 result=metadata.get("result"),
                 total_execution_time=metadata.get("total_execution_time", 0.0),
-                child_count=metadata.get("child_count", 0)
+                child_count=metadata.get("child_count", 0),
             )
         elif model.event_type == "task_failed":
             return TaskFailedEvent(
@@ -435,7 +426,7 @@ class PostgreSQLEventStore:
                 error_message=metadata.get("error_message", ""),
                 error_type=metadata.get("error_type", ""),
                 retry_count=metadata.get("retry_count", 0),
-                is_recoverable=metadata.get("is_recoverable", False)
+                is_recoverable=metadata.get("is_recoverable", False),
             )
         elif model.event_type == "results_aggregated":
             return ResultsAggregatedEvent(
@@ -446,7 +437,7 @@ class PostgreSQLEventStore:
                 metadata=metadata,
                 child_results=metadata.get("child_results", []),
                 aggregated_result=metadata.get("aggregated_result"),
-                aggregation_strategy=metadata.get("aggregation_strategy", "")
+                aggregation_strategy=metadata.get("aggregation_strategy", ""),
             )
         elif model.event_type == "dependency_added":
             return DependencyAddedEvent(
@@ -457,17 +448,19 @@ class PostgreSQLEventStore:
                 metadata=metadata,
                 parent_id=metadata.get("parent_id", ""),
                 child_id=metadata.get("child_id", ""),
-                dependency_type=metadata.get("dependency_type", "parent_child")
+                dependency_type=metadata.get("dependency_type", "parent_child"),
             )
         else:
             # Fallback: create a generic BaseTaskEvent for unknown event types
-            logger.warning(f"Unknown event type '{model.event_type}', creating generic BaseTaskEvent")
+            logger.warning(
+                f"Unknown event type '{model.event_type}', creating generic BaseTaskEvent"
+            )
             return BaseTaskEvent(
                 event_id=model.id,
                 task_id=model.task_id,
                 timestamp=model.timestamp,
                 event_type=model.event_type,
-                metadata=metadata
+                metadata=metadata,
             )
 
     async def subscribe(self, callback: Callable[[BaseTaskEvent], None]) -> str:
@@ -484,10 +477,7 @@ class PostgreSQLEventStore:
         self._subscribers.append((subscription_id, callback))
         return subscription_id
 
-    async def subscribe_async(
-        self,
-        callback: Callable[[BaseTaskEvent], None]
-    ) -> str:
+    async def subscribe_async(self, callback: Callable[[BaseTaskEvent], None]) -> str:
         """
         Subscribe to all events (asynchronous callback).
 
@@ -557,7 +547,7 @@ class PostgreSQLEventStore:
         except Exception as e:
             logger.error(f"Error in subscriber task cleanup: {e}")
 
-    async def get_task_timeline(self, task_id: str) -> List[Dict[str, Any]]:
+    async def get_task_timeline(self, task_id: str) -> list[dict[str, Any]]:
         """
         Get chronological timeline of events for a task.
 
@@ -575,7 +565,7 @@ class PostgreSQLEventStore:
                 "timestamp": event.timestamp.isoformat(),
                 "event_type": event.event_type,
                 "description": self._get_event_description(event),
-                "metadata": event.metadata
+                "metadata": event.metadata,
             }
             timeline.append(timeline_item)
 
@@ -583,24 +573,26 @@ class PostgreSQLEventStore:
 
     # Compatibility methods for InMemoryEventStore interface
     async def get_events_by_task_id(
-        self, task_id: str, event_filter: Optional[EventFilter] = None
-    ) -> List[BaseTaskEvent]:
+        self, task_id: str, event_filter: EventFilter | None = None
+    ) -> list[BaseTaskEvent]:
         """Compatibility method to get events by task id."""
         return await self.get_events(task_id, event_filter)
 
-    async def generate_timeline(self) -> List[Dict[str, Any]]:
+    async def generate_timeline(self) -> list[dict[str, Any]]:
         """Generate a global, chronological event timeline across all tasks."""
         events = await self.get_all_events()
         timeline = []
 
         for event in events:
-            timeline.append({
-                "timestamp": event.timestamp.isoformat(),
-                "event_type": event.event_type,
-                "task_id": event.task_id,
-                "description": self._get_event_description(event),
-                "metadata": event.metadata,
-            })
+            timeline.append(
+                {
+                    "timestamp": event.timestamp.isoformat(),
+                    "event_type": event.event_type,
+                    "task_id": event.task_id,
+                    "description": self._get_event_description(event),
+                    "metadata": event.metadata,
+                }
+            )
 
         return timeline
 
@@ -609,31 +601,31 @@ class PostgreSQLEventStore:
         if event.event_type == "task_created":
             return f"Task created with goal: {getattr(event, 'goal', 'Unknown')}"
         elif event.event_type == "task_status_changed":
-            old_status = getattr(event, 'old_status', 'Unknown')
-            new_status = getattr(event, 'new_status', 'Unknown')
+            old_status = getattr(event, "old_status", "Unknown")
+            new_status = getattr(event, "new_status", "Unknown")
             return f"Status changed from {old_status} to {new_status}"
         elif event.event_type == "atomizer_evaluated":
-            is_atomic = getattr(event, 'is_atomic', False)
+            is_atomic = getattr(event, "is_atomic", False)
             decision = "atomic" if is_atomic else "needs decomposition"
             return f"Atomizer determined task is {decision}"
         elif event.event_type == "task_decomposed":
-            count = getattr(event, 'subtask_count', 0)
+            count = getattr(event, "subtask_count", 0)
             return f"Task decomposed into {count} subtasks"
         elif event.event_type == "task_executed":
-            duration = getattr(event, 'execution_duration_ms', 0)
+            duration = getattr(event, "execution_duration_ms", 0)
             return f"Task executed in {duration:.1f}ms"
         elif event.event_type == "task_completed":
             return "Task completed successfully"
         elif event.event_type == "task_failed":
-            error = getattr(event, 'error_message', 'Unknown error')
+            error = getattr(event, "error_message", "Unknown error")
             return f"Task failed: {error}"
         elif event.event_type == "results_aggregated":
-            count = getattr(event, 'child_count', 0)
+            count = getattr(event, "child_count", 0)
             return f"Aggregated results from {count} child tasks"
         else:
             return f"Event: {event.event_type}"
 
-    async def get_statistics(self) -> Dict[str, Any]:
+    async def get_statistics(self) -> dict[str, Any]:
         """
         Get event store statistics.
 
@@ -648,8 +640,9 @@ class PostgreSQLEventStore:
 
             # Events by type
             type_result = await session.execute(
-                select(EventModel.event_type, func.count(EventModel.id))
-                .group_by(EventModel.event_type)
+                select(EventModel.event_type, func.count(EventModel.id)).group_by(
+                    EventModel.event_type
+                )
             )
             events_by_type = dict(type_result.fetchall())
 
@@ -670,7 +663,7 @@ class PostgreSQLEventStore:
                 "database_stats": self.connection_manager.get_stats(),
             }
 
-    async def clear(self, task_id: Optional[str] = None) -> None:
+    async def clear(self, task_id: str | None = None) -> None:
         """
         Clear events from store.
 
@@ -682,9 +675,7 @@ class PostgreSQLEventStore:
             async with self._session_factory() as session:
                 if task_id:
                     # Clear specific task
-                    await session.execute(
-                        delete(EventModel).where(EventModel.task_id == task_id)
-                    )
+                    await session.execute(delete(EventModel).where(EventModel.task_id == task_id))
                 else:
                     # Clear all events
                     await session.execute(delete(EventModel))
@@ -710,7 +701,7 @@ class PostgreSQLEventStore:
         if days is None:
             days = self.config.event_retention_days
 
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
         try:
             async with self._session_factory() as session:
@@ -718,15 +709,9 @@ class PostgreSQLEventStore:
                 result = await session.execute(
                     update(EventModel)
                     .where(
-                        and_(
-                            EventModel.created_at < cutoff_date,
-                            EventModel.is_archived == False
-                        )
+                        and_(EventModel.created_at < cutoff_date, ~EventModel.is_archived)
                     )
-                    .values(
-                        is_archived=True,
-                        archived_at=datetime.now(timezone.utc)
-                    )
+                    .values(is_archived=True, archived_at=datetime.now(UTC))
                 )
 
                 await session.commit()

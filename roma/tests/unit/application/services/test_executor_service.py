@@ -4,24 +4,28 @@ Tests for ExecutorService.
 Tests the executor service functionality including atomic task execution.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
+import pytest
+
+from roma.application.services.agent_runtime_service import AgentRuntimeService
+from roma.application.services.executor_service import ExecutorService
+from roma.application.services.recovery_manager import (
+    RecoveryAction,
+    RecoveryManager,
+    RecoveryResult,
+)
+from roma.domain.context import TaskContext
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.agent_responses import ExecutorResult
 from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.node_action import NodeAction
 from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.agent_responses import ExecutorResult
-from roma.domain.value_objects.result_envelope import ExecutorEnvelope, ExecutionMetrics
-from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
-from roma.application.services.executor_service import ExecutorService
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager
-from roma.domain.context import TaskContext
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.result_envelope import ExecutionMetrics, ExecutorEnvelope
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 @pytest.fixture

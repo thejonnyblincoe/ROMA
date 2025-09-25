@@ -4,31 +4,30 @@ Agent Factory for ROMA v2.0
 Creates configured agents using the factory pattern with proper dependency injection.
 """
 
-from typing import Dict, Any, Type, Optional, Union
-from pathlib import Path
 import logging
+from typing import Any
 
-from roma.infrastructure.agents.configurable_agent import ConfigurableAgent
-from roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
-from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
-from roma.infrastructure.prompts.prompt_template_manager import PromptTemplateManager
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.config.roma_config import ROMAConfig
-from roma.domain.value_objects.config.agent_config import AgentConfig
-from roma.domain.value_objects.config.model_config import ModelConfig
+from roma.domain.interfaces.agent_factory import IAgentFactory
 from roma.domain.value_objects.agent_responses import (
-    AtomizerResult,
-    PlannerResult,
-    ExecutorResult,
     AggregatorResult,
-    PlanModifierResult
+    AtomizerResult,
+    ExecutorResult,
+    PlanModifierResult,
+    PlannerResult,
 )
+from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.config.agent_config import AgentConfig
+from roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.domain.value_objects.task_type import TaskType
+from roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
+from roma.infrastructure.agents.configurable_agent import ConfigurableAgent
+from roma.infrastructure.prompts.prompt_template_manager import PromptTemplateManager
+from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
 
 logger = logging.getLogger(__name__)
 
 
-class AgentFactory:
+class AgentFactory(IAgentFactory):
     """Factory for creating configured agents."""
 
     def __init__(self, config: ROMAConfig):
@@ -49,7 +48,7 @@ class AgentFactory:
             "PlannerResult": PlannerResult,
             "ExecutorResult": ExecutorResult,
             "AggregatorResult": AggregatorResult,
-            "PlanModifierResult": PlanModifierResult
+            "PlanModifierResult": PlanModifierResult,
         }
 
         self._initialized = False
@@ -68,7 +67,7 @@ class AgentFactory:
         self._initialized = True
         logger.info("AgentFactory initialized")
 
-    def get_agent_config(self, task_type: TaskType, agent_type: AgentType) -> Dict[str, Any]:
+    def get_agent_config(self, task_type: TaskType, agent_type: AgentType) -> dict[str, Any]:
         """
         Get Hydra-resolved agent configuration from profile.
 
@@ -94,9 +93,9 @@ class AgentFactory:
         resolved_config = agent_mapping_dict[task_type.value]
 
         # Convert to dict if it's a config object
-        if hasattr(resolved_config, 'model_dump'):
+        if hasattr(resolved_config, "model_dump"):
             config_dict = resolved_config.model_dump()
-        elif hasattr(resolved_config, '__dict__'):
+        elif hasattr(resolved_config, "__dict__"):
             config_dict = resolved_config.__dict__.copy()
         elif isinstance(resolved_config, str):
             # Simple agent name - create minimal config for testing
@@ -104,22 +103,20 @@ class AgentFactory:
                 "name": resolved_config,
                 "type": agent_type.value,
                 "description": f"Test {agent_type.value} agent",
-                "model": {
-                    "provider": "litellm",
-                    "name": "gpt-4o",
-                    "temperature": 0.7
-                },
-                "enabled": True
+                "model": {"provider": "litellm", "name": "gpt-4o", "temperature": 0.7},
+                "enabled": True,
             }
         else:
             # Already a dict
             config_dict = dict(resolved_config)
 
         # Ensure task_type and agent_type are included as enums (not strings)
-        config_dict.update({
-            "task_type": task_type,  # Keep as TaskType enum
-            "agent_type": agent_type.value  # Keep as string since AgentConfig.type is str
-        })
+        config_dict.update(
+            {
+                "task_type": task_type,  # Keep as TaskType enum
+                "agent_type": agent_type.value,  # Keep as string since AgentConfig.type is str
+            }
+        )
 
         return config_dict
 
@@ -150,7 +147,9 @@ class AgentFactory:
                 return self.prompt_manager.load_template(agent_config.prompt_template)
             except FileNotFoundError:
                 template_paths_tried.append(agent_config.prompt_template)
-                logger.warning(f"Profile-specified template not found: {agent_config.prompt_template}")
+                logger.warning(
+                    f"Profile-specified template not found: {agent_config.prompt_template}"
+                )
 
         # 2. Try task-specific template
         task_specific_path = f"{agent_config.type}/{agent_config.task_type.value.lower()}.jinja2"
@@ -163,7 +162,9 @@ class AgentFactory:
         generic_path = f"{agent_config.type}/{agent_config.type}.jinja2"
         try:
             template = self.prompt_manager.load_template(generic_path)
-            logger.info(f"Using generic template fallback: {generic_path} for agent {agent_config.name}")
+            logger.info(
+                f"Using generic template fallback: {generic_path} for agent {agent_config.name}"
+            )
             return template
         except FileNotFoundError:
             template_paths_tried.append(generic_path)
@@ -174,7 +175,7 @@ class AgentFactory:
             f"Tried paths: {', '.join(template_paths_tried)}"
         )
 
-    def get_output_schema(self, schema_name: str) -> Type:
+    def get_output_schema(self, schema_name: str) -> type:
         """
         Get output schema class by name.
 
@@ -188,13 +189,13 @@ class AgentFactory:
             ValueError: If schema is unknown
         """
         if schema_name not in self.output_schemas:
-            raise ValueError(f"Unknown output schema: {schema_name}. Available: {list(self.output_schemas.keys())}")
+            raise ValueError(
+                f"Unknown output schema: {schema_name}. Available: {list(self.output_schemas.keys())}"
+            )
         return self.output_schemas[schema_name]
 
     async def create_agent(
-        self,
-        agent_config: AgentConfig,
-        output_schema_name: Optional[str] = None
+        self, agent_config: AgentConfig, output_schema_name: str | None = None
     ) -> ConfigurableAgent:
         """
         Create agent from configuration.
@@ -229,7 +230,7 @@ class AgentFactory:
             config=agent_config,
             framework_adapter=self.adapter,
             output_schema=output_schema,
-            prompt_template_manager=self.prompt_manager
+            prompt_template_manager=self.prompt_manager,
         )
 
         # Inject toolkit manager
@@ -238,16 +239,15 @@ class AgentFactory:
         logger.info(f"Created {agent_config.type} agent: {agent_config.name}")
         return agent
 
-
     def clear_cache(self) -> None:
         """Clear prompt template cache."""
         self.prompt_manager.clear_cache()
         logger.info("Agent factory cache cleared")
 
-    def get_cache_stats(self) -> Dict[str, int]:
+    def get_cache_stats(self) -> dict[str, int]:
         """Get cache statistics."""
         cache_info = self.prompt_manager.get_cache_info()
         return {
             "prompt_templates_cached": cache_info["cached_templates"],
-            "output_schemas_available": len(self.output_schemas)
+            "output_schemas_available": len(self.output_schemas),
         }

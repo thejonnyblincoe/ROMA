@@ -4,23 +4,25 @@ Unit tests for EventStore edge cases to improve coverage.
 Tests specific edge cases and error conditions in the EventStore implementation.
 """
 
-import pytest
-import asyncio
 from dataclasses import replace
-from unittest.mock import Mock, AsyncMock
-from datetime import datetime, timezone, timedelta
-from collections import defaultdict, deque
+from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
-from roma.domain.events.task_events import (
-    TaskCreatedEvent, TaskStatusChangedEvent, AtomizerEvaluatedEvent,
-    TaskCompletedEvent, TaskFailedEvent, BaseTaskEvent
-)
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
+import pytest
+
 from roma.application.services.event_store import (
-    InMemoryEventStore, EventFilter, get_event_store, emit_event
+    EventFilter,
+    InMemoryEventStore,
+    emit_event,
+    get_event_store,
 )
+from roma.domain.events.task_events import (
+    TaskCompletedEvent,
+    TaskCreatedEvent,
+    TaskStatusChangedEvent,
+)
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestEventStoreEdgeCases:
@@ -185,7 +187,7 @@ class TestEventStoreEdgeCases:
         store = InMemoryEventStore()
 
         # Create events with different timestamps
-        base_time = datetime.now(timezone.utc)
+        base_time = datetime.now(UTC)
 
         event1 = TaskCreatedEvent.create("task-1", "Goal 1", TaskType.THINK)
         event1 = replace(event1, timestamp=base_time + timedelta(seconds=2))  # Later
@@ -270,7 +272,7 @@ class TestEventStoreEdgeCases:
         """Test complex event filter combinations with edge cases."""
         store = InMemoryEventStore()
 
-        base_time = datetime.now(timezone.utc)
+        base_time = datetime.now(UTC)
 
         # Create event that matches some but not all filter criteria
         event = TaskCreatedEvent.create(
@@ -330,7 +332,6 @@ class TestGlobalEventStoreEdgeCases:
     @pytest.mark.asyncio
     async def test_get_event_store_creates_singleton(self):
         """Test that get_event_store creates singleton on first call."""
-        from roma.application.services.event_store import _global_event_store
 
         # Access the module-level variable to check initial state
         # (this is implementation detail testing for coverage)

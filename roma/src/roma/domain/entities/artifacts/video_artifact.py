@@ -8,11 +8,10 @@ video formats, content sources (URL, filepath, bytes), and validation.
 import base64
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, List
-from uuid import uuid4
+from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
+from pydantic import ConfigDict, field_validator, model_validator
 
 from roma.domain.entities.artifacts.base_artifact import BaseArtifact
 from roma.domain.value_objects.media_type import MediaType
@@ -39,24 +38,24 @@ class VideoArtifact(BaseArtifact):
     model_config = ConfigDict(frozen=True)
 
     # Video-specific fields following Agno pattern
-    url: Optional[str] = None
-    filepath: Optional[Union[str, Path]] = None
-    content: Optional[bytes] = None
+    url: str | None = None
+    filepath: str | Path | None = None
+    content: bytes | None = None
 
     # Video metadata
-    format: Optional[str] = None  # e.g., "MP4", "AVI", "MOV"
+    format: str | None = None  # e.g., "MP4", "AVI", "MOV"
     mime_type: str = "video/mp4"
-    duration_seconds: Optional[float] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-    fps: Optional[float] = None
-    bitrate: Optional[int] = None
+    duration_seconds: float | None = None
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    bitrate: int | None = None
 
     # Validation metadata
     _content_loaded: bool = False
 
-    @model_validator(mode='after')
-    def validate_content_sources(self) -> 'VideoArtifact':
+    @model_validator(mode="after")
+    def validate_content_sources(self) -> "VideoArtifact":
         """Validate exactly one content source is provided (Agno pattern)."""
         sources = [self.url, self.filepath, self.content]
         provided_sources = [s for s in sources if s is not None]
@@ -68,13 +67,19 @@ class VideoArtifact(BaseArtifact):
 
         return self
 
-    @field_validator('mime_type')
+    @field_validator("mime_type")
     @classmethod
     def validate_mime_type(cls, v: str) -> str:
         """Validate MIME type is video-related."""
         valid_mime_types = [
-            'video/mp4', 'video/avi', 'video/mov', 'video/wmv',
-            'video/flv', 'video/webm', 'video/mkv', 'video/m4v'
+            "video/mp4",
+            "video/avi",
+            "video/mov",
+            "video/wmv",
+            "video/flv",
+            "video/webm",
+            "video/mkv",
+            "video/m4v",
         ]
 
         if v not in valid_mime_types:
@@ -82,9 +87,9 @@ class VideoArtifact(BaseArtifact):
 
         return v
 
-    @field_validator('filepath')
+    @field_validator("filepath")
     @classmethod
-    def validate_filepath(cls, v: Optional[Union[str, Path]]) -> Optional[Path]:
+    def validate_filepath(cls, v: str | Path | None) -> Path | None:
         """Convert string paths to Path objects."""
         if v is None:
             return None
@@ -92,7 +97,16 @@ class VideoArtifact(BaseArtifact):
         path = Path(v) if isinstance(v, str) else v
 
         # Check file extension for common video formats
-        if path.suffix.lower() not in ['.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mkv', '.m4v']:
+        if path.suffix.lower() not in [
+            ".mp4",
+            ".avi",
+            ".mov",
+            ".wmv",
+            ".flv",
+            ".webm",
+            ".mkv",
+            ".m4v",
+        ]:
             logger.warning(f"File extension {path.suffix} may not be a supported video format")
 
         return path
@@ -102,7 +116,7 @@ class VideoArtifact(BaseArtifact):
         """Get the media type for this artifact."""
         return MediaType.VIDEO
 
-    async def get_content(self) -> Optional[bytes]:
+    async def get_content(self) -> bytes | None:
         """
         Get the raw video content bytes (Agno pattern).
 
@@ -122,29 +136,37 @@ class VideoArtifact(BaseArtifact):
             logger.error(f"Failed to load video content: {e}")
             return None
 
-    async def _load_from_file(self) -> Optional[bytes]:
+    async def _load_from_file(self) -> bytes | None:
         """Load video content from file."""
         try:
-            if not self.filepath.exists():
-                logger.error(f"Video file not found: {self.filepath}")
+            if self.filepath is None:
                 return None
 
-            with open(self.filepath, 'rb') as f:
-                return f.read()
+            # Convert to Path if it's a string
+            path_obj = Path(self.filepath) if isinstance(self.filepath, str) else self.filepath
+
+            if not path_obj.exists():
+                logger.error(f"Video file not found: {path_obj}")
+                return None
+
+            return path_obj.read_bytes()
         except Exception as e:
             logger.error(f"Error reading video file {self.filepath}: {e}")
             return None
 
-    async def _load_from_url(self) -> Optional[bytes]:
+    async def _load_from_url(self) -> bytes | None:
         """Load video content from URL."""
         try:
+            if self.url is None:
+                return None
+
             async with httpx.AsyncClient() as client:
                 response = await client.get(self.url)
                 response.raise_for_status()
 
                 # Validate content type
-                content_type = response.headers.get('content-type', '')
-                if not content_type.startswith('video/'):
+                content_type = response.headers.get("content-type", "")
+                if not content_type.startswith("video/"):
                     logger.warning(f"URL content type {content_type} is not video")
 
                 return response.content
@@ -174,20 +196,24 @@ class VideoArtifact(BaseArtifact):
             parts.append(f"bitrate={self.bitrate}bps")
 
         if self.url:
-            parts.append(f"source=URL")
+            parts.append("source=URL")
         elif self.filepath:
-            parts.append(f"source=file({self.filepath.name})")
+            path_obj = Path(self.filepath) if isinstance(self.filepath, str) else self.filepath
+            parts.append(f"source=file({path_obj.name})")
         else:
-            parts.append(f"source=bytes")
+            parts.append("source=bytes")
 
         return ", ".join(parts)
 
-    def get_size_bytes(self) -> Optional[int]:
+    def get_size_bytes(self) -> int | None:
         """Get video size in bytes."""
         if self.content:
             return len(self.content)
-        elif self.filepath and self.filepath.exists():
-            return self.filepath.stat().st_size
+        elif self.filepath:
+            path_obj = Path(self.filepath) if isinstance(self.filepath, str) else self.filepath
+            if path_obj.exists():
+                return path_obj.stat().st_size
+            return None
         else:
             # Cannot determine size for URLs without fetching
             return None
@@ -197,49 +223,49 @@ class VideoArtifact(BaseArtifact):
         if self.content:
             return True
         elif self.filepath:
-            return self.filepath.exists() and self.filepath.is_file()
-        elif self.url:
-            # Assume URL is accessible - would need async check to verify
-            return True
+            path_obj = Path(self.filepath) if isinstance(self.filepath, str) else self.filepath
+            return path_obj.exists() and path_obj.is_file()
         else:
-            return False
+            # URL is accessible if it exists - would need async check to fully verify
+            return self.url is not None
 
     def get_mime_type(self) -> str:
         """Get MIME type of the video."""
         return self.mime_type
 
-    def get_file_extension(self) -> Optional[str]:
+    def get_file_extension(self) -> str | None:
         """Get file extension based on format."""
         if self.filepath:
-            return self.filepath.suffix.lower()
+            path_obj = Path(self.filepath) if isinstance(self.filepath, str) else self.filepath
+            return path_obj.suffix.lower()
         elif self.format:
             format_to_ext = {
-                'MP4': '.mp4',
-                'MPEG4': '.mp4',
-                'AVI': '.avi',
-                'MOV': '.mov',
-                'WMV': '.wmv',
-                'FLV': '.flv',
-                'WEBM': '.webm',
-                'MKV': '.mkv',
-                'M4V': '.m4v'
+                "MP4": ".mp4",
+                "MPEG4": ".mp4",
+                "AVI": ".avi",
+                "MOV": ".mov",
+                "WMV": ".wmv",
+                "FLV": ".flv",
+                "WEBM": ".webm",
+                "MKV": ".mkv",
+                "M4V": ".m4v",
             }
             return format_to_ext.get(self.format.upper())
         else:
             # Try to infer from MIME type
             mime_to_ext = {
-                'video/mp4': '.mp4',
-                'video/avi': '.avi',
-                'video/mov': '.mov',
-                'video/wmv': '.wmv',
-                'video/flv': '.flv',
-                'video/webm': '.webm',
-                'video/mkv': '.mkv',
-                'video/m4v': '.m4v'
+                "video/mp4": ".mp4",
+                "video/avi": ".avi",
+                "video/mov": ".mov",
+                "video/wmv": ".wmv",
+                "video/flv": ".flv",
+                "video/webm": ".webm",
+                "video/mkv": ".mkv",
+                "video/m4v": ".m4v",
             }
             return mime_to_ext.get(self.mime_type)
 
-    async def to_base64(self, include_data_url: bool = False) -> Optional[str]:
+    async def to_base64(self, include_data_url: bool = False) -> str | None:
         """
         Convert video content to base64 string (Agno pattern).
 
@@ -253,7 +279,7 @@ class VideoArtifact(BaseArtifact):
         if not content:
             return None
 
-        b64_str = base64.b64encode(content).decode('utf-8')
+        b64_str = base64.b64encode(content).decode("utf-8")
 
         if include_data_url:
             return f"data:{self.mime_type};base64,{b64_str}"
@@ -262,12 +288,8 @@ class VideoArtifact(BaseArtifact):
 
     @classmethod
     def from_base64(
-        cls,
-        base64_str: str,
-        name: str,
-        mime_type: str = "video/mp4",
-        **kwargs: Any
-    ) -> 'VideoArtifact':
+        cls, base64_str: str, name: str, mime_type: str = "video/mp4", **kwargs: Any
+    ) -> "VideoArtifact":
         """
         Create VideoArtifact from base64 string (Agno pattern).
 
@@ -281,34 +303,25 @@ class VideoArtifact(BaseArtifact):
             New VideoArtifact instance
         """
         # Handle data URL format
-        if base64_str.startswith('data:'):
+        if base64_str.startswith("data:"):
             # Extract MIME type and base64 data
-            header, b64_data = base64_str.split(',', 1)
-            if ';base64' in header:
-                mime_type = header.split(';')[0].split(':')[1]
+            header, b64_data = base64_str.split(",", 1)
+            if ";base64" in header:
+                mime_type = header.split(";")[0].split(":")[1]
             base64_str = b64_data
 
         # Decode base64 to bytes
         try:
             content_bytes = base64.b64decode(base64_str)
         except Exception as e:
-            raise ValueError(f"Invalid base64 data: {e}")
+            raise ValueError(f"Invalid base64 data: {e}") from e
 
-        return cls(
-            name=name,
-            content=content_bytes,
-            mime_type=mime_type,
-            **kwargs
-        )
+        return cls(name=name, content=content_bytes, mime_type=mime_type, **kwargs)
 
     @classmethod
     def from_url(
-        cls,
-        url: str,
-        name: str,
-        mime_type: str = "video/mp4",
-        **kwargs: Any
-    ) -> 'VideoArtifact':
+        cls, url: str, name: str, mime_type: str = "video/mp4", **kwargs: Any
+    ) -> "VideoArtifact":
         """
         Create VideoArtifact from URL (Agno pattern).
 
@@ -321,21 +334,16 @@ class VideoArtifact(BaseArtifact):
         Returns:
             New VideoArtifact instance
         """
-        return cls(
-            name=name,
-            url=url,
-            mime_type=mime_type,
-            **kwargs
-        )
+        return cls(name=name, url=url, mime_type=mime_type, **kwargs)
 
     @classmethod
     def from_file(
         cls,
-        filepath: Union[str, Path],
-        name: Optional[str] = None,
-        mime_type: Optional[str] = None,
-        **kwargs: Any
-    ) -> 'VideoArtifact':
+        filepath: str | Path,
+        name: str | None = None,
+        mime_type: str | None = None,
+        **kwargs: Any,
+    ) -> "VideoArtifact":
         """
         Create VideoArtifact from file path (Agno pattern).
 
@@ -356,25 +364,20 @@ class VideoArtifact(BaseArtifact):
         if mime_type is None:
             # Auto-detect MIME type from extension
             ext_to_mime = {
-                '.mp4': 'video/mp4',
-                '.avi': 'video/avi',
-                '.mov': 'video/mov',
-                '.wmv': 'video/wmv',
-                '.flv': 'video/flv',
-                '.webm': 'video/webm',
-                '.mkv': 'video/mkv',
-                '.m4v': 'video/m4v'
+                ".mp4": "video/mp4",
+                ".avi": "video/avi",
+                ".mov": "video/mov",
+                ".wmv": "video/wmv",
+                ".flv": "video/flv",
+                ".webm": "video/webm",
+                ".mkv": "video/mkv",
+                ".m4v": "video/m4v",
             }
-            mime_type = ext_to_mime.get(path.suffix.lower(), 'video/mp4')
+            mime_type = ext_to_mime.get(path.suffix.lower(), "video/mp4")
 
-        return cls(
-            name=name,
-            filepath=path,
-            mime_type=mime_type,
-            **kwargs
-        )
+        return cls(name=name, filepath=path, mime_type=mime_type, **kwargs)
 
-    def to_dict(self, include_content: bool = False) -> Dict[str, Any]:
+    def to_dict(self, include_content: bool = False) -> dict[str, Any]:
         """
         Convert to dictionary for serialization (Agno pattern).
 
@@ -399,12 +402,12 @@ class VideoArtifact(BaseArtifact):
         }
 
         if include_content and self.content:
-            video_dict["content_base64"] = base64.b64encode(self.content).decode('utf-8')
+            video_dict["content_base64"] = base64.b64encode(self.content).decode("utf-8")
 
         return video_dict
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'VideoArtifact':
+    def from_dict(cls, data: dict[str, Any]) -> "VideoArtifact":
         """
         Create VideoArtifact from dictionary.
 

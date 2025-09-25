@@ -5,22 +5,21 @@ Tests the agent runtime service including agent creation, execution with proper
 agent_type parameter, ResultEnvelope creation, and event emission.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
 
 from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.event_store import InMemoryEventStore
 from roma.application.services.event_publisher import EventPublisher
-from roma.domain.context import TaskContext, ContextItem
-from roma.infrastructure.agents.agent_factory import AgentFactory
-from roma.infrastructure.agents.configurable_agent import ConfigurableAgent
+from roma.application.services.event_store import InMemoryEventStore
+from roma.domain.context import ContextItem, TaskContext
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
+from roma.domain.value_objects.agent_responses import ExecutorResult
 from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.result_envelope import ResultEnvelope
-from roma.domain.value_objects.result_envelope import ExecutionMetrics
-from roma.domain.value_objects.agent_responses import ExecutorResult
+from roma.domain.value_objects.task_type import TaskType
+from roma.infrastructure.agents.agent_factory import AgentFactory
+from roma.infrastructure.agents.configurable_agent import ConfigurableAgent
 
 
 @pytest.fixture

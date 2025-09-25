@@ -2,14 +2,13 @@
 Integration Test for PostgreSQL Persistence Layer
 """
 
-import pytest
-import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import pytest
+from src.roma.domain.events.task_events import TaskEvent
 from src.roma.domain.value_objects.config.database_config import DatabaseConfig, DatabasePoolConfig
 from src.roma.infrastructure.persistence.connection_manager import DatabaseConnectionManager
 from src.roma.infrastructure.persistence.postgres_event_store import PostgreSQLEventStore
-from src.roma.domain.events.task_events import TaskEvent
 
 
 @pytest.mark.asyncio
@@ -105,7 +104,7 @@ class TestPostgreSQLIntegration:
         event = TaskEvent(
             task_id="test_task_123",
             event_type="test_event",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             metadata={"test_key": "test_value"}
         )
 

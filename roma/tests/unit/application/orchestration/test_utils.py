@@ -6,23 +6,22 @@ and improve maintainability following DRY principles.
 """
 
 import asyncio
-from typing import List
 from unittest.mock import AsyncMock
 
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
-from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 from roma.application.orchestration.graph_state_manager import GraphStateManager
 from roma.application.services.event_store import InMemoryEventStore
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestGraphFactory:
     """Factory for creating test graphs with common patterns."""
-    
+
     @staticmethod
-    async def create_parallel_graph(nodes: List[TaskNode]) -> DynamicTaskGraph:
+    async def create_parallel_graph(nodes: list[TaskNode]) -> DynamicTaskGraph:
         """
         Create parallel graph: root -> [child1, child2, child3, ...].
         
@@ -34,19 +33,19 @@ class TestGraphFactory:
         """
         if not nodes:
             raise ValueError("At least one node required")
-            
+
         graph = DynamicTaskGraph(root_node=nodes[0])
-        
+
         # All other nodes depend on root
         root_id = nodes[0].task_id
         for node in nodes[1:]:
             child_node = node.model_copy(update={"parent_id": root_id})
             await graph.add_node(child_node)
-            
+
         return graph
-    
+
     @staticmethod
-    async def create_linear_graph(nodes: List[TaskNode]) -> DynamicTaskGraph:
+    async def create_linear_graph(nodes: list[TaskNode]) -> DynamicTaskGraph:
         """
         Create linear dependency graph: node1 -> node2 -> node3 -> ...
         
@@ -58,18 +57,18 @@ class TestGraphFactory:
         """
         if not nodes:
             raise ValueError("At least one node required")
-            
+
         graph = DynamicTaskGraph(root_node=nodes[0])
-        
+
         # Create linear chain
         previous_node = nodes[0]
         for node in nodes[1:]:
             child_node = node.model_copy(update={"parent_id": previous_node.task_id})
             await graph.add_node(child_node)
             previous_node = child_node
-            
+
         return graph
-    
+
     @staticmethod
     async def create_deep_chain_graph(depth: int, goal_prefix: str = "Task") -> DynamicTaskGraph:
         """
@@ -84,7 +83,7 @@ class TestGraphFactory:
         """
         if depth < 1:
             raise ValueError("Depth must be at least 1")
-            
+
         # Create root
         root = TaskNode(
             goal=f"{goal_prefix} 0 (root)",
@@ -92,9 +91,9 @@ class TestGraphFactory:
             node_type=NodeType.EXECUTE,
             status=TaskStatus.PENDING
         )
-        
+
         graph = DynamicTaskGraph(root_node=root)
-        
+
         # Create chain of specified depth
         previous = root
         for i in range(1, depth):
@@ -107,29 +106,29 @@ class TestGraphFactory:
             )
             await graph.add_node(node)
             previous = node
-            
+
         return graph
 
 
 class MockExecutorFactory:
     """Factory for creating mock executors with common patterns."""
-    
+
     @staticmethod
     def create_successful_executor() -> AsyncMock:
         """Create mock executor that always succeeds."""
         executor = AsyncMock()
         executor.execute_task.return_value = {"status": "completed", "result": "success"}
         return executor
-    
+
     @staticmethod
     def create_failing_executor(error_message: str = "Task execution failed") -> AsyncMock:
         """Create mock executor that always fails."""
         executor = AsyncMock()
         executor.execute_task.side_effect = Exception(error_message)
         return executor
-    
+
     @staticmethod
-    def create_selective_failure_executor(failure_indices: List[int]) -> AsyncMock:
+    def create_selective_failure_executor(failure_indices: list[int]) -> AsyncMock:
         """
         Create mock executor that fails on specific call indices.
         
@@ -141,17 +140,17 @@ class MockExecutorFactory:
         """
         executor = AsyncMock()
         call_count = 0
-        
+
         async def selective_failure(node):
             nonlocal call_count
             call_count += 1
             if (call_count - 1) in failure_indices:  # Convert to 0-based
                 raise Exception(f"Task {node.task_id} failed on call {call_count}")
             return {"status": "completed", "result": "success"}
-        
+
         executor.execute_task.side_effect = selective_failure
         return executor
-    
+
     @staticmethod
     def create_delay_executor(delay_seconds: float = 0.1) -> AsyncMock:
         """
@@ -164,18 +163,18 @@ class MockExecutorFactory:
             AsyncMock with delay
         """
         executor = AsyncMock()
-        
+
         async def delayed_execution(node):
             await asyncio.sleep(delay_seconds)
             return {"status": "completed", "result": f"completed_{node.task_id}"}
-        
+
         executor.execute_task.side_effect = delayed_execution
         return executor
 
 
 class TestStateManagerFactory:
     """Factory for creating test state managers with common configurations."""
-    
+
     @staticmethod
     def create_state_manager(graph: DynamicTaskGraph) -> GraphStateManager:
         """
@@ -189,10 +188,10 @@ class TestStateManagerFactory:
         """
         event_store = InMemoryEventStore()
         return GraphStateManager(graph=graph, event_store=event_store)
-    
+
     @staticmethod
     def create_failing_event_store_state_manager(
-        graph: DynamicTaskGraph, 
+        graph: DynamicTaskGraph,
         error_message: str = "Event store connection lost"
     ) -> GraphStateManager:
         """
@@ -212,9 +211,9 @@ class TestStateManagerFactory:
 
 class SampleNodeFactory:
     """Factory for creating sample nodes with common configurations."""
-    
+
     @staticmethod
-    def create_sample_nodes(count: int = 4) -> List[TaskNode]:
+    def create_sample_nodes(count: int = 4) -> list[TaskNode]:
         """
         Create list of sample task nodes for testing.
         
@@ -229,11 +228,11 @@ class SampleNodeFactory:
         node_types = [NodeType.PLAN, NodeType.EXECUTE, NodeType.EXECUTE, NodeType.EXECUTE]
         goals = [
             "Root task - research cryptocurrency",
-            "Retrieve Bitcoin price data", 
+            "Retrieve Bitcoin price data",
             "Analyze market trends",
             "Write analysis report"
         ]
-        
+
         for i in range(count):
             node = TaskNode(
                 goal=goals[i % len(goals)] + f" ({i})" if i >= len(goals) else goals[i],
@@ -242,9 +241,9 @@ class SampleNodeFactory:
                 status=TaskStatus.PENDING
             )
             nodes.append(node)
-            
+
         return nodes
-    
+
     @staticmethod
     def create_single_node(
         goal: str = "Test task",
@@ -279,7 +278,7 @@ def create_test_environment():
     event_store = InMemoryEventStore()
     graph = DynamicTaskGraph(root_node=nodes[0])
     state_manager = GraphStateManager(graph=graph, event_store=event_store)
-    
+
     return {
         'nodes': nodes,
         'event_store': event_store,

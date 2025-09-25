@@ -6,15 +6,16 @@ Uses graph's own cycle detection and node filtering capabilities.
 """
 
 import logging
-from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.deadlock_analysis import (
-    DeadlockReport, DeadlockSummary, DeadlockType, DeadlockSeverity
-)
 from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-
+from roma.domain.value_objects.deadlock_analysis import (
+    DeadlockReport,
+    DeadlockSeverity,
+    DeadlockSummary,
+    DeadlockType,
+)
+from roma.domain.value_objects.task_status import TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,7 @@ class DeadlockDetector:
     Delegates all graph operations to the graph itself.
     """
 
-    def __init__(self,
-                 graph: DynamicTaskGraph,
-                 stall_threshold_seconds: int = 600):
+    def __init__(self, graph: DynamicTaskGraph, stall_threshold_seconds: int = 600):
         """
         Initialize deadlock detector.
 
@@ -41,26 +40,26 @@ class DeadlockDetector:
         self.stall_threshold = stall_threshold_seconds
 
         # Simple state tracking
-        self.monitoring_start_time: Optional[datetime] = None
-        self.detected_deadlocks: List[DeadlockReport] = []
+        self.monitoring_start_time: datetime | None = None
+        self.detected_deadlocks: list[DeadlockReport] = []
 
         logger.info(f"DeadlockDetector initialized with {stall_threshold_seconds}s stall threshold")
 
     def start_monitoring(self) -> None:
         """Start deadlock monitoring for execution."""
-        self.monitoring_start_time = datetime.now(timezone.utc)
+        self.monitoring_start_time = datetime.now(UTC)
         self.detected_deadlocks.clear()
         logger.info("Deadlock monitoring started")
 
-    def analyze_execution_state(self) -> List[DeadlockReport]:
+    def analyze_execution_state(self) -> list[DeadlockReport]:
         """
         Analyze current execution state for deadlocks using graph methods.
 
         Returns:
             List of detected deadlock reports
         """
-        reports: List[DeadlockReport] = []
-        current_time = datetime.now(timezone.utc)
+        reports: list[DeadlockReport] = []
+        current_time = datetime.now(UTC)
 
         # 1. Check for circular dependencies using graph's cycle detection
         if self.graph.has_cycles():
@@ -76,10 +75,10 @@ class DeadlockDetector:
                     suggested_actions=[
                         "Break dependency cycle by restructuring subtasks",
                         "Review task decomposition for circular dependencies",
-                        "Consider manual intervention to resolve dependency loop"
+                        "Consider manual intervention to resolve dependency loop",
                     ],
                     detection_time=current_time,
-                    cycle_path=cycle_nodes
+                    cycle_path=cycle_nodes,
                 )
                 reports.append(cycle_report)
 
@@ -92,11 +91,13 @@ class DeadlockDetector:
         for report in reports:
             if not self._is_duplicate_deadlock(report):
                 self.detected_deadlocks.append(report)
-                logger.warning(f"Deadlock detected: {report.deadlock_type.value} - {report.description}")
+                logger.warning(
+                    f"Deadlock detected: {report.deadlock_type.value} - {report.description}"
+                )
 
         return reports
 
-    def _detect_infinite_waits(self, current_time: datetime) -> Optional[DeadlockReport]:
+    def _detect_infinite_waits(self, current_time: datetime) -> DeadlockReport | None:
         """Detect nodes waiting for failed dependencies using graph methods."""
         # Use graph's node filtering methods
         pending_nodes = self.graph.get_nodes_by_status(TaskStatus.PENDING)
@@ -123,16 +124,17 @@ class DeadlockDetector:
                 "Retry failed dependency nodes",
                 "Remove problematic dependencies",
                 "Trigger replanning for affected subtrees",
-                "Mark waiting nodes as failed to unblock execution"
+                "Mark waiting nodes as failed to unblock execution",
             ],
-            detection_time=current_time
+            detection_time=current_time,
         )
 
     def _is_duplicate_deadlock(self, new_report: DeadlockReport) -> bool:
         """Check if this deadlock has already been reported."""
         for existing in self.detected_deadlocks:
-            if (existing.deadlock_type == new_report.deadlock_type and
-                set(existing.affected_nodes) == set(new_report.affected_nodes)):
+            if existing.deadlock_type == new_report.deadlock_type and set(
+                existing.affected_nodes
+            ) == set(new_report.affected_nodes):
                 return True
         return False
 
@@ -142,7 +144,7 @@ class DeadlockDetector:
             return DeadlockSummary(
                 total_deadlocks=0,
                 status="healthy",
-                monitoring_duration_seconds=self._get_monitoring_duration()
+                monitoring_duration_seconds=self._get_monitoring_duration(),
             )
 
         by_type = {}
@@ -163,7 +165,9 @@ class DeadlockDetector:
                 has_critical = True
 
         status = "deadlocked" if has_critical else "degraded"
-        latest_type = self.detected_deadlocks[-1].deadlock_type.value if self.detected_deadlocks else None
+        latest_type = (
+            self.detected_deadlocks[-1].deadlock_type.value if self.detected_deadlocks else None
+        )
 
         return DeadlockSummary(
             total_deadlocks=len(self.detected_deadlocks),
@@ -172,14 +176,14 @@ class DeadlockDetector:
             by_severity=by_severity,
             monitoring_duration_seconds=self._get_monitoring_duration(),
             latest_deadlock_type=latest_type,
-            has_critical_deadlocks=has_critical
+            has_critical_deadlocks=has_critical,
         )
 
     def _get_monitoring_duration(self) -> float:
         """Get monitoring duration in seconds."""
         if not self.monitoring_start_time:
             return 0.0
-        return (datetime.now(timezone.utc) - self.monitoring_start_time).total_seconds()
+        return (datetime.now(UTC) - self.monitoring_start_time).total_seconds()
 
     def clear_deadlocks(self) -> None:
         """Clear detected deadlocks (for recovery scenarios)."""
@@ -187,6 +191,6 @@ class DeadlockDetector:
         self.detected_deadlocks.clear()
         logger.info(f"Cleared {cleared_count} deadlock reports")
 
-    def get_all_deadlocks(self) -> List[DeadlockReport]:
+    def get_all_deadlocks(self) -> list[DeadlockReport]:
         """Get all detected deadlock reports."""
         return self.detected_deadlocks.copy()

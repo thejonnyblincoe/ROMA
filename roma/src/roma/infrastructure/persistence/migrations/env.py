@@ -5,7 +5,6 @@ Alembic Environment Configuration for ROMA v2.0
 import asyncio
 import os
 from logging.config import fileConfig
-from typing import Any
 
 from alembic import context
 from sqlalchemy import pool
@@ -14,15 +13,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 # Import all models to ensure they are registered with Base.metadata
 from roma.infrastructure.persistence.models.base import Base
-from roma.infrastructure.persistence.models.event_model import EventModel
-from roma.infrastructure.persistence.models.task_execution_model import (
-    TaskExecutionModel,
-    TaskRelationshipModel
-)
-from roma.infrastructure.persistence.models.checkpoint_model import (
-    ExecutionCheckpointModel,
-    RecoveryStateModel
-)
 
 # This is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -64,8 +54,15 @@ def get_database_url() -> str:
     user = os.getenv("ROMA_DB_USER", "roma_user")
     password = os.getenv("ROMA_DB_PASSWORD", "roma_password")
 
-    if any([host != "localhost", port != "5432", database != "roma_db",
-            user != "roma_user", password != "roma_password"]):
+    if any(
+        [
+            host != "localhost",
+            port != "5432",
+            database != "roma_db",
+            user != "roma_user",
+            password != "roma_password",
+        ]
+    ):
         return f"postgresql://{user}:{password}@{host}:{port}/{database}"
 
     # Fall back to config file

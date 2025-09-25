@@ -5,14 +5,14 @@ Defines the repository interface for checkpoint persistence operations.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any
+
 from roma.domain.value_objects.persistence import (
-    CheckpointType,
-    RecoveryStatus,
+    CheckpointAnalytics,
     CheckpointRecord,
     CheckpointSummary,
-    CheckpointAnalytics,
+    CheckpointType,
+    RecoveryStatus,
 )
 
 
@@ -25,10 +25,7 @@ class CheckpointRepository(ABC):
     """
 
     @abstractmethod
-    async def create_checkpoint(
-        self,
-        checkpoint_record: CheckpointRecord
-    ) -> str:
+    async def create_checkpoint(self, checkpoint_record: CheckpointRecord) -> str:
         """
         Create a new checkpoint.
 
@@ -38,10 +35,9 @@ class CheckpointRepository(ABC):
         Returns:
             Checkpoint ID
         """
-        pass
 
     @abstractmethod
-    async def get_checkpoint(self, checkpoint_id: str) -> Optional[CheckpointRecord]:
+    async def get_checkpoint(self, checkpoint_id: str) -> CheckpointRecord | None:
         """
         Get checkpoint by ID.
 
@@ -51,14 +47,11 @@ class CheckpointRepository(ABC):
         Returns:
             Checkpoint record or None if not found
         """
-        pass
 
     @abstractmethod
     async def get_latest_checkpoint(
-        self,
-        execution_id: str,
-        checkpoint_type: Optional[CheckpointType] = None
-    ) -> Optional[CheckpointRecord]:
+        self, execution_id: str, checkpoint_type: CheckpointType | None = None
+    ) -> CheckpointRecord | None:
         """
         Get the latest checkpoint for an execution.
 
@@ -69,14 +62,11 @@ class CheckpointRepository(ABC):
         Returns:
             Latest checkpoint or None
         """
-        pass
 
     @abstractmethod
     async def list_checkpoints(
-        self,
-        execution_id: str,
-        include_expired: bool = False
-    ) -> List[CheckpointSummary]:
+        self, execution_id: str, include_expired: bool = False
+    ) -> list[CheckpointSummary]:
         """
         List all checkpoints for an execution.
 
@@ -87,7 +77,6 @@ class CheckpointRepository(ABC):
         Returns:
             List of checkpoint summaries
         """
-        pass
 
     @abstractmethod
     async def get_next_sequence_number(self, execution_id: str) -> int:
@@ -100,7 +89,6 @@ class CheckpointRepository(ABC):
         Returns:
             Next sequence number
         """
-        pass
 
     @abstractmethod
     async def invalidate_checkpoint(self, checkpoint_id: str) -> None:
@@ -110,7 +98,6 @@ class CheckpointRepository(ABC):
         Args:
             checkpoint_id: Checkpoint ID to invalidate
         """
-        pass
 
     @abstractmethod
     async def cleanup_expired_checkpoints(self) -> int:
@@ -120,7 +107,6 @@ class CheckpointRepository(ABC):
         Returns:
             Number of checkpoints cleaned up
         """
-        pass
 
     @abstractmethod
     async def cleanup_old_checkpoints(self, days: int = 30) -> int:
@@ -133,7 +119,6 @@ class CheckpointRepository(ABC):
         Returns:
             Number of checkpoints deleted
         """
-        pass
 
     @abstractmethod
     async def get_checkpoint_analytics(self) -> CheckpointAnalytics:
@@ -143,7 +128,6 @@ class CheckpointRepository(ABC):
         Returns:
             Checkpoint analytics
         """
-        pass
 
 
 class RecoveryRepository(ABC):
@@ -156,10 +140,10 @@ class RecoveryRepository(ABC):
         self,
         task_id: str,
         execution_id: str,
-        checkpoint_id: Optional[str],
+        checkpoint_id: str | None,
         recovery_strategy: str,
-        error_context: Optional[Dict[str, Any]],
-        attempt_number: int
+        error_context: dict[str, Any] | None,
+        attempt_number: int,
     ) -> str:
         """
         Create a recovery state.
@@ -175,16 +159,15 @@ class RecoveryRepository(ABC):
         Returns:
             Recovery ID
         """
-        pass
 
     @abstractmethod
     async def update_recovery_status(
         self,
         recovery_id: str,
         status: RecoveryStatus,
-        state_data: Optional[Dict[str, Any]] = None,
-        recovery_result: Optional[Dict[str, Any]] = None,
-        failure_reason: Optional[str] = None
+        state_data: dict[str, Any] | None = None,
+        recovery_result: dict[str, Any] | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         """
         Update recovery operation status.
@@ -196,7 +179,6 @@ class RecoveryRepository(ABC):
             recovery_result: Recovery result
             failure_reason: Failure reason if unsuccessful
         """
-        pass
 
     @abstractmethod
     async def get_next_attempt_number(self, task_id: str) -> int:
@@ -209,4 +191,3 @@ class RecoveryRepository(ABC):
         Returns:
             Next attempt number
         """
-        pass

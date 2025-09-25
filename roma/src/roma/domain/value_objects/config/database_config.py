@@ -2,10 +2,11 @@
 Database Configuration Value Objects for ROMA v2.0 PostgreSQL Persistence
 """
 
-from pydantic.dataclasses import dataclass, Field
-from pydantic import field_validator
-from typing import Optional, Dict, Any
 import os
+from typing import Any
+
+from pydantic import Field, field_validator
+from pydantic.dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -34,9 +35,9 @@ class DatabaseConfig:
 
     # SSL and security
     ssl_mode: str = "prefer"
-    ssl_cert: Optional[str] = None
-    ssl_key: Optional[str] = None
-    ssl_ca: Optional[str] = None
+    ssl_cert: str | None = None
+    ssl_key: str | None = None
+    ssl_ca: str | None = None
 
     # Connection pool settings
     pool: DatabasePoolConfig = Field(default_factory=DatabasePoolConfig)
@@ -83,7 +84,7 @@ class DatabaseConfig:
             raise ValueError(f"SSL mode must be one of {valid_modes}, got: {v}")
         return v
 
-    def get_connection_string_from_env(self) -> Optional[str]:
+    def get_connection_string_from_env(self) -> str | None:
         """Get connection string from environment, following SecurityConfig pattern."""
         return os.getenv("ROMA_DATABASE_URL")
 
@@ -91,7 +92,7 @@ class DatabaseConfig:
         """Get PostgreSQL DSN connection string."""
         dsn_parts = [
             f"postgresql://{self.user}:{self.password}",
-            f"@{self.host}:{self.port}/{self.database}"
+            f"@{self.host}:{self.port}/{self.database}",
         ]
 
         params = []
@@ -109,7 +110,7 @@ class DatabaseConfig:
 
         return "".join(dsn_parts)
 
-    def get_asyncpg_kwargs(self) -> dict:
+    def get_asyncpg_kwargs(self) -> dict[str, Any]:
         """Get kwargs for asyncpg connection."""
         return {
             "host": self.host,
@@ -126,7 +127,7 @@ class DatabaseConfig:
             "max_cacheable_statement_size": self.pool.max_cacheable_statement_size,
         }
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "host": self.host,
@@ -157,7 +158,7 @@ class DatabaseConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "DatabaseConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "DatabaseConfig":
         """Create from dictionary."""
         pool_data = data.get("pool", {})
         pool_config = DatabasePoolConfig(

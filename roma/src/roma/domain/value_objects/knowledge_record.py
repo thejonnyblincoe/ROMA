@@ -4,14 +4,14 @@ Knowledge Record Value Object - ROMA v2.0 Domain Layer.
 Thread-safe immutable value object for storing task execution knowledge.
 """
 
-from datetime import datetime, timezone
-from typing import List, Optional, Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.result_envelope import AnyResultEnvelope
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 class KnowledgeRecord(BaseModel):
@@ -31,21 +31,20 @@ class KnowledgeRecord(BaseModel):
     status: TaskStatus = Field(..., description="Task status")
 
     # Artifacts and Results
-    artifacts: List[str] = Field(default_factory=list, description="Artifact storage keys")
-    result: Optional[AnyResultEnvelope] = Field(None, description="Task execution result envelope")
+    artifacts: list[str] = Field(default_factory=list, description="Artifact storage keys")
+    result: AnyResultEnvelope | None = Field(None, description="Task execution result envelope")
 
     # Relationships
-    parent_task_id: Optional[str] = Field(None, description="Parent task ID")
-    child_task_ids: List[str] = Field(default_factory=list, description="Child task IDs")
+    parent_task_id: str | None = Field(None, description="Parent task ID")
+    child_task_ids: list[str] = Field(default_factory=list, description="Child task IDs")
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation time")
     updated_at: datetime = Field(..., description="Last update time")
-    completed_at: Optional[datetime] = Field(None, description="Completion time")
+    completed_at: datetime | None = Field(None, description="Completion time")
 
     # Version tracking for optimistic concurrency
     version: int = Field(default=0, description="Record version for updates")
-
 
     @classmethod
     def create(
@@ -54,12 +53,12 @@ class KnowledgeRecord(BaseModel):
         goal: str,
         task_type: TaskType,
         status: TaskStatus,
-        artifacts: Optional[List[str]] = None,
-        parent_task_id: Optional[str] = None,
-        result: Optional[AnyResultEnvelope] = None
+        artifacts: list[str] | None = None,
+        parent_task_id: str | None = None,
+        result: AnyResultEnvelope | None = None,
     ) -> "KnowledgeRecord":
         """Create new KnowledgeRecord (immutable value objects are inherently thread-safe)."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         return cls(
             task_id=task_id,
@@ -73,18 +72,20 @@ class KnowledgeRecord(BaseModel):
             created_at=now,
             updated_at=now,
             completed_at=now if status == TaskStatus.COMPLETED else None,
-            version=0
+            version=0,
         )
 
     def update_status(self, new_status: TaskStatus) -> "KnowledgeRecord":
         """Update status - returns new instance."""
-        now = datetime.now(timezone.utc)
-        return self.model_copy(update={
-            "status": new_status,
-            "updated_at": now,
-            "completed_at": now if new_status == TaskStatus.COMPLETED else self.completed_at,
-            "version": self.version + 1
-        })
+        now = datetime.now(UTC)
+        return self.model_copy(
+            update={
+                "status": new_status,
+                "updated_at": now,
+                "completed_at": now if new_status == TaskStatus.COMPLETED else self.completed_at,
+                "version": self.version + 1,
+            }
+        )
 
     def add_child(self, child_id: str) -> "KnowledgeRecord":
         """Add child - returns new instance."""
@@ -95,13 +96,15 @@ class KnowledgeRecord(BaseModel):
         updated_children = list(self.child_task_ids)
         updated_children.append(child_id)
 
-        return self.model_copy(update={
-            "child_task_ids": updated_children,
-            "updated_at": datetime.now(timezone.utc),
-            "version": self.version + 1
-        })
+        return self.model_copy(
+            update={
+                "child_task_ids": updated_children,
+                "updated_at": datetime.now(UTC),
+                "version": self.version + 1,
+            }
+        )
 
-    def add_artifacts(self, artifact_keys: List[str]) -> "KnowledgeRecord":
+    def add_artifacts(self, artifact_keys: list[str]) -> "KnowledgeRecord":
         """Add artifacts - returns new instance."""
         if not artifact_keys:
             return self  # No change needed
@@ -119,11 +122,13 @@ class KnowledgeRecord(BaseModel):
         if not changes_made:
             return self  # No new artifacts were added
 
-        return self.model_copy(update={
-            "artifacts": updated_artifacts,
-            "updated_at": datetime.now(timezone.utc),
-            "version": self.version + 1
-        })
+        return self.model_copy(
+            update={
+                "artifacts": updated_artifacts,
+                "updated_at": datetime.now(UTC),
+                "version": self.version + 1,
+            }
+        )
 
     def is_completed(self) -> bool:
         """Check if task is completed."""
@@ -141,7 +146,7 @@ class KnowledgeRecord(BaseModel):
         """Check if record has execution result."""
         return self.result is not None
 
-    def extract_content(self) -> Optional[str]:
+    def extract_content(self) -> str | None:
         """
         Extract primary content from result envelope.
 
@@ -152,7 +157,7 @@ class KnowledgeRecord(BaseModel):
             return None
 
         # Use ResultEnvelope's extract_primary_output method if available
-        if hasattr(self.result, 'extract_primary_output'):
+        if hasattr(self.result, "extract_primary_output"):
             try:
                 return self.result.extract_primary_output()
             except Exception:
@@ -182,13 +187,13 @@ class KnowledgeRecord(BaseModel):
 
         # Find word boundary for clean truncation
         truncated = content[:max_length]
-        last_space = truncated.rfind(' ')
+        last_space = truncated.rfind(" ")
         if last_space > max_length // 2:  # Only use word boundary if it's not too short
             truncated = truncated[:last_space]
 
         return truncated + "..."
 
-    def to_context_dict(self) -> Dict[str, Any]:
+    def to_context_dict(self) -> dict[str, Any]:
         """
         Convert to standardized context dictionary for context building.
 
@@ -209,5 +214,5 @@ class KnowledgeRecord(BaseModel):
             "has_result": self.has_result(),
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }

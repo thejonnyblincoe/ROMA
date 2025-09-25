@@ -5,15 +5,12 @@ Core context structures for task execution that belong in the domain layer.
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Any
 from uuid import uuid4
-from datetime import datetime, timezone
-from enum import Enum
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from roma.domain.entities.artifacts.base_artifact import BaseArtifact
-from roma.domain.entities.artifacts.file_artifact import FileArtifact
 from roma.domain.value_objects.context_item_type import ContextItemType
 
 logger = logging.getLogger(__name__)
@@ -41,6 +38,9 @@ class ContextConfig(BaseModel):
 
     # Context prioritization and overflow limits
     enable_context_prioritization: bool = Field(default=True)
+    enable_context_validation: bool = Field(
+        default=True, description="Enable agent-aware context validation"
+    )
     max_total_context_tokens: int = Field(default=8000, ge=1000, le=32000)
     max_parent_items: int = Field(default=5, ge=1, le=20)
     max_sibling_items: int = Field(default=8, ge=1, le=30)
@@ -56,7 +56,7 @@ class ContextItem(BaseModel):
     item_id: str = Field(default_factory=lambda: str(uuid4()))
     item_type: ContextItemType
     content: Any
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     priority: int = 0
 
     @classmethod
@@ -64,30 +64,19 @@ class ContextItem(BaseModel):
         cls,
         content: str,
         item_type: ContextItemType,
-        metadata: Optional[Dict[str, Any]] = None,
-        priority: int = 0
+        metadata: dict[str, Any] | None = None,
+        priority: int = 0,
     ) -> "ContextItem":
         """Create context item from text content."""
-        return cls(
-            item_type=item_type,
-            content=content,
-            metadata=metadata or {},
-            priority=priority
-        )
+        return cls(item_type=item_type, content=content, metadata=metadata or {}, priority=priority)
 
     @classmethod
     def from_artifact(
-        cls,
-        artifact: BaseArtifact,
-        item_type: ContextItemType,
-        priority: int = 0
+        cls, artifact: BaseArtifact, item_type: ContextItemType, priority: int = 0
     ) -> "ContextItem":
         """Create context item from artifact."""
         return cls(
-            item_type=item_type,
-            content=artifact,
-            metadata=artifact.metadata,
-            priority=priority
+            item_type=item_type, content=artifact, metadata=artifact.metadata, priority=priority
         )
 
 
@@ -102,14 +91,14 @@ class TaskContext(BaseModel):
     execution_id: str = Field(..., description="Execution ID for session isolation")
 
     # Context items (ordered by priority)
-    context_items: List[ContextItem] = Field(default_factory=list)
+    context_items: list[ContextItem] = Field(default_factory=list)
 
     # System metadata
-    execution_metadata: Dict[str, Any] = Field(default_factory=dict)
-    constraints: List[str] = Field(default_factory=list)
-    user_preferences: Dict[str, Any] = Field(default_factory=dict)
+    execution_metadata: dict[str, Any] = Field(default_factory=dict)
+    constraints: list[str] = Field(default_factory=list)
+    user_preferences: dict[str, Any] = Field(default_factory=dict)
 
-    def get_text_content(self) -> List[str]:
+    def get_text_content(self) -> list[str]:
         """Extract all text content from context."""
         text_types = {
             ContextItemType.TASK_GOAL,
@@ -120,21 +109,22 @@ class TaskContext(BaseModel):
             ContextItemType.SIBLING_RESULT,
             ContextItemType.CHILD_RESULT,
             ContextItemType.PRIOR_WORK,
-            ContextItemType.REFERENCE_TEXT
+            ContextItemType.REFERENCE_TEXT,
         }
         text_items = [
-            item.content for item in self.context_items
+            item.content
+            for item in self.context_items
             if item.item_type in text_types and isinstance(item.content, str)
         ]
         return text_items
 
-    def get_file_artifacts(self) -> List[BaseArtifact]:
+    def get_file_artifacts(self) -> list[BaseArtifact]:
         """Extract all file artifacts from context."""
         artifact_types = {
             ContextItemType.IMAGE_ARTIFACT,
             ContextItemType.AUDIO_ARTIFACT,
             ContextItemType.VIDEO_ARTIFACT,
-            ContextItemType.FILE_ARTIFACT
+            ContextItemType.FILE_ARTIFACT,
         }
         file_items = []
         for item in self.context_items:
@@ -142,11 +132,11 @@ class TaskContext(BaseModel):
                 file_items.append(item.content)
         return file_items
 
-    def get_by_item_type(self, item_type: ContextItemType) -> List[ContextItem]:
+    def get_by_item_type(self, item_type: ContextItemType) -> list[ContextItem]:
         """Get context items by item type."""
         return [item for item in self.context_items if item.item_type == item_type]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "task": self.task.to_dict(),
@@ -157,11 +147,12 @@ class TaskContext(BaseModel):
                     "item_id": item.item_id,
                     "item_type": item.item_type.value,
                     "content": (
-                        item.content.to_dict() if isinstance(item.content, BaseArtifact)
+                        item.content.to_dict()
+                        if isinstance(item.content, BaseArtifact)
                         else str(item.content)
                     ),
                     "metadata": item.metadata,
-                    "priority": item.priority
+                    "priority": item.priority,
                 }
                 for item in self.context_items
             ],

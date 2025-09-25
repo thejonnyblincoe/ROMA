@@ -5,32 +5,34 @@ Main user-facing API using Hydra ConfigStore with domain value objects.
 Provides the same interface as v1 for backward compatibility.
 """
 
+from collections.abc import Iterator
+from datetime import UTC
+from typing import Any
+
 import hydra
-from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
-from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig, OmegaConf
-from typing import Dict, Any, Iterator, List, Optional
-from pathlib import Path
+from omegaconf import DictConfig
+
+from roma.application.orchestration.system_manager import SystemManager
 from roma.domain.value_objects.config.roma_config import ROMAConfig
-from roma.infrastructure.config import cs  # Import registered ConfigStore
-from roma.infrastructure.orchestration.system_manager import SystemManager
 
 
 class SentientAgent:
     """Main user-facing API matching v1 functionality."""
-    
+
     def __init__(self, config: ROMAConfig):
         self.config = config
         self._system_manager = SystemManager(config)
         self._initialized = False
-        
+
     @classmethod
-    def create(cls, config_path: Optional[str] = None, enable_hitl_override: Optional[bool] = None, **kwargs) -> "SentientAgent":
+    def create(
+        cls, _config_path: str | None = None, enable_hitl_override: bool | None = None, **kwargs
+    ) -> "SentientAgent":
         """Create agent using Hydra ConfigStore with configuration."""
         # TODO: Use Hydra to load config with overrides when needed
         # For now, create default config with profile
-        profile_name = kwargs.get('profile_name', 'general_agent')
+        profile_name = kwargs.get("profile_name", "general_agent")
         default_config = ROMAConfig(default_profile=profile_name)
 
         # Apply HITL override if provided
@@ -38,8 +40,8 @@ class SentientAgent:
             default_config.execution.hitl_enabled = enable_hitl_override
 
         return cls(default_config)
-    
-    def execute(self, goal: str, **options) -> Dict[str, Any]:
+
+    def execute(self, goal: str, **options) -> dict[str, Any]:
         """Execute any task using ROMA's intelligent agent system."""
         import asyncio
 
@@ -63,33 +65,34 @@ class SentientAgent:
                 "framework_result": {
                     "framework": result["framework"],
                     "artifacts": result.get("artifacts", []),
-                    "task_id": result.get("task_id")
-                }
+                    "task_id": result.get("task_id"),
+                },
             }
 
         # Run async code in event loop
         try:
             loop = asyncio.get_running_loop()
-            # If we're in an async context, create a new task
+            # If we're in an async context, create a task in the existing loop
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, _async_execute())
-                return future.result()
+                future = executor.submit(asyncio.run_coroutine_threadsafe, _async_execute(), loop)
+                return future.result().result()
         except RuntimeError:
             # No event loop running, we can use asyncio.run
             return asyncio.run(_async_execute())
-    
-    def stream_execution(self, goal: str, **options) -> Iterator[Dict[str, Any]]:
+
+    def stream_execution(self, goal: str, **options) -> Iterator[dict[str, Any]]:
         """Stream execution progress."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         # Start execution
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
         yield {
             "event": "started",
             "goal": goal,
             "timestamp": start_time.isoformat(),
-            "status": "initializing"
+            "status": "initializing",
         }
 
         try:
@@ -107,17 +110,13 @@ class SentientAgent:
                 "result": result["final_output"],
                 "execution_id": result["execution_id"],
                 "execution_time": result["execution_time"],
-                "node_count": result["node_count"]
+                "node_count": result["node_count"],
             }
 
         except Exception as e:
-            yield {
-                "event": "error",
-                "error": str(e),
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }
-    
-    def get_system_info(self) -> Dict[str, Any]:
+            yield {"event": "error", "error": str(e), "timestamp": datetime.now(UTC).isoformat()}
+
+    def get_system_info(self) -> dict[str, Any]:
         """Get comprehensive system information."""
         base_info = {
             "name": self.config.app.name,
@@ -136,14 +135,14 @@ class SentientAgent:
             base_info["status"] = "not_initialized"
 
         return base_info
-    
-    def validate_configuration(self) -> Dict[str, Any]:
+
+    def validate_configuration(self) -> dict[str, Any]:
         """Validate configuration."""
         validation_result = self.config.validate_profile_completeness()
         base_validation = {
             "valid": self.config.is_valid(),
             "issues": validation_result,
-            "profile": self.config.profile.name
+            "profile": self.config.profile.name,
         }
 
         # Add system manager validation if initialized
@@ -157,17 +156,19 @@ class SentientAgent:
 
 class ProfiledSentientAgent(SentientAgent):
     """Profile-specific agent - SCAFFOLDING"""
-    
+
     @classmethod
-    def create_with_profile(cls, profile_name: str = "general_agent", **kwargs) -> "ProfiledSentientAgent":
+    def create_with_profile(
+        cls, profile_name: str = "general_agent", **kwargs
+    ) -> "ProfiledSentientAgent":
         """Create with specific profile configuration."""
         config = ROMAConfig(default_profile=profile_name)
         # Apply any overrides from kwargs
-        if 'enable_hitl' in kwargs:
-            config.execution.hitl_enabled = kwargs['enable_hitl']
+        if "enable_hitl" in kwargs:
+            config.execution.hitl_enabled = kwargs["enable_hitl"]
         return cls(config)
-    
-    def get_profile_info(self) -> Dict[str, Any]:
+
+    def get_profile_info(self) -> dict[str, Any]:
         """Get comprehensive profile information."""
         profile_info = {
             "profile_name": self.config.profile.name,
@@ -187,18 +188,22 @@ class ProfiledSentientAgent(SentientAgent):
 
 class LightweightSentientAgent(SentientAgent):
     """Lightweight async agent - SCAFFOLDING"""
-    
+
     @classmethod
-    def create_with_profile(cls, profile_name: str = "general_agent", **kwargs) -> "LightweightSentientAgent":
+    def create_with_profile(
+        cls, profile_name: str = "general_agent", **kwargs
+    ) -> "LightweightSentientAgent":
         """Create lightweight agent with profile configuration."""
         config = ROMAConfig(default_profile=profile_name)
         # Apply lightweight optimizations
-        config.execution.max_concurrent_tasks = kwargs.get('max_concurrent', 5)
-        if 'enable_hitl' in kwargs:
-            config.execution.hitl_enabled = kwargs['enable_hitl']
+        config.execution.max_concurrent_tasks = kwargs.get("max_concurrent", 5)
+        if "enable_hitl" in kwargs:
+            config.execution.hitl_enabled = kwargs["enable_hitl"]
         return cls(config)
-    
-    async def execute(self, goal: str, max_steps: int = 50, save_state: bool = False, **options) -> Dict[str, Any]:
+
+    async def execute(
+        self, goal: str, max_steps: int = 50, save_state: bool = False, **options
+    ) -> dict[str, Any]:
         """High-performance async execution with step limits."""
         # Initialize if needed
         if not self._initialized:
@@ -206,9 +211,9 @@ class LightweightSentientAgent(SentientAgent):
             self._initialized = True
 
         # Add execution constraints for lightweight mode
-        options['max_steps'] = max_steps
-        options['save_state'] = save_state
-        options['lightweight'] = True
+        options["max_steps"] = max_steps
+        options["save_state"] = save_state
+        options["lightweight"] = True
 
         # Execute task through SystemManager
         result = await self._system_manager.execute_task(goal, **options)
@@ -226,8 +231,8 @@ class LightweightSentientAgent(SentientAgent):
                 "framework": result["framework"],
                 "artifacts": result.get("artifacts", []),
                 "task_id": result.get("task_id"),
-                "lightweight": True
-            }
+                "lightweight": True,
+            },
         }
 
 
@@ -250,7 +255,7 @@ def hydra_main(cfg: DictConfig) -> None:
         # Initialize agent
         agent = SentientAgent(roma_config)
 
-        print(f"✅ ROMA Agent initialized successfully!")
+        print("✅ ROMA Agent initialized successfully!")
         print(f"📊 System Info: {agent.get_system_info()}")
 
         # TODO: Add interactive mode or specific execution logic
@@ -258,19 +263,22 @@ def hydra_main(cfg: DictConfig) -> None:
     except Exception as e:
         print(f"❌ Configuration error: {e}")
         import traceback
+
         traceback.print_exc()
         raise
 
 
 # Convenience functions matching v1 API
-def quick_research(topic: str, enable_hitl: Optional[bool] = None, profile_name: str = "deep_research_agent", **kwargs) -> str:
+def quick_research(
+    topic: str, enable_hitl: bool | None = None, profile_name: str = "deep_research_agent", **kwargs
+) -> str:
     """Quick research function - SCAFFOLDING"""
     agent = ProfiledSentientAgent.create_with_profile(profile_name)
     result = agent.execute(f"Research: {topic}", enable_hitl=enable_hitl, **kwargs)
     return result.get("final_output", "Scaffolding research result")
 
 
-def quick_analysis(data_description: str, enable_hitl: Optional[bool] = None, **kwargs) -> str:
+def quick_analysis(data_description: str, enable_hitl: bool | None = None, **kwargs) -> str:
     """Quick analysis function - SCAFFOLDING"""
     agent = SentientAgent.create()
     result = agent.execute(f"Analyze: {data_description}", enable_hitl=enable_hitl, **kwargs)
@@ -279,10 +287,11 @@ def quick_analysis(data_description: str, enable_hitl: Optional[bool] = None, **
 
 def create_research_agent(enable_hitl: bool = True, **kwargs) -> ProfiledSentientAgent:
     """Create research agent - SCAFFOLDING"""
-    return ProfiledSentientAgent.create_with_profile("deep_research_agent", **kwargs)
+    # TODO: Implement HITL integration when available
+    return ProfiledSentientAgent.create_with_profile("deep_research_agent", enable_hitl_override=enable_hitl, **kwargs)
 
 
-def list_available_profiles() -> List[str]:
+def list_available_profiles() -> list[str]:
     """List available profiles from configuration."""
     # Create a temporary agent to discover profiles
     agent = SentientAgent.create()

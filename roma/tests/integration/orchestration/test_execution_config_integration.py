@@ -5,28 +5,28 @@ Tests that ExecutionConfig limits are properly enforced across all orchestration
 components including ExecutionOrchestrator, ParallelExecutionEngine, and TaskNodeProcessor.
 """
 
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
+
+import pytest
 
 from roma.application.orchestration.execution_orchestrator import ExecutionOrchestrator
+from roma.application.orchestration.graph_state_manager import GraphStateManager
 from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
 from roma.application.orchestration.task_node_processor import TaskNodeProcessor
-from roma.application.orchestration.graph_state_manager import GraphStateManager
-from roma.application.services.context_builder_service import ContextBuilderService, TaskContext
 from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager
+from roma.application.services.context_builder_service import ContextBuilderService, TaskContext
 from roma.application.services.event_store import InMemoryEventStore
+from roma.application.services.recovery_manager import RecoveryManager
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.config.execution_config import ExecutionConfig
 from roma.domain.value_objects.node_action import NodeAction
 from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.config.execution_config import ExecutionConfig
-from roma.domain.value_objects.result_envelope import ResultEnvelope
-from roma.domain.value_objects.result_envelope import ExecutionMetrics
-from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.result_envelope import ExecutionMetrics, ResultEnvelope
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 @pytest.fixture
@@ -211,9 +211,9 @@ class TestExecutionConfigIntegration:
         orchestrator.parallel_engine.execute_ready_nodes.side_effect = slow_execution
 
         # Execute - should timeout
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
         result = await orchestrator.execute(sample_task, "test objective")
-        end_time = datetime.now(timezone.utc)
+        end_time = datetime.now(UTC)
 
         # Verify timeout was enforced
         execution_time = (end_time - start_time).total_seconds()

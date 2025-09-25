@@ -6,21 +6,24 @@ Supports both full and partial aggregation based on failure thresholds.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
 from collections import deque
+from typing import Any
 
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.node_action import NodeAction
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.child_evaluation_result import ChildEvaluationResult
-from roma.domain.value_objects.agent_responses import AggregatorResult
-from roma.domain.value_objects.result_envelope import AnyResultEnvelope, ExecutionMetrics, AggregatorEnvelope
-from roma.domain.interfaces.agent_service import AggregatorServiceInterface
 from roma.domain.context import TaskContext
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager, RecoveryAction
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.interfaces.agent_runtime_service import IAgentRuntimeService
+from roma.domain.interfaces.agent_service import AggregatorServiceInterface
+from roma.domain.interfaces.recovery_manager import IRecoveryManager
+from roma.domain.value_objects.agent_responses import AggregatorResult
+from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.child_evaluation_result import ChildEvaluationResult
+from roma.domain.value_objects.node_result import NodeResult
+from roma.domain.value_objects.recovery_action import RecoveryAction
+from roma.domain.value_objects.result_envelope import (
+    AggregatorEnvelope,
+    AnyResultEnvelope,
+    ExecutionMetrics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +37,7 @@ class AggregatorService(AggregatorServiceInterface):
     """
 
     def __init__(
-        self,
-        agent_runtime_service: AgentRuntimeService,
-        recovery_manager: RecoveryManager
+        self, agent_runtime_service: IAgentRuntimeService, recovery_manager: IRecoveryManager
     ):
         """Initialize with required dependencies."""
         self.agent_runtime_service = agent_runtime_service
@@ -54,9 +55,9 @@ class AggregatorService(AggregatorServiceInterface):
         self,
         task: TaskNode,
         context: TaskContext,
-        child_envelopes: List[AnyResultEnvelope] = None,
+        child_envelopes: list[AnyResultEnvelope] = None,
         is_partial: bool = False,
-        **kwargs
+        **kwargs,
     ) -> NodeResult:
         """
         Run aggregator to combine child results.
@@ -76,28 +77,34 @@ class AggregatorService(AggregatorServiceInterface):
                 raise ValueError("No child results provided for aggregation")
 
             # Check for children info in kwargs to evaluate threshold
-            children = kwargs.get('children', [])
+            children = kwargs.get("children", [])
             if children:
                 evaluation = self.recovery_manager.evaluate_terminal_children(task, children)
 
                 if evaluation == ChildEvaluationResult.REPLAN:
                     # Don't aggregate - signal replanning needed
-                    logger.info(f"Failure threshold exceeded for {task.task_id}, returning replan signal")
+                    logger.info(
+                        f"Failure threshold exceeded for {task.task_id}, returning replan signal"
+                    )
 
                     return NodeResult.replan(
                         task_id=task.task_id,
                         reason="threshold_exceeded",
                         agent_name="AggregatorAgent",
-                        agent_type=AgentType.AGGREGATOR.value
+                        agent_type=AgentType.AGGREGATOR.value,
                     )
 
                 elif evaluation == ChildEvaluationResult.AGGREGATE_PARTIAL:
                     # Set partial aggregation flag
                     is_partial = True
-                    logger.info(f"Partial aggregation enabled for {task.task_id} due to some failed children")
+                    logger.info(
+                        f"Partial aggregation enabled for {task.task_id} due to some failed children"
+                    )
 
                 # Threshold OK - proceed with aggregation
-                logger.info(f"Threshold check passed for {task.task_id}, proceeding with {'partial' if is_partial else 'full'} aggregation")
+                logger.info(
+                    f"Threshold check passed for {task.task_id}, proceeding with {'partial' if is_partial else 'full'} aggregation"
+                )
 
             # Get aggregator agent for task type
             aggregator_agent = await self.agent_runtime_service.get_agent(
@@ -120,7 +127,7 @@ class AggregatorService(AggregatorServiceInterface):
             )
 
             # Extract aggregator result
-            if not envelope or not hasattr(envelope, 'result'):
+            if not envelope or not hasattr(envelope, "result"):
                 raise ValueError("Aggregator returned invalid envelope")
 
             aggregator_result: AggregatorResult = envelope.result
@@ -130,15 +137,15 @@ class AggregatorService(AggregatorServiceInterface):
             # Create execution metrics
             execution_time = context.execution_metadata.get("execution_time", 0.0)
             total_child_tokens = sum(
-                getattr(child_env.execution_metrics, 'tokens_used', 0)
+                getattr(child_env.execution_metrics, "tokens_used", 0)
                 for child_env in child_envelopes
             )
 
             metrics = ExecutionMetrics(
                 execution_time=execution_time,
-                tokens_used=getattr(envelope, 'tokens_used', 0) + total_child_tokens,
-                cost_estimate=getattr(envelope, 'cost_estimate', 0.0),
-                model_calls=1
+                tokens_used=getattr(envelope, "tokens_used", 0) + total_child_tokens,
+                cost_estimate=getattr(envelope, "cost_estimate", 0.0),
+                model_calls=1,
             )
 
             # Create typed envelope
@@ -148,7 +155,7 @@ class AggregatorService(AggregatorServiceInterface):
                 execution_id=context.execution_id,
                 agent_type=AgentType.AGGREGATOR,
                 execution_metrics=metrics,
-                output_text=aggregator_result.synthesized_result
+                output_text=aggregator_result.synthesized_result,
             )
 
             # Record success with recovery manager
@@ -164,7 +171,7 @@ class AggregatorService(AggregatorServiceInterface):
             return NodeResult.aggregation_result(
                 task_id=task.task_id,
                 envelope=aggregator_envelope,
-                agent_name=getattr(aggregator_agent, 'name', 'AggregatorAgent'),
+                agent_name=getattr(aggregator_agent, "name", "AggregatorAgent"),
                 processing_time_ms=execution_time * 1000,
                 metadata={
                     "is_partial_aggregation": is_partial,
@@ -172,8 +179,8 @@ class AggregatorService(AggregatorServiceInterface):
                     "confidence": aggregator_result.confidence,
                     "quality_score": aggregator_result.quality_score,
                     "sources_used": aggregator_result.sources_used,
-                    "gaps_identified": aggregator_result.gaps_identified
-                }
+                    "gaps_identified": aggregator_result.gaps_identified,
+                },
             )
 
         except Exception as e:
@@ -190,8 +197,8 @@ class AggregatorService(AggregatorServiceInterface):
                     agent_type=AgentType.AGGREGATOR.value,
                     metadata={
                         "retry_count": recovery_result.metadata.get("retry_attempt", 1),
-                        "is_partial_aggregation": is_partial
-                    }
+                        "is_partial_aggregation": is_partial,
+                    },
                 )
             elif recovery_result.action == RecoveryAction.REPLAN:
                 return NodeResult.replan(
@@ -199,7 +206,7 @@ class AggregatorService(AggregatorServiceInterface):
                     parent_id=recovery_result.metadata.get("parent_id"),
                     reason="critical_failure_exhausted_retries",
                     agent_name="AggregatorAgent",
-                    agent_type=AgentType.AGGREGATOR.value
+                    agent_type=AgentType.AGGREGATOR.value,
                 )
             else:
                 return NodeResult.failure(
@@ -207,14 +214,11 @@ class AggregatorService(AggregatorServiceInterface):
                     error=str(e),
                     agent_name="AggregatorAgent",
                     agent_type=AgentType.AGGREGATOR.value,
-                    metadata={"is_partial_aggregation": is_partial}
+                    metadata={"is_partial_aggregation": is_partial},
                 )
 
     def _enhance_context_for_aggregation(
-        self,
-        context: TaskContext,
-        child_envelopes: List[AnyResultEnvelope],
-        is_partial: bool
+        self, context: TaskContext, child_envelopes: list[AnyResultEnvelope], is_partial: bool
     ) -> TaskContext:
         """
         Enhance context with aggregation-specific information.
@@ -233,19 +237,23 @@ class AggregatorService(AggregatorServiceInterface):
 
         for envelope in child_envelopes:
             if envelope.success:
-                child_results.append({
-                    "task_id": envelope.task_id,
-                    "result": envelope.result,
-                    "output_text": envelope.extract_primary_output(),
-                    "confidence": getattr(envelope.result, 'confidence', 1.0),
-                    "metadata": envelope.metadata
-                })
+                child_results.append(
+                    {
+                        "task_id": envelope.task_id,
+                        "result": envelope.result,
+                        "output_text": envelope.extract_primary_output(),
+                        "confidence": getattr(envelope.result, "confidence", 1.0),
+                        "metadata": envelope.metadata,
+                    }
+                )
             else:
-                failed_children.append({
-                    "task_id": envelope.task_id,
-                    "error": envelope.error_message,
-                    "metadata": envelope.metadata
-                })
+                failed_children.append(
+                    {
+                        "task_id": envelope.task_id,
+                        "error": envelope.error_message,
+                        "metadata": envelope.metadata,
+                    }
+                )
 
         # Create enhanced metadata
         enhanced_metadata = {
@@ -254,7 +262,7 @@ class AggregatorService(AggregatorServiceInterface):
             "child_results": child_results,
             "successful_children_count": len(child_results),
             "total_children_count": len(child_envelopes),
-            "aggregation_timestamp": context.execution_metadata.get("execution_timestamp")
+            "aggregation_timestamp": context.execution_metadata.get("execution_timestamp"),
         }
 
         # Add failed children info for partial aggregation
@@ -272,9 +280,8 @@ class AggregatorService(AggregatorServiceInterface):
             task=context.task,
             overall_objective=context.overall_objective,
             execution_id=context.execution_id,
-            execution_metadata=enhanced_metadata
+            execution_metadata=enhanced_metadata,
         )
-
 
     def queue_aggregation(self, parent_id: str) -> None:
         """
@@ -289,7 +296,7 @@ class AggregatorService(AggregatorServiceInterface):
         else:
             logger.debug(f"Parent {parent_id} already queued for aggregation")
 
-    def get_queued_parents(self) -> List[str]:
+    def get_queued_parents(self) -> list[str]:
         """Get list of parent IDs queued for aggregation."""
         return list(self._aggregation_queue)
 
@@ -300,14 +307,14 @@ class AggregatorService(AggregatorServiceInterface):
         logger.info(f"Cleared {cleared_count} items from aggregation queue")
         return cleared_count
 
-    def get_queue_status(self) -> Dict[str, Any]:
+    def get_queue_status(self) -> dict[str, Any]:
         """Get aggregation queue status."""
         return {
             "pending_aggregations": len(self._aggregation_queue),
-            "queue_items": [{"parent_id": parent_id} for parent_id in self._aggregation_queue]
+            "queue_items": [{"parent_id": parent_id} for parent_id in self._aggregation_queue],
         }
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get aggregator service statistics."""
         base_stats = super().get_stats()
         return {
@@ -315,5 +322,5 @@ class AggregatorService(AggregatorServiceInterface):
             "aggregations_performed": self._aggregations_performed,
             "partial_aggregations": self._partial_aggregations,
             "full_aggregations": self._full_aggregations,
-            "queue_size": len(self._aggregation_queue)
+            "queue_size": len(self._aggregation_queue),
         }

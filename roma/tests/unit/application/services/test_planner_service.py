@@ -4,23 +4,24 @@ Tests for PlannerService.
 Tests the planner service functionality including task decomposition and subtask creation.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
+import pytest
+
+from roma.application.services.agent_runtime_service import AgentRuntimeService
+from roma.application.services.planner_service import PlannerService
+from roma.application.services.recovery_manager import RecoveryManager
+from roma.domain.context import TaskContext
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.agent_responses import PlannerResult, SubTask
 from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.node_action import NodeAction
 from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.agent_responses import PlannerResult, SubTask
-from roma.domain.value_objects.result_envelope import PlannerEnvelope, ExecutionMetrics
-from roma.application.services.planner_service import PlannerService
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager
-from roma.domain.context import TaskContext
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.result_envelope import ExecutionMetrics, PlannerEnvelope
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 @pytest.fixture
@@ -232,7 +233,7 @@ class TestPlannerService:
         mock_agent_runtime_service.execute_agent.side_effect = Exception("Planning agent failed")
 
         # Setup recovery manager
-        from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
+        from roma.application.services.recovery_manager import RecoveryAction, RecoveryResult
         recovery_result = RecoveryResult(action=RecoveryAction.FAIL_PERMANENTLY, reasoning="Planning failed")
         mock_recovery_manager.handle_failure = AsyncMock(return_value=recovery_result)
 
@@ -253,7 +254,7 @@ class TestPlannerService:
         mock_agent_runtime_service.execute_agent.return_value = None  # Invalid envelope
 
         # Setup recovery manager
-        from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
+        from roma.application.services.recovery_manager import RecoveryAction, RecoveryResult
         recovery_result = RecoveryResult(action=RecoveryAction.FAIL_PERMANENTLY, reasoning="Invalid response")
         mock_recovery_manager.handle_failure = AsyncMock(return_value=recovery_result)
 
@@ -288,7 +289,7 @@ class TestPlannerService:
         }
 
         # Setup recovery manager
-        from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
+        from roma.application.services.recovery_manager import RecoveryAction, RecoveryResult
         recovery_result = RecoveryResult(action=RecoveryAction.FAIL_PERMANENTLY, reasoning="Planning failed")
         mock_recovery_manager.handle_failure = AsyncMock(return_value=recovery_result)
 
@@ -381,7 +382,7 @@ class TestPlannerService:
         mock_agent_runtime_service.execute_agent.side_effect = Exception("First failure")
 
         # Setup recovery manager to retry once
-        from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
+        from roma.application.services.recovery_manager import RecoveryAction, RecoveryResult
         recovery_result = RecoveryResult(
             action=RecoveryAction.RETRY,
             reasoning="Should retry planning",

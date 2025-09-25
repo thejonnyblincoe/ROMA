@@ -6,6 +6,8 @@ Defines the possible states of task dependencies for enhanced dependency resolut
 
 from enum import Enum
 
+from roma.domain.value_objects.task_status import TaskStatus
+
 
 class DependencyStatus(str, Enum):
     """
@@ -36,7 +38,7 @@ class DependencyStatus(str, Enum):
     UNKNOWN = "unknown"
 
     @classmethod
-    def from_task_status(cls, task_status) -> "DependencyStatus":
+    def from_task_status(cls, task_status: TaskStatus) -> "DependencyStatus":
         """
         Convert TaskStatus to DependencyStatus.
 
@@ -72,7 +74,11 @@ class DependencyStatus(str, Enum):
     @property
     def is_pending(self) -> bool:
         """Check if dependency is still in progress."""
-        return self in [DependencyStatus.PENDING, DependencyStatus.READY, DependencyStatus.EXECUTING]
+        return self in [
+            DependencyStatus.PENDING,
+            DependencyStatus.READY,
+            DependencyStatus.EXECUTING,
+        ]
 
     @property
     def requires_wait(self) -> bool:

@@ -5,9 +5,11 @@ Defines execution and orchestration configuration as a domain value object.
 Controls concurrency, limits, timeouts, and memory management for the execution system.
 """
 
-from pydantic.dataclasses import dataclass
+from typing import Any
+
 from pydantic import field_validator
-from typing import Dict, Any, Optional
+from pydantic.dataclasses import dataclass
+
 from roma.domain.value_objects.task_type import TaskType
 
 
@@ -53,7 +55,7 @@ class ExecutionConfig:
     # Replanning settings
     replanning_enabled: bool = True
     default_failure_threshold: float = 0.3  # 30% failures trigger replan
-    task_type_thresholds: Optional[Dict[TaskType, float]] = None  # Task-specific thresholds
+    task_type_thresholds: dict[TaskType, float] | None = None  # Task-specific thresholds
     enable_partial_aggregation: bool = True
     deadlock_detection_enabled: bool = True
     deadlock_check_interval: int = 300  # 5 minutes between deadlock checks
@@ -163,7 +165,7 @@ class ExecutionConfig:
             return self.task_type_thresholds[task_type]
         return self.default_failure_threshold
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "max_concurrent_tasks": self.max_concurrent_tasks,
@@ -197,7 +199,7 @@ class ExecutionConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ExecutionConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "ExecutionConfig":
         """Create from dictionary."""
         return cls(
             max_concurrent_tasks=data.get("max_concurrent_tasks", 10),
@@ -223,7 +225,7 @@ class ExecutionConfig:
             hitl_approval_required=data.get("hitl_approval_required", False),
             replanning_enabled=data.get("replanning_enabled", True),
             default_failure_threshold=data.get("default_failure_threshold", 0.3),
-            task_type_thresholds=data.get("task_type_thresholds", None),
+            task_type_thresholds=data.get("task_type_thresholds"),
             enable_partial_aggregation=data.get("enable_partial_aggregation", True),
             deadlock_detection_enabled=data.get("deadlock_detection_enabled", True),
             deadlock_check_interval=data.get("deadlock_check_interval", 300),

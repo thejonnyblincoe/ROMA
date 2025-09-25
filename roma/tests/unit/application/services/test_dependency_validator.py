@@ -4,22 +4,22 @@ Test Dependency Validator Service.
 Tests the pre-execution dependency validation functionality.
 """
 
+from datetime import datetime
+
 import pytest
 import pytest_asyncio
-from unittest.mock import Mock, patch
-from datetime import datetime, timezone
 
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
 from roma.application.services.dependency_validator import (
-    DependencyValidator,
+    DependencyValidationError,
     DependencyValidationResult,
-    DependencyValidationError
+    DependencyValidator,
 )
-from roma.domain.value_objects.dependency_status import DependencyStatus
 from roma.application.services.recovery_manager import RecoveryManager
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.value_objects.dependency_status import DependencyStatus
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestDependencyValidator:

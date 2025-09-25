@@ -6,10 +6,11 @@ serialization, and Agno-compatible methods.
 """
 
 import base64
-import pytest
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from roma.domain.entities.artifacts.audio_artifact import AudioArtifact
 from roma.domain.value_objects.media_type import MediaType

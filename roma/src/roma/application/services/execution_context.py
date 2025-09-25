@@ -5,17 +5,17 @@ This module implements the ExecutionContext class which provides isolated
 resources per execution while reusing agents across executions for efficiency.
 """
 
-from typing import Optional, Dict, Any
 import logging
+from typing import Any
 
-from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from roma.application.services.event_store import InMemoryEventStore
-from roma.application.services.event_publisher import EventPublisher
-from roma.application.services.knowledge_store_service import KnowledgeStoreService
+from roma.application.orchestration.graph_state_manager import GraphStateManager
 from roma.application.services.artifact_service import ArtifactService
 from roma.application.services.context_builder_service import ContextBuilderService
-from roma.application.orchestration.graph_state_manager import GraphStateManager
-from roma.infrastructure.storage.local_storage import LocalFileStorage
+from roma.application.services.event_publisher import EventPublisher
+from roma.application.services.event_store import InMemoryEventStore
+from roma.application.services.knowledge_store_service import KnowledgeStoreService
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.interfaces.storage import IStorage
 from roma.domain.value_objects.config.roma_config import ROMAConfig
 
 logger = logging.getLogger(__name__)
@@ -42,27 +42,24 @@ class ExecutionContext:
     - Recovery Manager (stateless)
     """
 
-    def __init__(self, execution_id: str, base_storage_config: Any):
+    def __init__(self, execution_id: str, storage: IStorage):
         """
         Initialize execution context with isolated resources.
 
         Args:
             execution_id: Unique identifier for this execution
-            base_storage_config: Storage configuration for creating isolated storage
+            storage: Storage implementation (injected via dependency inversion)
         """
         self.execution_id = execution_id
 
-        # Create execution-isolated storage
-        self.storage = LocalFileStorage(base_storage_config, execution_id)
+        # Use injected storage instance
+        self.storage = storage
 
         # Create isolated resources
         self.task_graph = DynamicTaskGraph()
 
         # Limited event store per execution to prevent memory growth
-        self.event_store = InMemoryEventStore(
-            max_events_per_task=100,
-            max_total_events=10000
-        )
+        self.event_store = InMemoryEventStore(max_events_per_task=100, max_total_events=10000)
 
         # Event publisher for event emission using isolated event store
         self.event_publisher = EventPublisher(self.event_store)
@@ -73,23 +70,20 @@ class ExecutionContext:
         # Artifact service with execution context
         self.artifact_service = ArtifactService(self.storage)
         # Set execution context for namespacing
-        if hasattr(self.artifact_service, '__dict__'):
+        if hasattr(self.artifact_service, "__dict__"):
             self.artifact_service.execution_id = execution_id
 
         # Context builder using isolated knowledge store
         self.context_builder = ContextBuilderService(
             knowledge_store=self.knowledge_store,
             storage_manager=self.storage,
-            roma_config=None  # Will be set by SystemManager
+            roma_config=None,  # Will be set by SystemManager
         )
 
         # Note: Event publishing is handled by GraphStateManager to avoid duplicates
 
         # Graph state manager with isolated components - using EventPublisher not EventStore
-        self.graph_state_manager = GraphStateManager(
-            self.task_graph,
-            self.event_publisher
-        )
+        self.graph_state_manager = GraphStateManager(self.task_graph, self.event_publisher)
 
         logger.info(f"ExecutionContext created for execution {execution_id}")
 
@@ -100,7 +94,7 @@ class ExecutionContext:
         Args:
             config: ROMA configuration object
         """
-        if hasattr(self.context_builder, 'roma_config'):
+        if hasattr(self.context_builder, "roma_config"):
             self.context_builder.roma_config = config
 
     async def initialize(self) -> None:
@@ -111,7 +105,7 @@ class ExecutionContext:
         but this method is provided for future extensibility.
         """
         # Initialize artifact service if needed
-        if hasattr(self.artifact_service, 'initialize'):
+        if hasattr(self.artifact_service, "initialize"):
             await self.artifact_service.initialize()
 
         logger.debug(f"ExecutionContext initialized for execution {self.execution_id}")
@@ -128,9 +122,11 @@ class ExecutionContext:
         """
         try:
             # Clean up execution-specific temp files using storage method
-            if hasattr(self.storage, 'cleanup_execution_temp_files'):
+            if hasattr(self.storage, "cleanup_execution_temp_files"):
                 cleaned_files = await self.storage.cleanup_execution_temp_files()
-                logger.debug(f"Cleaned {cleaned_files} temp files for execution {self.execution_id}")
+                logger.debug(
+                    f"Cleaned {cleaned_files} temp files for execution {self.execution_id}"
+                )
 
             # Clear isolated event store
             await self.event_store.clear()
@@ -145,7 +141,7 @@ class ExecutionContext:
             logger.error(f"Error during ExecutionContext cleanup for {self.execution_id}: {e}")
             # Don't re-raise to avoid masking the original exception
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get statistics about this execution context.
 
@@ -155,6 +151,10 @@ class ExecutionContext:
         return {
             "execution_id": self.execution_id,
             "task_graph_nodes": len(self.task_graph.get_all_nodes()),
-            "event_store_events": len(self.event_store._global_events) if hasattr(self.event_store, '_global_events') else 0,
-            "knowledge_records": len(self.knowledge_store._records) if hasattr(self.knowledge_store, '_records') else 0
+            "event_store_events": len(self.event_store._global_events)
+            if hasattr(self.event_store, "_global_events")
+            else 0,
+            "knowledge_records": len(self.knowledge_store._records)
+            if hasattr(self.knowledge_store, "_records")
+            else 0,
         }

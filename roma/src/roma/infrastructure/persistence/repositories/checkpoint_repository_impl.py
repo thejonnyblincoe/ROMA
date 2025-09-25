@@ -4,26 +4,23 @@ SQLAlchemy Implementation of Checkpoint Repository.
 Infrastructure layer implementation of checkpoint persistence using SQLAlchemy.
 """
 
-import asyncio
+import gzip
 import logging
 import pickle
-import gzip
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, delete, update, func, and_, or_, desc, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import and_, delete, desc, func, or_, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from roma.domain.interfaces.persistence import CheckpointRepository, RecoveryRepository
 from roma.domain.value_objects.persistence import (
+    CheckpointAnalytics,
+    CheckpointRecord,
+    CheckpointStorageMetrics,
+    CheckpointSummary,
     CheckpointType,
     RecoveryStatus,
-    CheckpointRecord,
-    CheckpointSummary,
-    CheckpointAnalytics,
-    CheckpointStorageMetrics,
 )
 from roma.infrastructure.persistence.models.checkpoint_model import (
     ExecutionCheckpointModel,
@@ -51,7 +48,7 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
 
     async def create_checkpoint(self, checkpoint_record: CheckpointRecord) -> str:
         """Create a new checkpoint in the database."""
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
 
         try:
             async with self.session_factory() as session:
@@ -65,14 +62,15 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
                     # Calculate expiration
                     expires_at = None
                     if checkpoint_record.expires_at:
-                        expires_at = datetime.fromisoformat(checkpoint_record.expires_at.replace('Z', '+00:00'))
+                        expires_at = datetime.fromisoformat(
+                            checkpoint_record.expires_at.replace("Z", "+00:00")
+                        )
 
                     # Use PostgreSQL advisory lock to prevent race conditions in sequence number generation
                     # This ensures atomic sequence generation even when no rows exist yet
                     lock_id = abs(hash(checkpoint_record.execution_id)) % 2147483647
                     await session.execute(
-                        text("SELECT pg_advisory_xact_lock(:lock_id)"),
-                        {"lock_id": lock_id}
+                        text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id}
                     )
 
                     # Now safely get the max sequence number under advisory lock
@@ -84,7 +82,9 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
                     sequence_number = max_seq + 1
 
                     # Calculate creation duration BEFORE inserting to avoid second commit
-                    creation_duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+                    creation_duration_ms = int(
+                        (datetime.now(UTC) - start_time).total_seconds() * 1000
+                    )
 
                     # Create database model with all data including duration
                     checkpoint = ExecutionCheckpointModel(
@@ -99,7 +99,7 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
                         sequence_number=sequence_number,
                         expires_at=expires_at,
                         data_size_bytes=checkpoint_record.data_size_bytes,
-                        creation_duration_ms=creation_duration_ms
+                        creation_duration_ms=creation_duration_ms,
                     )
 
                     session.add(checkpoint)
@@ -108,7 +108,7 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
                     logger.info(f"Created checkpoint {checkpoint_record.checkpoint_name}")
                     return checkpoint.id
 
-                except Exception as e:
+                except Exception:
                     await session.rollback()
                     raise
 
@@ -116,14 +116,14 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
             logger.error(f"Failed to create checkpoint: {e}")
             raise
 
-    async def get_checkpoint(self, checkpoint_id: str) -> Optional[CheckpointRecord]:
+    async def get_checkpoint(self, checkpoint_id: str) -> CheckpointRecord | None:
         """Get checkpoint by ID."""
         try:
             async with self.session_factory() as session:
                 query = select(ExecutionCheckpointModel).where(
                     and_(
                         ExecutionCheckpointModel.id == checkpoint_id,
-                        ExecutionCheckpointModel.is_valid == True
+                        ExecutionCheckpointModel.is_valid,
                     )
                 )
 
@@ -134,7 +134,7 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
                     return None
 
                 # Check expiration
-                if checkpoint.expires_at and checkpoint.expires_at < datetime.now(timezone.utc):
+                if checkpoint.expires_at and checkpoint.expires_at < datetime.now(UTC):
                     logger.warning(f"Checkpoint {checkpoint_id} has expired")
                     return None
 
@@ -171,21 +171,19 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
             raise
 
     async def get_latest_checkpoint(
-        self,
-        execution_id: str,
-        checkpoint_type: Optional[CheckpointType] = None
-    ) -> Optional[CheckpointRecord]:
+        self, execution_id: str, checkpoint_type: CheckpointType | None = None
+    ) -> CheckpointRecord | None:
         """Get the latest checkpoint for an execution."""
         try:
             async with self.session_factory() as session:
                 query = select(ExecutionCheckpointModel).where(
                     and_(
                         ExecutionCheckpointModel.execution_id == execution_id,
-                        ExecutionCheckpointModel.is_valid == True,
+                        ExecutionCheckpointModel.is_valid,
                         or_(
                             ExecutionCheckpointModel.expires_at.is_(None),
-                            ExecutionCheckpointModel.expires_at > datetime.now(timezone.utc)
-                        )
+                            ExecutionCheckpointModel.expires_at > datetime.now(UTC),
+                        ),
                     )
                 )
 
@@ -207,10 +205,8 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
             raise
 
     async def list_checkpoints(
-        self,
-        execution_id: str,
-        include_expired: bool = False
-    ) -> List[CheckpointSummary]:
+        self, execution_id: str, include_expired: bool = False
+    ) -> list[CheckpointSummary]:
         """List all checkpoints for an execution."""
         try:
             async with self.session_factory() as session:
@@ -221,11 +217,11 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
                 if not include_expired:
                     query = query.where(
                         and_(
-                            ExecutionCheckpointModel.is_valid == True,
+                            ExecutionCheckpointModel.is_valid,
                             or_(
                                 ExecutionCheckpointModel.expires_at.is_(None),
-                                ExecutionCheckpointModel.expires_at > datetime.now(timezone.utc)
-                            )
+                                ExecutionCheckpointModel.expires_at > datetime.now(UTC),
+                            ),
                         )
                     )
 
@@ -236,17 +232,19 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
 
                 summaries = []
                 for cp in checkpoints:
-                    summaries.append(CheckpointSummary(
-                        id=cp.id,
-                        checkpoint_name=cp.checkpoint_name,
-                        checkpoint_type=cp.checkpoint_type,
-                        sequence_number=cp.sequence_number,
-                        created_at=cp.created_at.isoformat(),
-                        expires_at=cp.expires_at.isoformat() if cp.expires_at else None,
-                        is_valid=cp.is_valid,
-                        data_size_bytes=cp.data_size_bytes,
-                        creation_duration_ms=cp.creation_duration_ms,
-                    ))
+                    summaries.append(
+                        CheckpointSummary(
+                            id=cp.id,
+                            checkpoint_name=cp.checkpoint_name,
+                            checkpoint_type=cp.checkpoint_type,
+                            sequence_number=cp.sequence_number,
+                            created_at=cp.created_at.isoformat(),
+                            expires_at=cp.expires_at.isoformat() if cp.expires_at else None,
+                            is_valid=cp.is_valid,
+                            data_size_bytes=cp.data_size_bytes,
+                            creation_duration_ms=cp.creation_duration_ms,
+                        )
+                    )
 
                 return summaries
 
@@ -294,8 +292,8 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
                     update(ExecutionCheckpointModel)
                     .where(
                         and_(
-                            ExecutionCheckpointModel.expires_at < datetime.now(timezone.utc),
-                            ExecutionCheckpointModel.is_valid == True
+                            ExecutionCheckpointModel.expires_at < datetime.now(UTC),
+                            ExecutionCheckpointModel.is_valid,
                         )
                     )
                     .values(is_valid=False)
@@ -313,13 +311,14 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
 
     async def cleanup_old_checkpoints(self, days: int = 30) -> int:
         """Clean up old checkpoints."""
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
         try:
             async with self.session_factory() as session:
                 result = await session.execute(
-                    delete(ExecutionCheckpointModel)
-                    .where(ExecutionCheckpointModel.created_at < cutoff_date)
+                    delete(ExecutionCheckpointModel).where(
+                        ExecutionCheckpointModel.created_at < cutoff_date
+                    )
                 )
 
                 await session.commit()
@@ -343,24 +342,26 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
 
                 # Valid checkpoints
                 valid_query = select(func.count(ExecutionCheckpointModel.id)).where(
-                    ExecutionCheckpointModel.is_valid == True
+                    ExecutionCheckpointModel.is_valid
                 )
                 valid_result = await session.execute(valid_query)
                 valid_checkpoints = valid_result.scalar()
 
                 # Checkpoint type distribution
-                type_query = (
-                    select(ExecutionCheckpointModel.checkpoint_type, func.count(ExecutionCheckpointModel.id))
-                    .group_by(ExecutionCheckpointModel.checkpoint_type)
-                )
+                type_query = select(
+                    ExecutionCheckpointModel.checkpoint_type,
+                    func.count(ExecutionCheckpointModel.id),
+                ).group_by(ExecutionCheckpointModel.checkpoint_type)
                 type_result = await session.execute(type_query)
-                type_distribution = {cp_type.value: count for cp_type, count in type_result.fetchall()}
+                type_distribution = {
+                    cp_type.value: count for cp_type, count in type_result.fetchall()
+                }
 
                 # Storage metrics
                 storage_query = select(
                     func.sum(ExecutionCheckpointModel.data_size_bytes),
                     func.avg(ExecutionCheckpointModel.data_size_bytes),
-                    func.avg(ExecutionCheckpointModel.creation_duration_ms)
+                    func.avg(ExecutionCheckpointModel.creation_duration_ms),
                 )
                 storage_result = await session.execute(storage_query)
                 total_storage, avg_size, avg_duration = storage_result.fetchone()
@@ -376,7 +377,7 @@ class SQLAlchemyCheckpointRepository(CheckpointRepository):
                     valid_checkpoints=valid_checkpoints,
                     type_distribution=type_distribution,
                     storage_metrics=storage_metrics,
-                    service_stats={}  # No instance-level stats
+                    service_stats={},  # No instance-level stats
                 )
 
         except SQLAlchemyError as e:
@@ -402,10 +403,10 @@ class SQLAlchemyRecoveryRepository(RecoveryRepository):
         self,
         task_id: str,
         execution_id: str,
-        checkpoint_id: Optional[str],
+        checkpoint_id: str | None,
         recovery_strategy: str,
-        error_context: Optional[dict],
-        attempt_number: int
+        error_context: dict | None,
+        attempt_number: int,
     ) -> str:
         """Create a recovery state."""
         try:
@@ -418,13 +419,15 @@ class SQLAlchemyRecoveryRepository(RecoveryRepository):
                     state_data={"recovery_started": True},
                     error_context=error_context,
                     recovery_strategy=recovery_strategy,
-                    attempt_number=attempt_number
+                    attempt_number=attempt_number,
                 )
 
                 session.add(recovery)
                 await session.commit()
 
-                logger.info(f"Started recovery operation for task {task_id}, attempt {attempt_number}")
+                logger.info(
+                    f"Started recovery operation for task {task_id}, attempt {attempt_number}"
+                )
                 return recovery.id
 
         except SQLAlchemyError as e:
@@ -435,9 +438,9 @@ class SQLAlchemyRecoveryRepository(RecoveryRepository):
         self,
         recovery_id: str,
         status: RecoveryStatus,
-        state_data: Optional[dict] = None,
-        recovery_result: Optional[dict] = None,
-        failure_reason: Optional[str] = None
+        state_data: dict | None = None,
+        recovery_result: dict | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         """Update recovery operation status."""
         try:
@@ -456,9 +459,9 @@ class SQLAlchemyRecoveryRepository(RecoveryRepository):
                     update_values["failure_reason"] = failure_reason
 
                 if status in [RecoveryStatus.RECOVERED, RecoveryStatus.ABANDONED]:
-                    completed_at = datetime.now(timezone.utc)
+                    completed_at = datetime.now(UTC)
                     update_values["recovery_completed_at"] = completed_at
-                    update_values["success"] = (status == RecoveryStatus.RECOVERED)
+                    update_values["success"] = status == RecoveryStatus.RECOVERED
 
                     # Calculate duration
                     recovery_query = select(RecoveryStateModel.recovery_started_at).where(

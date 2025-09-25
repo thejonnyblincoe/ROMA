@@ -6,8 +6,8 @@ Centralized exports for all domain interfaces organized by category.
 
 from .persistence import (
     CheckpointRepository,
-    RecoveryRepository,
     ExecutionHistoryRepository,
+    RecoveryRepository,
 )
 
 __all__ = [

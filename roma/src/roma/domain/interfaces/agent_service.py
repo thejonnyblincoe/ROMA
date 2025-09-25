@@ -6,14 +6,13 @@ Each service has a single `run` method that handles their specific agent type.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional
+from typing import Any
 
+from roma.domain.context import TaskContext
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
 from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.node_result import NodeResult
 from roma.domain.value_objects.result_envelope import AnyResultEnvelope
-from roma.domain.context import TaskContext
 
 
 class BaseAgentServiceInterface(ABC):
@@ -23,15 +22,9 @@ class BaseAgentServiceInterface(ABC):
     @abstractmethod
     def agent_type(self) -> AgentType:
         """Return the agent type this service handles."""
-        pass
 
     @abstractmethod
-    async def run(
-        self,
-        task: TaskNode,
-        context: TaskContext,
-        **kwargs
-    ) -> NodeResult:
+    async def run(self, task: TaskNode, context: TaskContext, **kwargs: Any) -> NodeResult:
         """
         Run the agent service operation.
 
@@ -43,14 +36,10 @@ class BaseAgentServiceInterface(ABC):
         Returns:
             NodeResult with appropriate action and envelope
         """
-        pass
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get service statistics."""
-        return {
-            "agent_type": self.agent_type.value,
-            "service_name": self.__class__.__name__
-        }
+        return {"agent_type": self.agent_type.value, "service_name": self.__class__.__name__}
 
 
 class AtomizerServiceInterface(BaseAgentServiceInterface):
@@ -89,9 +78,9 @@ class AggregatorServiceInterface(BaseAgentServiceInterface):
         self,
         task: TaskNode,
         context: TaskContext,
-        child_envelopes: List[AnyResultEnvelope] = None,
+        child_envelopes: list[AnyResultEnvelope] | None = None,
         is_partial: bool = False,
-        **kwargs
+        **kwargs: Any,
     ) -> NodeResult:
         """
         Run aggregation with child results.
@@ -103,7 +92,6 @@ class AggregatorServiceInterface(BaseAgentServiceInterface):
             is_partial: Whether this is partial aggregation
             **kwargs: Additional parameters
         """
-        pass
 
 
 class PlanModifierServiceInterface(BaseAgentServiceInterface):
@@ -118,9 +106,9 @@ class PlanModifierServiceInterface(BaseAgentServiceInterface):
         self,
         task: TaskNode,
         context: TaskContext,
-        failed_children: List[TaskNode] = None,
-        failure_reason: str = None,
-        **kwargs
+        failed_children: list[TaskNode] | None = None,
+        failure_reason: str | None = None,
+        **kwargs: Any,
     ) -> NodeResult:
         """
         Run plan modification based on failures.
@@ -132,4 +120,3 @@ class PlanModifierServiceInterface(BaseAgentServiceInterface):
             failure_reason: Reason for replanning
             **kwargs: Additional parameters
         """
-        pass

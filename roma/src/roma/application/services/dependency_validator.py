@@ -6,13 +6,12 @@ before allowing task execution. Integrates with existing graph operations.
 """
 
 import logging
-from typing import List, Set, Optional, Dict, Any
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.dependency_status import DependencyStatus
 from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.value_objects.task_status import TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +19,7 @@ logger = logging.getLogger(__name__)
 class DependencyValidationError(Exception):
     """Raised when dependency validation fails."""
 
-    def __init__(self, message: str, validation_details: Dict[str, Any]):
+    def __init__(self, message: str, validation_details: dict[str, Any]):
         super().__init__(message)
         self.validation_details = validation_details
 
@@ -32,10 +31,10 @@ class DependencyValidationResult:
         self,
         node_id: str,
         is_valid: bool,
-        missing_dependencies: Optional[Set[str]] = None,
-        failed_dependencies: Optional[Set[str]] = None,
-        pending_dependencies: Optional[Set[str]] = None,
-        validation_message: Optional[str] = None
+        missing_dependencies: set[str] | None = None,
+        failed_dependencies: set[str] | None = None,
+        pending_dependencies: set[str] | None = None,
+        validation_message: str | None = None,
     ):
         self.node_id = node_id
         self.is_valid = is_valid
@@ -43,18 +42,16 @@ class DependencyValidationResult:
         self.failed_dependencies = failed_dependencies or set()
         self.pending_dependencies = pending_dependencies or set()
         self.validation_message = validation_message or ""
-        self.validated_at = datetime.now(timezone.utc)
+        self.validated_at = datetime.now(UTC)
 
     @property
     def has_issues(self) -> bool:
         """Check if validation found any issues."""
         return bool(
-            self.missing_dependencies or
-            self.failed_dependencies or
-            self.pending_dependencies
+            self.missing_dependencies or self.failed_dependencies or self.pending_dependencies
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for logging/debugging."""
         return {
             "node_id": self.node_id,
@@ -63,7 +60,7 @@ class DependencyValidationResult:
             "failed_dependencies": list(self.failed_dependencies),
             "pending_dependencies": list(self.pending_dependencies),
             "validation_message": self.validation_message,
-            "validated_at": self.validated_at.isoformat()
+            "validated_at": self.validated_at.isoformat(),
         }
 
 
@@ -79,9 +76,7 @@ class DependencyValidator:
     """
 
     def __init__(
-        self,
-        allow_pending_dependencies: bool = False,
-        recovery_manager: Optional[Any] = None
+        self, allow_pending_dependencies: bool = False, recovery_manager: Any | None = None
     ):
         """
         Initialize dependency validator.
@@ -96,9 +91,7 @@ class DependencyValidator:
         logger.info(f"DependencyValidator initialized (allow_pending={allow_pending_dependencies})")
 
     def validate_node_dependencies(
-        self,
-        node: TaskNode,
-        graph: DynamicTaskGraph
+        self, node: TaskNode, graph: DynamicTaskGraph
     ) -> DependencyValidationResult:
         """
         Validate dependencies for a single node.
@@ -116,9 +109,7 @@ class DependencyValidator:
         # If no dependencies, validation passes
         if not node.has_dependencies:
             return DependencyValidationResult(
-                node_id=node_id,
-                is_valid=True,
-                validation_message="No dependencies to validate"
+                node_id=node_id, is_valid=True, validation_message="No dependencies to validate"
             )
 
         missing_deps = set()
@@ -137,10 +128,16 @@ class DependencyValidator:
                 if dependency_node.status == TaskStatus.FAILED:
                     failed_deps.add(dep_id)
                     logger.warning(f"Node {node_id} depends on failed node {dep_id}")
-                elif dependency_node.status in [TaskStatus.PENDING, TaskStatus.READY, TaskStatus.EXECUTING]:
+                elif dependency_node.status in [
+                    TaskStatus.PENDING,
+                    TaskStatus.READY,
+                    TaskStatus.EXECUTING,
+                ]:
                     pending_deps.add(dep_id)
                     if not self.allow_pending_dependencies:
-                        logger.debug(f"Node {node_id} depends on incomplete node {dep_id} (status: {dependency_node.status})")
+                        logger.debug(
+                            f"Node {node_id} depends on incomplete node {dep_id} (status: {dependency_node.status})"
+                        )
 
         # Determine overall validation result
         has_blocking_issues = bool(missing_deps or failed_deps)
@@ -169,7 +166,7 @@ class DependencyValidator:
             missing_dependencies=missing_deps,
             failed_dependencies=failed_deps,
             pending_dependencies=pending_deps,
-            validation_message=validation_message
+            validation_message=validation_message,
         )
 
         if not is_valid:
@@ -180,10 +177,8 @@ class DependencyValidator:
         return result
 
     def validate_ready_nodes(
-        self,
-        ready_nodes: List[TaskNode],
-        graph: DynamicTaskGraph
-    ) -> List[DependencyValidationResult]:
+        self, ready_nodes: list[TaskNode], graph: DynamicTaskGraph
+    ) -> list[DependencyValidationResult]:
         """
         Validate dependencies for multiple ready nodes.
 
@@ -210,10 +205,8 @@ class DependencyValidator:
         return results
 
     async def get_executable_nodes(
-        self,
-        ready_nodes: List[TaskNode],
-        graph: DynamicTaskGraph
-    ) -> List[TaskNode]:
+        self, ready_nodes: list[TaskNode], graph: DynamicTaskGraph
+    ) -> list[TaskNode]:
         """
         Filter ready nodes to only include those with satisfied dependencies.
 
@@ -233,7 +226,9 @@ class DependencyValidator:
             else:
                 logger.info(f"Node {node.task_id} not executable: {result.validation_message}")
 
-        logger.info(f"Filtered {len(ready_nodes)} ready nodes to {len(executable_nodes)} executable nodes")
+        logger.info(
+            f"Filtered {len(ready_nodes)} ready nodes to {len(executable_nodes)} executable nodes"
+        )
 
         # Handle dependency failures with recovery manager
         if self.recovery_manager and len(executable_nodes) < len(ready_nodes):
@@ -241,7 +236,7 @@ class DependencyValidator:
 
         return executable_nodes
 
-    def validate_graph_integrity(self, graph: DynamicTaskGraph) -> Dict[str, Any]:
+    def validate_graph_integrity(self, graph: DynamicTaskGraph) -> dict[str, Any]:
         """
         Validate overall graph integrity including circular dependencies.
 
@@ -275,7 +270,9 @@ class DependencyValidator:
                     orphaned_dependencies.add(dep_id)
 
         if orphaned_dependencies:
-            warnings.append(f"Orphaned dependencies found: {len(orphaned_dependencies)} missing nodes")
+            warnings.append(
+                f"Orphaned dependencies found: {len(orphaned_dependencies)} missing nodes"
+            )
             recommendations.append("Remove references to deleted dependency nodes")
 
         # Check for nodes with failed dependencies
@@ -305,14 +302,14 @@ class DependencyValidator:
             "recommendations": recommendations,
             "orphaned_dependencies": list(orphaned_dependencies),
             "nodes_with_failed_deps": nodes_with_failed_deps,
-            "validation_timestamp": datetime.now(timezone.utc).isoformat()
+            "validation_timestamp": datetime.now(UTC).isoformat(),
         }
 
     async def _handle_dependency_failures(
         self,
-        ready_nodes: List[TaskNode],
-        validation_results: List[DependencyValidationResult],
-        graph: DynamicTaskGraph
+        ready_nodes: list[TaskNode],
+        validation_results: list[DependencyValidationResult],
+        graph: DynamicTaskGraph,
     ) -> None:
         """
         Handle dependency failures using the recovery manager.
@@ -347,10 +344,15 @@ class DependencyValidator:
 
                             # Apply recovery result if node update is provided
                             if recovery_result.updated_node:
-                                await graph.set_node_exact(recovery_result.updated_node.task_id, recovery_result.updated_node)
+                                await graph.set_node_exact(
+                                    recovery_result.updated_node.task_id,
+                                    recovery_result.updated_node,
+                                )
 
                     except Exception as e:
-                        logger.error(f"Error during dependency failure recovery for {failed_dep}: {e}")
+                        logger.error(
+                            f"Error during dependency failure recovery for {failed_dep}: {e}"
+                        )
 
                 # Handle missing dependencies
                 for missing_dep in result.missing_dependencies:

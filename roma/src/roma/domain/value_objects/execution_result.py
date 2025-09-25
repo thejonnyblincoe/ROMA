@@ -5,19 +5,17 @@ Defines the final result of complete task graph execution.
 Contains execution statistics, success status, and final results.
 """
 
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List, Dict, Any
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
 from .result_envelope import AnyResultEnvelope
 
 
 class ExecutionResult(BaseModel):
     """Result of complete execution orchestration."""
 
-    model_config = ConfigDict(
-        frozen=True,
-        arbitrary_types_allowed=True,
-        validate_assignment=True
-    )
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True, validate_assignment=True)
 
     # Execution status
     success: bool = Field(..., description="Whether execution completed successfully")
@@ -28,18 +26,18 @@ class ExecutionResult(BaseModel):
     failed_nodes: int = Field(..., ge=0, description="Number of failed nodes")
 
     # Timing information
-    execution_time_seconds: float = Field(..., ge=0.0, description="Total execution time in seconds")
+    execution_time_seconds: float = Field(
+        ..., ge=0.0, description="Total execution time in seconds"
+    )
     iterations: int = Field(..., ge=0, description="Number of orchestration iterations")
 
     # Results
-    final_result: Optional[AnyResultEnvelope] = Field(
-        default=None,
-        description="Final result envelope from root task (if available)"
+    final_result: AnyResultEnvelope | None = Field(
+        default=None, description="Final result envelope from root task (if available)"
     )
 
-    error_details: List[Dict[str, Any]] = Field(
-        default_factory=list,
-        description="List of error details encountered during execution"
+    error_details: list[dict[str, Any]] = Field(
+        default_factory=list, description="List of error details encountered during execution"
     )
 
     def __str__(self) -> str:
@@ -88,7 +86,7 @@ class ExecutionResult(BaseModel):
         """Check if execution had any errors."""
         return len(self.error_details) > 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "success": self.success,
@@ -102,7 +100,7 @@ class ExecutionResult(BaseModel):
             "has_final_result": self.has_final_result,
             "has_errors": self.has_errors,
             "final_result": self.final_result,
-            "error_details": self.error_details
+            "error_details": self.error_details,
         }
 
     @classmethod
@@ -112,7 +110,7 @@ class ExecutionResult(BaseModel):
         completed_nodes: int,
         execution_time_seconds: float,
         iterations: int,
-        final_result: Optional[AnyResultEnvelope] = None
+        final_result: AnyResultEnvelope | None = None,
     ) -> "ExecutionResult":
         """Create a successful execution result."""
         return cls(
@@ -122,7 +120,7 @@ class ExecutionResult(BaseModel):
             failed_nodes=0,
             execution_time_seconds=execution_time_seconds,
             iterations=iterations,
-            final_result=final_result
+            final_result=final_result,
         )
 
     @classmethod
@@ -133,8 +131,8 @@ class ExecutionResult(BaseModel):
         failed_nodes: int,
         execution_time_seconds: float,
         iterations: int,
-        error_details: List[Dict[str, Any]],
-        final_result: Optional[AnyResultEnvelope] = None
+        error_details: list[dict[str, Any]],
+        final_result: AnyResultEnvelope | None = None,
     ) -> "ExecutionResult":
         """Create a failed execution result."""
         return cls(
@@ -145,5 +143,5 @@ class ExecutionResult(BaseModel):
             execution_time_seconds=execution_time_seconds,
             iterations=iterations,
             final_result=final_result,
-            error_details=error_details
+            error_details=error_details,
         )

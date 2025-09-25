@@ -4,17 +4,17 @@ Tests for AgentFactory template resolution mechanism.
 Tests the template fallback logic and schema name generation fixes.
 """
 
-import pytest
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from roma.infrastructure.agents.agent_factory import AgentFactory
-from roma.domain.value_objects.config.roma_config import ROMAConfig
+import pytest
+
 from roma.domain.value_objects.config.agent_config import AgentConfig
 from roma.domain.value_objects.config.model_config import ModelConfig
+from roma.domain.value_objects.config.roma_config import ROMAConfig
 from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.agent_type import AgentType
+from roma.infrastructure.agents.agent_factory import AgentFactory
 
 
 class TestAgentFactoryTemplateResolution:

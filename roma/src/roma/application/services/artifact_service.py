@@ -6,23 +6,19 @@ domain artifacts and storage infrastructure.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
-from pathlib import Path
+from typing import Any
 
 from roma.domain.entities.artifacts.base_artifact import BaseArtifact
 from roma.domain.entities.artifacts.file_artifact import FileArtifact
-from roma.domain.entities.artifacts.audio_artifact import AudioArtifact
-from roma.domain.entities.artifacts.video_artifact import VideoArtifact
-from roma.domain.entities.artifacts.image_artifact import ImageArtifact
-from roma.domain.value_objects.result_envelope import ResultEnvelope, AnyResultEnvelope
+from roma.domain.interfaces.artifact_service import IArtifactService
+from roma.domain.interfaces.storage import IStorage
 from roma.domain.value_objects.media_type import MediaType
-from roma.infrastructure.storage.storage_interface import StorageInterface
+from roma.domain.value_objects.result_envelope import AnyResultEnvelope
 
 logger = logging.getLogger(__name__)
 
 
-class ArtifactService:
+class ArtifactService(IArtifactService):
     """
     Service for managing artifacts in ResultEnvelopes.
 
@@ -30,7 +26,7 @@ class ArtifactService:
     infrastructure while maintaining clean separation of concerns.
     """
 
-    def __init__(self, storage: StorageInterface):
+    def __init__(self, storage: IStorage):
         """
         Initialize artifact service.
 
@@ -56,9 +52,8 @@ class ArtifactService:
         logger.info("ArtifactService initialized")
 
     async def store_envelope_artifacts(
-        self,
-        envelope: AnyResultEnvelope
-    ) -> List[str]:
+        self, envelope: AnyResultEnvelope, execution_id: str
+    ) -> list[str]:
         """
         Store all artifacts from a ResultEnvelope and return storage references.
 
@@ -79,9 +74,7 @@ class ArtifactService:
 
         for artifact in envelope.artifacts:
             try:
-                storage_ref = await self._store_single_artifact(
-                    envelope.task_id, artifact
-                )
+                storage_ref = await self._store_single_artifact(execution_id, artifact)
                 stored_refs.append(storage_ref)
 
             except Exception as e:
@@ -91,11 +84,7 @@ class ArtifactService:
         logger.info(f"Stored {len(stored_refs)}/{len(envelope.artifacts)} artifacts")
         return stored_refs
 
-    async def _store_single_artifact(
-        self,
-        task_id: str,
-        artifact: BaseArtifact
-    ) -> str:
+    async def _store_single_artifact(self, task_id: str, artifact: BaseArtifact) -> str:
         """
         Store a single artifact and return its storage reference.
 
@@ -121,29 +110,21 @@ class ArtifactService:
             "media_type": artifact.media_type.value,
             "created_at": artifact.created_at.isoformat(),
             "original_name": artifact.name,
-            **artifact.metadata
+            **artifact.metadata,
         }
 
         # Store using storage interface (already execution-isolated)
         if isinstance(content, str):
             # Text content
-            full_path = await self.storage.put_text(
-                storage_key, content, metadata=metadata
-            )
+            await self.storage.put_text(storage_key, content, metadata=metadata)
         else:
             # Binary content
-            full_path = await self.storage.put(
-                storage_key, content, metadata=metadata
-            )
+            await self.storage.put(storage_key, content, metadata=metadata)
 
         logger.debug(f"Stored artifact {artifact.name} at {storage_key}")
         return storage_key
 
-    def _generate_artifact_key(
-        self,
-        task_id: str,
-        artifact: BaseArtifact
-    ) -> str:
+    def _generate_artifact_key(self, task_id: str, artifact: BaseArtifact) -> str:
         """
         Generate organized storage key for artifact.
 
@@ -158,7 +139,7 @@ class ArtifactService:
         safe_name = self._sanitize_filename(artifact.name)
 
         # Add appropriate file extension based on media type
-        if hasattr(artifact, 'get_file_extension') and artifact.get_file_extension():
+        if hasattr(artifact, "get_file_extension") and artifact.get_file_extension():
             extension = artifact.get_file_extension()
         else:
             extension = self._get_extension_for_media_type(artifact.media_type)
@@ -187,15 +168,13 @@ class ArtifactService:
             MediaType.FILE: "",  # Keep original or no extension
             MediaType.IMAGE: ".png",
             MediaType.AUDIO: ".mp3",
-            MediaType.VIDEO: ".mp4"
+            MediaType.VIDEO: ".mp4",
         }
         return extension_map.get(media_type, "")
 
     async def retrieve_artifact(
-        self,
-        storage_key: str,
-        as_text: bool = False
-    ) -> Optional[bytes | str]:
+        self, storage_key: str, as_text: bool = False
+    ) -> bytes | str | None:
         """
         Retrieve artifact content by storage key.
 
@@ -211,7 +190,7 @@ class ArtifactService:
         else:
             return await self.storage.get(storage_key)
 
-    async def list_execution_artifacts(self) -> List[str]:
+    async def list_execution_artifacts(self) -> list[str]:
         """
         List all artifact storage keys for this execution.
 
@@ -221,7 +200,7 @@ class ArtifactService:
         # Storage is already execution-isolated, so list all keys
         return await self.storage.list_keys("")
 
-    async def get_artifact_metadata(self, storage_key: str) -> Dict[str, Any]:
+    async def get_artifact_metadata(self, storage_key: str) -> dict[str, Any]:
         """
         Get metadata for stored artifact.
 
@@ -241,7 +220,7 @@ class ArtifactService:
                 "storage_key": storage_key,
                 "size_bytes": size,
                 "full_path": str(full_path),
-                "exists": True
+                "exists": True,
             }
 
         return {"exists": False}
@@ -267,11 +246,8 @@ class ArtifactService:
         return deleted_count
 
     async def create_file_artifact_from_storage(
-        self,
-        storage_key: str,
-        name: str,
-        task_id: Optional[str] = None
-    ) -> Optional[FileArtifact]:
+        self, storage_key: str, name: str, task_id: str | None = None
+    ) -> FileArtifact | None:
         """
         Create a FileArtifact from existing storage.
 
@@ -294,7 +270,7 @@ class ArtifactService:
                 name=name,
                 file_path=str(full_path),
                 task_id=task_id,
-                metadata={"storage_key": storage_key}
+                metadata={"storage_key": storage_key},
             )
             return artifact
 
@@ -302,7 +278,7 @@ class ArtifactService:
             logger.error(f"Failed to create FileArtifact from {storage_key}: {e}")
             return None
 
-    def get_storage_stats(self) -> Dict[str, Any]:
+    def get_storage_stats(self) -> dict[str, Any]:
         """
         Get storage statistics and configuration info.
 
@@ -315,5 +291,5 @@ class ArtifactService:
             "artifacts_path": str(self.storage.get_artifacts_path("")),
             "temp_path": str(self.storage.get_temp_path("")),
             "initialized": self._initialized,
-            "config": self.storage.config.model_dump()
+            "config": self.storage.config.model_dump(),
         }

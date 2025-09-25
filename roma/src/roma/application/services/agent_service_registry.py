@@ -6,27 +6,29 @@ Handles service lifecycle, dependency injection, and service lookup.
 """
 
 import logging
-from typing import Dict, Optional
 
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.interfaces.agent_service import (
-    BaseAgentServiceInterface,
-    AtomizerServiceInterface,
-    PlannerServiceInterface,
-    ExecutorServiceInterface,
-    AggregatorServiceInterface,
-    PlanModifierServiceInterface
-)
-from roma.application.services.atomizer_service import AtomizerService
-from roma.application.services.planner_service import PlannerService
-from roma.application.services.executor_service import ExecutorService
-from roma.application.services.aggregator_service import AggregatorService
-from roma.application.services.plan_modifier_service import PlanModifierService
 from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager
+from roma.application.services.aggregator_service import AggregatorService
+from roma.application.services.atomizer_service import AtomizerService
+from roma.application.services.executor_service import ExecutorService
 from roma.application.services.hitl_service import HITLService
-from roma.domain.interfaces.persistence import CheckpointRepository, RecoveryRepository, ExecutionHistoryRepository
+from roma.application.services.plan_modifier_service import PlanModifierService
+from roma.application.services.planner_service import PlannerService
+from roma.application.services.recovery_manager import RecoveryManager
+from roma.domain.interfaces.agent_service import (
+    AggregatorServiceInterface,
+    AtomizerServiceInterface,
+    BaseAgentServiceInterface,
+    ExecutorServiceInterface,
+    PlanModifierServiceInterface,
+    PlannerServiceInterface,
+)
+from roma.domain.interfaces.persistence import (
+    CheckpointRepository,
+    ExecutionHistoryRepository,
+    RecoveryRepository,
+)
+from roma.domain.value_objects.agent_type import AgentType
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +45,10 @@ class AgentServiceRegistry:
         self,
         agent_runtime_service: AgentRuntimeService,
         recovery_manager: RecoveryManager,
-        hitl_service: Optional[HITLService] = None,
-        checkpoint_repository: Optional[CheckpointRepository] = None,
-        recovery_repository: Optional[RecoveryRepository] = None,
-        execution_history_repository: Optional[ExecutionHistoryRepository] = None
+        hitl_service: HITLService | None = None,
+        checkpoint_repository: CheckpointRepository | None = None,
+        recovery_repository: RecoveryRepository | None = None,
+        execution_history_repository: ExecutionHistoryRepository | None = None,
     ):
         """
         Initialize registry with core dependencies.
@@ -65,7 +67,7 @@ class AgentServiceRegistry:
         self.checkpoint_repository = checkpoint_repository
         self.recovery_repository = recovery_repository
         self.execution_history_repository = execution_history_repository
-        self._services: Dict[AgentType, BaseAgentServiceInterface] = {}
+        self._services: dict[AgentType, BaseAgentServiceInterface] = {}
 
         # Initialize all standard services
         self._initialize_services()
@@ -74,31 +76,19 @@ class AgentServiceRegistry:
         """Initialize all standard agent services."""
         # Create all services with shared dependencies
         services = {
-            AgentType.ATOMIZER: AtomizerService(
-                self.agent_runtime_service,
-                self.recovery_manager
-            ),
-            AgentType.PLANNER: PlannerService(
-                self.agent_runtime_service,
-                self.recovery_manager
-            ),
-            AgentType.EXECUTOR: ExecutorService(
-                self.agent_runtime_service,
-                self.recovery_manager
-            ),
+            AgentType.ATOMIZER: AtomizerService(self.agent_runtime_service, self.recovery_manager),
+            AgentType.PLANNER: PlannerService(self.agent_runtime_service, self.recovery_manager),
+            AgentType.EXECUTOR: ExecutorService(self.agent_runtime_service, self.recovery_manager),
             AgentType.AGGREGATOR: AggregatorService(
-                self.agent_runtime_service,
-                self.recovery_manager
+                self.agent_runtime_service, self.recovery_manager
             ),
             AgentType.PLAN_MODIFIER: PlanModifierService(
-                self.agent_runtime_service,
-                self.recovery_manager,
-                self.hitl_service
-            )
+                self.agent_runtime_service, self.recovery_manager, self.hitl_service
+            ),
         }
 
         # Register all services
-        for agent_type, service in services.items():
+        for _agent_type, service in services.items():
             self.register_service(service)
 
         logger.info(f"Initialized {len(services)} agent services")
@@ -114,7 +104,7 @@ class AgentServiceRegistry:
             ValueError: If service is invalid or agent type already registered
         """
         if not isinstance(service, BaseAgentServiceInterface):
-            raise ValueError(f"Service must implement BaseAgentServiceInterface")
+            raise ValueError("Service must implement BaseAgentServiceInterface")
 
         agent_type = service.agent_type
         if agent_type in self._services:
@@ -178,25 +168,27 @@ class AgentServiceRegistry:
         return self.get_service(AgentType.PLAN_MODIFIER)
 
     # Persistence repository accessors
-    def get_checkpoint_repository(self) -> Optional[CheckpointRepository]:
+    def get_checkpoint_repository(self) -> CheckpointRepository | None:
         """Get checkpoint repository if available."""
         return self.checkpoint_repository
 
-    def get_recovery_repository(self) -> Optional[RecoveryRepository]:
+    def get_recovery_repository(self) -> RecoveryRepository | None:
         """Get recovery repository if available."""
         return self.recovery_repository
 
-    def get_execution_history_repository(self) -> Optional[ExecutionHistoryRepository]:
+    def get_execution_history_repository(self) -> ExecutionHistoryRepository | None:
         """Get execution history repository if available."""
         return self.execution_history_repository
 
     def has_persistence(self) -> bool:
         """Check if persistence repositories are available."""
-        return (self.checkpoint_repository is not None and
-                self.recovery_repository is not None and
-                self.execution_history_repository is not None)
+        return (
+            self.checkpoint_repository is not None
+            and self.recovery_repository is not None
+            and self.execution_history_repository is not None
+        )
 
-    def get_all_services(self) -> Dict[AgentType, BaseAgentServiceInterface]:
+    def get_all_services(self) -> dict[AgentType, BaseAgentServiceInterface]:
         """
         Get all registered services.
 
@@ -227,9 +219,7 @@ class AgentServiceRegistry:
         return agent_type in self._services
 
     def update_service(
-        self,
-        agent_type: AgentType,
-        service: BaseAgentServiceInterface
+        self, agent_type: AgentType, service: BaseAgentServiceInterface
     ) -> BaseAgentServiceInterface:
         """
         Update an existing service.
@@ -257,7 +247,9 @@ class AgentServiceRegistry:
         old_service = self._services[agent_type]
         self._services[agent_type] = service
 
-        logger.info(f"Updated service for {agent_type}: {old_service.__class__.__name__} → {service.__class__.__name__}")
+        logger.info(
+            f"Updated service for {agent_type}: {old_service.__class__.__name__} → {service.__class__.__name__}"
+        )
         return old_service
 
     def clear_all_services(self) -> None:
@@ -266,7 +258,7 @@ class AgentServiceRegistry:
         self._services.clear()
         logger.warning(f"Cleared all {count} registered services")
 
-    def get_registry_stats(self) -> Dict[str, any]:
+    def get_registry_stats(self) -> dict[str, any]:
         """
         Get registry statistics.
 
@@ -275,14 +267,14 @@ class AgentServiceRegistry:
         """
         stats = {
             "total_services": len(self._services),
-            "registered_types": [agent_type.value for agent_type in self._services.keys()],
-            "services": {}
+            "registered_types": [agent_type.value for agent_type in self._services],
+            "services": {},
         }
 
         # Get stats from each service
         for agent_type, service in self._services.items():
             try:
-                service_stats = service.get_stats() if hasattr(service, 'get_stats') else {}
+                service_stats = service.get_stats() if hasattr(service, "get_stats") else {}
                 stats["services"][agent_type.value] = service_stats
             except Exception as e:
                 logger.warning(f"Failed to get stats from {agent_type}: {e}")
@@ -290,7 +282,7 @@ class AgentServiceRegistry:
 
         return stats
 
-    def health_check(self) -> Dict[str, any]:
+    def health_check(self) -> dict[str, any]:
         """
         Perform health check on all services.
 
@@ -301,7 +293,7 @@ class AgentServiceRegistry:
             "status": "healthy",
             "services_count": len(self._services),
             "missing_services": [],
-            "service_health": {}
+            "service_health": {},
         }
 
         # Check if all expected services are registered
@@ -310,7 +302,7 @@ class AgentServiceRegistry:
             AgentType.PLANNER,
             AgentType.EXECUTOR,
             AgentType.AGGREGATOR,
-            AgentType.PLAN_MODIFIER
+            AgentType.PLAN_MODIFIER,
         ]
 
         for agent_type in expected_types:
@@ -322,7 +314,7 @@ class AgentServiceRegistry:
         for agent_type, service in self._services.items():
             try:
                 # Basic check - service exists and has required methods
-                if hasattr(service, 'run') and hasattr(service, 'agent_type'):
+                if hasattr(service, "run") and hasattr(service, "agent_type"):
                     health["service_health"][agent_type.value] = "healthy"
                 else:
                     health["service_health"][agent_type.value] = "invalid"

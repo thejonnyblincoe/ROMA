@@ -2,18 +2,18 @@
 Tests for KnowledgeStoreService.
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
-from roma.application.services.knowledge_store_service import KnowledgeStoreService
+import pytest
+
 from roma.application.services.artifact_service import ArtifactService
+from roma.application.services.knowledge_store_service import KnowledgeStoreService
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.knowledge_record import KnowledgeRecord
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.result_envelope import ResultEnvelope
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestKnowledgeStoreService:
@@ -60,9 +60,9 @@ class TestKnowledgeStoreService:
     async def test_add_record_with_envelope(self, knowledge_store, sample_task_node, mock_artifact_service):
         """Test adding record with result envelope."""
         # Create a real ResultEnvelope instead of Mock
-        from roma.domain.value_objects.result_envelope import ExecutionMetrics, ResultEnvelope
         from roma.domain.value_objects.agent_responses import ExecutorResult
         from roma.domain.value_objects.agent_type import AgentType
+        from roma.domain.value_objects.result_envelope import ExecutionMetrics
 
         # Create execution metrics
         metrics = ExecutionMetrics(
@@ -76,8 +76,9 @@ class TestKnowledgeStoreService:
         result = ExecutorResult(result="Test result")
 
         # Create some mock artifacts
-        from roma.domain.entities.artifacts.file_artifact import FileArtifact
         import tempfile
+
+        from roma.domain.entities.artifacts.file_artifact import FileArtifact
 
         # Create temporary files for artifacts
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp1:
@@ -438,11 +439,12 @@ class TestKnowledgeStoreService:
         mock_artifact_service.store_envelope_artifacts.side_effect = Exception("Storage failed")
 
         # Create a real ResultEnvelope with artifacts
-        from roma.domain.value_objects.result_envelope import ExecutionMetrics, ResultEnvelope
+        import tempfile
+
+        from roma.domain.entities.artifacts.file_artifact import FileArtifact
         from roma.domain.value_objects.agent_responses import ExecutorResult
         from roma.domain.value_objects.agent_type import AgentType
-        from roma.domain.entities.artifacts.file_artifact import FileArtifact
-        import tempfile
+        from roma.domain.value_objects.result_envelope import ExecutionMetrics
 
         # Create temporary file for artifact
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp:

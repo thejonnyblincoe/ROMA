@@ -4,12 +4,13 @@ Simplified unit tests for AgentFactory edge cases to improve coverage.
 Focus on testing branches and edge cases that aren't covered by integration tests.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
-from roma.infrastructure.agents.agent_factory import AgentFactory
-from roma.domain.value_objects.task_type import TaskType
+import pytest
+
 from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.task_type import TaskType
+from roma.infrastructure.agents.agent_factory import AgentFactory
 
 
 class TestAgentFactorySimpleEdgeCases:
@@ -186,9 +187,10 @@ class TestAgentFactorySimpleEdgeCases:
     @pytest.mark.asyncio
     async def test_create_agent_auto_initialize(self, agent_factory):
         """Test create_agent calls initialize when not initialized."""
+        from jinja2 import Template
+
         from roma.domain.value_objects.config.agent_config import AgentConfig
         from roma.domain.value_objects.config.model_config import ModelConfig
-        from jinja2 import Template
 
         agent_config = AgentConfig(
             name="test_agent",
@@ -311,10 +313,11 @@ class TestAgentFactorySchemaNameGeneration:
     @pytest.mark.asyncio
     async def test_custom_output_schema_override(self, agent_factory):
         """Test custom output schema name can override default."""
+        from jinja2 import Template
+
+        from roma.domain.value_objects.agent_responses import AtomizerResult
         from roma.domain.value_objects.config.agent_config import AgentConfig
         from roma.domain.value_objects.config.model_config import ModelConfig
-        from roma.domain.value_objects.agent_responses import AtomizerResult
-        from jinja2 import Template
 
         agent_factory._initialized = True
 

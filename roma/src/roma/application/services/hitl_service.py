@@ -6,15 +6,17 @@ and decision making during complex workflows.
 """
 
 import logging
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
+from roma.domain.context.task_context import TaskContext
 from roma.domain.entities.task_node import TaskNode
 from roma.domain.value_objects.hitl_request import (
-    HITLRequest, HITLResponse, HITLRequestType, HITLRequestStatus
+    HITLRequest,
+    HITLRequestStatus,
+    HITLRequestType,
+    HITLResponse,
 )
-from roma.application.services.context_builder_service import TaskContext
-
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +29,7 @@ class HITLService:
     approval, task guidance, and execution control.
     """
 
-    def __init__(self,
-                 enabled: bool = False,
-                 default_timeout_seconds: int = 300):
+    def __init__(self, enabled: bool = False, default_timeout_seconds: int = 300):
         """
         Initialize HITL service.
 
@@ -42,8 +42,8 @@ class HITLService:
         self.default_timeout = default_timeout_seconds  # Keep both for backward compatibility
 
         # Request tracking
-        self.pending_requests: Dict[str, HITLRequest] = {}
-        self.completed_requests: List[HITLResponse] = []
+        self.pending_requests: dict[str, HITLRequest] = {}
+        self.completed_requests: list[HITLResponse] = []
 
         # Aliases for test compatibility
         self._pending_requests = self.pending_requests
@@ -55,14 +55,18 @@ class HITLService:
         self.rejected_requests = 0
         self.timeout_requests = 0
 
-        logger.info(f"HITLService initialized (enabled={enabled}, timeout={default_timeout_seconds}s)")
+        logger.info(
+            f"HITLService initialized (enabled={enabled}, timeout={default_timeout_seconds}s)"
+        )
 
-    async def request_replanning_approval(self,
-                                        node: TaskNode,
-                                        context: TaskContext,
-                                        failed_children: List[TaskNode],
-                                        failure_reason: str,
-                                        timeout_seconds: Optional[int] = None) -> Optional[HITLResponse]:
+    async def request_replanning_approval(
+        self,
+        node: TaskNode,
+        context: TaskContext,
+        failed_children: list[TaskNode],
+        failure_reason: str,
+        timeout_seconds: int | None = None,
+    ) -> HITLResponse | None:
         """
         Request human approval for replanning a failed task.
 
@@ -88,22 +92,18 @@ class HITLService:
             "failure_reason": failure_reason,
             "failed_children_count": len(failed_children),
             "failed_children": [
-                {
-                    "task_id": child.task_id,
-                    "goal": child.goal,
-                    "status": child.status.value
-                }
+                {"task_id": child.task_id, "goal": child.goal, "status": child.status.value}
                 for child in failed_children
             ],
             "overall_objective": context.overall_objective,
-            "parent_context": context.execution_metadata
+            "parent_context": context.execution_metadata,
         }
 
         suggested_actions = [
             "Approve automatic replanning",
             "Reject replanning and mark task as failed",
             "Modify replanning strategy",
-            "Request manual task decomposition"
+            "Request manual task decomposition",
         ]
 
         hitl_request = HITLRequest(
@@ -112,19 +112,18 @@ class HITLService:
             task_id=node.task_id,
             title=f"Replanning Approval Required: {node.goal[:50]}",
             description=f"Task '{node.goal}' needs replanning due to {failure_reason}. "
-                       f"{len(failed_children)} child tasks failed. Please review and approve replanning strategy.",
+            f"{len(failed_children)} child tasks failed. Please review and approve replanning strategy.",
             context_data=context_data,
             suggested_actions=suggested_actions,
-            created_at=datetime.now(timezone.utc),
-            timeout_seconds=timeout_seconds or self.default_timeout
+            created_at=datetime.now(UTC),
+            timeout_seconds=timeout_seconds or self.default_timeout,
         )
 
         return await self._process_hitl_request(hitl_request)
 
-    async def request_task_guidance(self,
-                                  node: TaskNode,
-                                  context: TaskContext,
-                                  guidance_request: str) -> Optional[HITLResponse]:
+    async def request_task_guidance(
+        self, node: TaskNode, context: TaskContext, guidance_request: str
+    ) -> HITLResponse | None:
         """
         Request human guidance for task execution.
 
@@ -147,14 +146,14 @@ class HITLService:
             "task_type": node.task_type.value,
             "guidance_request": guidance_request,
             "overall_objective": context.overall_objective,
-            "execution_metadata": context.execution_metadata
+            "execution_metadata": context.execution_metadata,
         }
 
         suggested_actions = [
             "Proceed with current approach",
             "Modify task parameters",
             "Change execution strategy",
-            "Pause for manual intervention"
+            "Pause for manual intervention",
         ]
 
         hitl_request = HITLRequest(
@@ -163,16 +162,16 @@ class HITLService:
             task_id=node.task_id,
             title=f"Task Guidance Required: {node.goal[:50]}",
             description=f"Task '{node.goal}' requires human guidance: {guidance_request}. "
-                       f"Please provide direction for execution.",
+            f"Please provide direction for execution.",
             context_data=context_data,
             suggested_actions=suggested_actions,
-            created_at=datetime.now(timezone.utc),
-            timeout_seconds=self.default_timeout
+            created_at=datetime.now(UTC),
+            timeout_seconds=self.default_timeout,
         )
 
         return await self._process_hitl_request(hitl_request)
 
-    async def _process_hitl_request(self, request: HITLRequest) -> Optional[HITLResponse]:
+    async def _process_hitl_request(self, request: HITLRequest) -> HITLResponse | None:
         """
         Process a HITL request by presenting it to the human operator.
 
@@ -191,7 +190,9 @@ class HITLService:
         # Store the request
         self.pending_requests[request.request_id] = request
 
-        logger.info(f"HITL request created: {request.request_type.value} for task {request.task_id}")
+        logger.info(
+            f"HITL request created: {request.request_type.value} for task {request.task_id}"
+        )
         logger.info(f"Title: {request.title}")
         logger.info(f"Description: {request.description}")
         logger.info(f"Suggested actions: {request.suggested_actions}")
@@ -201,7 +202,9 @@ class HITLService:
         await self._simulate_human_response(request)
 
         # Use the new _wait_for_response method
-        response = await self._wait_for_response(request.request_id, request.timeout_seconds or self.default_timeout)
+        response = await self._wait_for_response(
+            request.request_id, request.timeout_seconds or self.default_timeout
+        )
         if response:
             await self.provide_response(response)
 
@@ -221,22 +224,22 @@ class HITLService:
             self.approved_requests += 1
             logger.info(f"[SIMULATED] HITL request {request.request_id} approved")
 
-    def _get_completed_response(self, request_id: str) -> Optional[HITLResponse]:
+    def _get_completed_response(self, request_id: str) -> HITLResponse | None:
         """Get completed response for a request (placeholder for actual implementation)."""
         # Simulate approved response
         return HITLResponse(
             request_id=request_id,
             status=HITLRequestStatus.APPROVED,
             human_feedback="Approved via simulation",
-            response_time=datetime.now(timezone.utc),
-            processing_notes="Simulated approval for development"
+            response_time=datetime.now(UTC),
+            processing_notes="Simulated approval for development",
         )
 
-    def get_pending_requests(self) -> List[HITLRequest]:
+    def get_pending_requests(self) -> list[HITLRequest]:
         """Get all pending HITL requests."""
         return list(self.pending_requests.values())
 
-    def get_statistics(self) -> Dict[str, Any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get HITL service statistics."""
         return {
             "enabled": self.enabled,
@@ -248,8 +251,9 @@ class HITLService:
             "completed_requests": len(self.completed_requests),
             "approval_rate": (
                 self.approved_requests / max(1, self.total_requests) * 100
-                if self.total_requests > 0 else 0
-            )
+                if self.total_requests > 0
+                else 0
+            ),
         }
 
     def clear_completed_requests(self) -> None:
@@ -268,12 +272,10 @@ class HITLService:
         self.enabled = True
         logger.info("HITL service enabled")
 
-    def _create_hitl_request(self,
-                            request_type: HITLRequestType,
-                            task_id: str,
-                            request_data: Dict[str, Any] = None) -> HITLRequest:
+    def _create_hitl_request(
+        self, request_type: HITLRequestType, task_id: str, request_data: dict[str, Any] = None
+    ) -> HITLRequest:
         """Create a HITL request and return it."""
-        from uuid import uuid4
 
         request_id = f"{request_type.value}_{task_id}_{int(datetime.now().timestamp())}"
 
@@ -286,7 +288,7 @@ class HITLService:
             context_data=request_data or {},
             suggested_actions=[],
             timeout_seconds=self.default_timeout,
-            request_data=request_data or {}
+            request_data=request_data or {},
         )
 
         # Store in pending requests
@@ -295,7 +297,9 @@ class HITLService:
 
         return request
 
-    async def _wait_for_response(self, request_id: str, timeout_seconds: int) -> Optional[HITLResponse]:
+    async def _wait_for_response(
+        self, request_id: str, timeout_seconds: int
+    ) -> HITLResponse | None:
         """Wait for human response with timeout."""
         import asyncio
 
@@ -309,9 +313,9 @@ class HITLService:
                     request_id=request_id,
                     status=HITLRequestStatus.TIMEOUT,
                     human_feedback="Request timed out",
-                    response_time=datetime.now(timezone.utc),
+                    response_time=datetime.now(UTC),
                     processing_notes=f"Timed out after {timeout_seconds}s",
-                    response_data={}
+                    response_data={},
                 )
 
             # Simulate waiting for response (in production, this would wait for actual human input)
@@ -322,23 +326,23 @@ class HITLService:
                 request_id=request_id,
                 status=HITLRequestStatus.APPROVED,
                 human_feedback="Approved via simulation",
-                response_time=datetime.now(timezone.utc),
+                response_time=datetime.now(UTC),
                 processing_notes="Simulated approval",
-                response_data={}
+                response_data={},
             )
 
             return response
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self.timeout_requests += 1
             logger.warning(f"HITL request {request_id} timed out after {timeout_seconds}s")
             return HITLResponse(
                 request_id=request_id,
                 status=HITLRequestStatus.TIMEOUT,
                 human_feedback="Request timed out",
-                response_time=datetime.now(timezone.utc),
+                response_time=datetime.now(UTC),
                 processing_notes=f"Timed out after {timeout_seconds}s",
-                response_data={}
+                response_data={},
             )
 
     async def provide_response(self, response: HITLResponse) -> bool:
@@ -362,7 +366,7 @@ class HITLService:
         logger.info(f"Provided response for HITL request: {request_id}")
         return True
 
-    def get_request_by_id(self, request_id: str) -> Optional[HITLRequest]:
+    def get_request_by_id(self, request_id: str) -> HITLRequest | None:
         """Get HITL request by ID."""
         return self.pending_requests.get(request_id)
 
@@ -373,15 +377,15 @@ class HITLService:
             return False
 
         # Remove from pending requests
-        request = self.pending_requests.pop(request_id, None)
+        self.pending_requests.pop(request_id, None)
 
         # Create cancelled response
         cancelled_response = HITLResponse(
             request_id=request_id,
             status=HITLRequestStatus.REJECTED,  # Use REJECTED to indicate cancellation
             human_feedback="Request cancelled",
-            response_time=datetime.now(timezone.utc),
-            processing_notes="Request cancelled by system"
+            response_time=datetime.now(UTC),
+            processing_notes="Request cancelled by system",
         )
 
         self.completed_requests.append(cancelled_response)
@@ -390,7 +394,7 @@ class HITLService:
         logger.info(f"Cancelled HITL request: {request_id}")
         return True
 
-    def get_service_stats(self) -> Dict[str, Any]:
+    def get_service_stats(self) -> dict[str, Any]:
         """Get HITL service statistics."""
         pending_request_types = [req.request_type.value for req in self.pending_requests.values()]
         request_type_counts = {}
@@ -406,7 +410,7 @@ class HITLService:
             "approved_requests": self.approved_requests,
             "rejected_requests": self.rejected_requests,
             "timeout_requests": self.timeout_requests,
-            "completed_requests": len(self.completed_requests)
+            "completed_requests": len(self.completed_requests),
         }
 
     def clear_pending_requests(self) -> None:

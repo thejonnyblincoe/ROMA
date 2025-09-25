@@ -6,17 +6,18 @@ Migrated from TaskNodeProcessor with dependency resolution logic.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any
 
+from roma.domain.context import TaskContext
 from roma.domain.entities.task_node import TaskNode
+from roma.domain.interfaces.agent_runtime_service import IAgentRuntimeService
+from roma.domain.interfaces.agent_service import PlannerServiceInterface
+from roma.domain.interfaces.recovery_manager import IRecoveryManager
+from roma.domain.value_objects.agent_responses import PlannerResult
 from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.agent_responses import PlannerResult, SubTask
+from roma.domain.value_objects.recovery_action import RecoveryAction
 from roma.domain.value_objects.result_envelope import ExecutionMetrics, PlannerEnvelope
-from roma.domain.interfaces.agent_service import PlannerServiceInterface
-from roma.domain.context import TaskContext
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager, RecoveryAction
 
 logger = logging.getLogger(__name__)
 
@@ -25,20 +26,13 @@ class PlannerService(PlannerServiceInterface):
     """Implementation of Planner service for task decomposition."""
 
     def __init__(
-        self,
-        agent_runtime_service: AgentRuntimeService,
-        recovery_manager: RecoveryManager
+        self, agent_runtime_service: IAgentRuntimeService, recovery_manager: IRecoveryManager
     ):
         """Initialize with required dependencies."""
         self.agent_runtime_service = agent_runtime_service
         self.recovery_manager = recovery_manager
 
-    async def run(
-        self,
-        task: TaskNode,
-        context: TaskContext,
-        **kwargs
-    ) -> NodeResult:
+    async def run(self, task: TaskNode, context: TaskContext, **_kwargs) -> NodeResult:
         """
         Run planner to decompose task into subtasks.
 
@@ -63,7 +57,7 @@ class PlannerService(PlannerServiceInterface):
             )
 
             # Extract planner result
-            if not envelope or not hasattr(envelope, 'result'):
+            if not envelope or not hasattr(envelope, "result"):
                 raise ValueError("Planner returned invalid envelope")
 
             planner_result: PlannerResult = envelope.result
@@ -77,9 +71,9 @@ class PlannerService(PlannerServiceInterface):
             execution_time = context.execution_metadata.get("execution_time", 0.0)
             metrics = ExecutionMetrics(
                 execution_time=execution_time,
-                tokens_used=getattr(envelope, 'tokens_used', 0),
-                cost_estimate=getattr(envelope, 'cost_estimate', 0.0),
-                model_calls=1
+                tokens_used=getattr(envelope, "tokens_used", 0),
+                cost_estimate=getattr(envelope, "cost_estimate", 0.0),
+                model_calls=1,
             )
 
             # Create typed envelope
@@ -89,22 +83,23 @@ class PlannerService(PlannerServiceInterface):
                 execution_id=context.execution_id,
                 agent_type=AgentType.PLANNER,
                 execution_metrics=metrics,
-                output_text=f"Created {len(subtask_nodes)} subtasks"
+                output_text=f"Created {len(subtask_nodes)} subtasks",
             )
 
             # Record success with recovery manager
             await self.recovery_manager.record_success(task.task_id)
 
-            return NodeResult.planning_result(task_id=task.task_id, 
+            return NodeResult.planning_result(
+                task_id=task.task_id,
                 subtasks=subtask_nodes,
                 envelope=planner_envelope,
-                agent_name=getattr(planner_agent, 'name', 'PlannerAgent'),
+                agent_name=getattr(planner_agent, "name", "PlannerAgent"),
                 processing_time_ms=execution_time * 1000,
                 metadata={
                     "subtask_count": len(subtask_nodes),
                     "reasoning": planner_result.reasoning,
-                    "estimated_effort": planner_result.estimated_total_effort
-                }
+                    "estimated_effort": planner_result.estimated_total_effort,
+                },
             )
 
         except Exception as e:
@@ -114,11 +109,12 @@ class PlannerService(PlannerServiceInterface):
             recovery_result = await self.recovery_manager.handle_failure(task, e)
 
             if recovery_result.action == RecoveryAction.RETRY:
-                return NodeResult.retry(task_id=task.task_id,
+                return NodeResult.retry(
+                    task_id=task.task_id,
                     error=str(e),
                     agent_name="PlannerAgent",
                     agent_type=AgentType.PLANNER.value,
-                    metadata={"retry_count": recovery_result.metadata.get("retry_attempt", 1)}
+                    metadata={"retry_count": recovery_result.metadata.get("retry_attempt", 1)},
                 )
             elif recovery_result.action == RecoveryAction.REPLAN:
                 return NodeResult.replan(
@@ -126,16 +122,19 @@ class PlannerService(PlannerServiceInterface):
                     parent_id=recovery_result.metadata.get("parent_id"),
                     reason="critical_failure_exhausted_retries",
                     agent_name="PlannerAgent",
-                    agent_type=AgentType.PLANNER.value
+                    agent_type=AgentType.PLANNER.value,
                 )
             else:
-                return NodeResult.failure(task_id=task.task_id,
+                return NodeResult.failure(
+                    task_id=task.task_id,
                     error=str(e),
                     agent_name="PlannerAgent",
-                    agent_type=AgentType.PLANNER.value
+                    agent_type=AgentType.PLANNER.value,
                 )
 
-    async def _convert_plan_to_nodes(self, planner_result: PlannerResult, parent: TaskNode) -> List[TaskNode]:
+    async def _convert_plan_to_nodes(
+        self, planner_result: PlannerResult, parent: TaskNode
+    ) -> list[TaskNode]:
         """
         Convert PlannerResult to TaskNode subtasks with dependency resolution.
 
@@ -170,8 +169,8 @@ class PlannerService(PlannerServiceInterface):
                     "priority": subtask.priority,
                     "original_dependencies": subtask.dependencies,
                     "estimated_effort": subtask.estimated_effort,
-                    "subtask_metadata": subtask.metadata or {}
-                }
+                    "subtask_metadata": subtask.metadata or {},
+                },
             )
             task_nodes.append(task_node)
 
@@ -194,18 +193,16 @@ class PlannerService(PlannerServiceInterface):
                         update={"dependencies": frozenset(resolved_deps)}
                     )
 
-        logger.info(
-            f"Converted {len(subtasks)} subtasks to TaskNodes for parent {parent.task_id}"
-        )
+        logger.info(f"Converted {len(subtasks)} subtasks to TaskNodes for parent {parent.task_id}")
 
         return task_nodes
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get planner service statistics."""
         base_stats = super().get_stats()
         return {
             **base_stats,
-            "plans_created": getattr(self, '_plans_created', 0),
-            "total_subtasks_generated": getattr(self, '_total_subtasks', 0),
-            "average_subtasks_per_plan": getattr(self, '_avg_subtasks', 0.0)
+            "plans_created": getattr(self, "_plans_created", 0),
+            "total_subtasks_generated": getattr(self, "_total_subtasks", 0),
+            "average_subtasks_per_plan": getattr(self, "_avg_subtasks", 0.0),
         }

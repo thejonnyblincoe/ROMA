@@ -5,18 +5,25 @@ Application layer service that orchestrates execution history operations using r
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, List, Optional
-from uuid import uuid4
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from roma.domain.interfaces.persistence import ExecutionHistoryRepository
+from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.interfaces.persistence import ExecutionHistoryRepository
 from roma.domain.value_objects.persistence import (
     TaskRelationshipType,
-    ExecutionRecord,
-    ExecutionTreeNode,
-    ExecutionAnalytics,
+)
+from roma.domain.value_objects.task_status import TaskStatus
+
+# NOTE: Importing infrastructure models violates Clean Architecture
+# TODO: Refactor to use only repository interfaces
+from roma.infrastructure.persistence.models import (
+    TaskExecutionModel,
+    TaskRelationshipModel,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,8 +54,8 @@ class ExecutionHistoryService:
     async def start_execution(
         self,
         task: TaskNode,
-        execution_context: Optional[Dict[str, Any]] = None,
-        agent_config: Optional[Dict[str, Any]] = None
+        execution_context: dict[str, Any] | None = None,
+        agent_config: dict[str, Any] | None = None,
     ) -> str:
         """
         Start tracking a new task execution.
@@ -62,9 +69,7 @@ class ExecutionHistoryService:
             Execution ID
         """
         execution_id = await self.execution_repo.create_execution(
-            task=task,
-            execution_context=execution_context,
-            agent_config=agent_config
+            task=task, execution_context=execution_context, agent_config=agent_config
         )
 
         self._stats["executions_tracked"] += 1
@@ -76,9 +81,9 @@ class ExecutionHistoryService:
         self,
         task_id: str,
         status: TaskStatus,
-        result: Optional[Dict[str, Any]] = None,
-        error_info: Optional[Dict[str, Any]] = None,
-        execution_duration_ms: Optional[int] = None
+        result: dict[str, Any] | None = None,
+        error_info: dict[str, Any] | None = None,
+        execution_duration_ms: int | None = None,
     ) -> None:
         """
         Update execution status and result.
@@ -95,7 +100,7 @@ class ExecutionHistoryService:
             status=status,
             result=result,
             error_info=error_info,
-            execution_duration_ms=execution_duration_ms
+            execution_duration_ms=execution_duration_ms,
         )
 
         self._stats["queries_executed"] += 1
@@ -106,8 +111,8 @@ class ExecutionHistoryService:
         parent_task_id: str,
         child_task_id: str,
         relationship_type: TaskRelationshipType = TaskRelationshipType.PARENT_CHILD,
-        order_index: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        order_index: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Add a relationship between tasks.
@@ -126,14 +131,16 @@ class ExecutionHistoryService:
                     child_task_id=child_task_id,
                     relationship_type=relationship_type,
                     order_index=order_index,
-                    metadata=metadata
+                    metadata=metadata,
                 )
 
                 session.add(relationship)
                 await session.commit()
 
                 self._stats["relationships_created"] += 1
-                logger.debug(f"Added {relationship_type} relationship: {parent_task_id} -> {child_task_id}")
+                logger.debug(
+                    f"Added {relationship_type} relationship: {parent_task_id} -> {child_task_id}"
+                )
 
         except SQLAlchemyError as e:
             logger.error(f"Failed to add task relationship: {e}")
@@ -141,10 +148,10 @@ class ExecutionHistoryService:
 
     async def get_execution_history(
         self,
-        task_id: Optional[str] = None,
-        execution_id: Optional[str] = None,
-        include_children: bool = False
-    ) -> Optional[Dict[str, Any]]:
+        task_id: str | None = None,
+        execution_id: str | None = None,
+        include_children: bool = False,
+    ) -> dict[str, Any] | None:
         """
         Get execution history for a task.
 
@@ -186,8 +193,12 @@ class ExecutionHistoryService:
                     "parent_task_id": execution.parent_task_id,
                     "root_task_id": execution.root_task_id,
                     "depth_level": execution.depth_level,
-                    "started_at": execution.started_at.isoformat() if execution.started_at else None,
-                    "completed_at": execution.completed_at.isoformat() if execution.completed_at else None,
+                    "started_at": execution.started_at.isoformat()
+                    if execution.started_at
+                    else None,
+                    "completed_at": execution.completed_at.isoformat()
+                    if execution.completed_at
+                    else None,
                     "execution_duration_ms": execution.execution_duration_ms,
                     "result": execution.result,
                     "metadata": execution.metadata,
@@ -215,15 +226,15 @@ class ExecutionHistoryService:
             raise
 
     async def _get_child_executions(
-        self,
-        session: AsyncSession,
-        parent_task_id: str
-    ) -> List[Dict[str, Any]]:
+        self, session: AsyncSession, parent_task_id: str
+    ) -> list[dict[str, Any]]:
         """Get child executions for a parent task."""
         # Get child relationships
-        rel_query = select(TaskRelationshipModel).where(
-            TaskRelationshipModel.parent_task_id == parent_task_id
-        ).order_by(TaskRelationshipModel.order_index)
+        rel_query = (
+            select(TaskRelationshipModel)
+            .where(TaskRelationshipModel.parent_task_id == parent_task_id)
+            .order_by(TaskRelationshipModel.order_index)
+        )
 
         rel_result = await session.execute(rel_query)
         relationships = rel_result.scalars().all()
@@ -246,15 +257,19 @@ class ExecutionHistoryService:
                     "status": child_exec.status.value,
                     "relationship_type": rel.relationship_type.value,
                     "order_index": rel.order_index,
-                    "started_at": child_exec.started_at.isoformat() if child_exec.started_at else None,
-                    "completed_at": child_exec.completed_at.isoformat() if child_exec.completed_at else None,
+                    "started_at": child_exec.started_at.isoformat()
+                    if child_exec.started_at
+                    else None,
+                    "completed_at": child_exec.completed_at.isoformat()
+                    if child_exec.completed_at
+                    else None,
                     "execution_duration_ms": child_exec.execution_duration_ms,
                 }
                 children.append(child_data)
 
         return children
 
-    async def get_execution_tree(self, root_task_id: str) -> Dict[str, Any]:
+    async def get_execution_tree(self, root_task_id: str) -> dict[str, Any]:
         """
         Get complete execution tree for a root task.
 
@@ -267,21 +282,27 @@ class ExecutionHistoryService:
         try:
             async with self.session_factory() as session:
                 # Get all executions in the tree
-                exec_query = select(TaskExecutionModel).where(
-                    or_(
-                        TaskExecutionModel.task_id == root_task_id,
-                        TaskExecutionModel.root_task_id == root_task_id
+                exec_query = (
+                    select(TaskExecutionModel)
+                    .where(
+                        or_(
+                            TaskExecutionModel.task_id == root_task_id,
+                            TaskExecutionModel.root_task_id == root_task_id,
+                        )
                     )
-                ).order_by(TaskExecutionModel.depth_level, TaskExecutionModel.created_at)
+                    .order_by(TaskExecutionModel.depth_level, TaskExecutionModel.created_at)
+                )
 
                 exec_result = await session.execute(exec_query)
                 executions = exec_result.scalars().all()
 
                 # Get all relationships
                 task_ids = [exec.task_id for exec in executions]
-                rel_query = select(TaskRelationshipModel).where(
-                    TaskRelationshipModel.parent_task_id.in_(task_ids)
-                ).order_by(TaskRelationshipModel.order_index)
+                rel_query = (
+                    select(TaskRelationshipModel)
+                    .where(TaskRelationshipModel.parent_task_id.in_(task_ids))
+                    .order_by(TaskRelationshipModel.order_index)
+                )
 
                 rel_result = await session.execute(rel_query)
                 relationships = rel_result.scalars().all()
@@ -298,10 +319,10 @@ class ExecutionHistoryService:
 
     def _build_execution_tree(
         self,
-        executions: List[TaskExecutionModel],
-        relationships: List[TaskRelationshipModel],
-        root_task_id: str
-    ) -> Dict[str, Any]:
+        executions: list[TaskExecutionModel],
+        relationships: list[TaskRelationshipModel],
+        root_task_id: str,
+    ) -> dict[str, Any]:
         """Build hierarchical execution tree from flat data."""
         # Create execution lookup
         exec_lookup = {exec.task_id: exec for exec in executions}
@@ -313,7 +334,7 @@ class ExecutionHistoryService:
                 children_lookup[rel.parent_task_id] = []
             children_lookup[rel.parent_task_id].append(rel)
 
-        def build_node(task_id: str) -> Dict[str, Any]:
+        def build_node(task_id: str) -> dict[str, Any]:
             exec = exec_lookup[task_id]
             node = {
                 "execution_id": exec.id,
@@ -326,7 +347,7 @@ class ExecutionHistoryService:
                 "started_at": exec.started_at.isoformat() if exec.started_at else None,
                 "completed_at": exec.completed_at.isoformat() if exec.completed_at else None,
                 "execution_duration_ms": exec.execution_duration_ms,
-                "children": []
+                "children": [],
             }
 
             # Add children
@@ -343,10 +364,8 @@ class ExecutionHistoryService:
         return build_node(root_task_id)
 
     async def get_execution_analytics(
-        self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
-    ) -> Dict[str, Any]:
+        self, start_time: datetime | None = None, end_time: datetime | None = None
+    ) -> dict[str, Any]:
         """
         Get execution analytics and performance metrics.
 
@@ -380,7 +399,9 @@ class ExecutionHistoryService:
                     .group_by(TaskExecutionModel.status)
                 )
                 status_result = await session.execute(status_query)
-                status_distribution = {status.value: count for status, count in status_result.fetchall()}
+                status_distribution = {
+                    status.value: count for status, count in status_result.fetchall()
+                }
 
                 # Task type distribution
                 type_query = (
@@ -395,10 +416,8 @@ class ExecutionHistoryService:
                 perf_query = select(
                     func.avg(TaskExecutionModel.execution_duration_ms),
                     func.min(TaskExecutionModel.execution_duration_ms),
-                    func.max(TaskExecutionModel.execution_duration_ms)
-                ).where(
-                    and_(base_filter, TaskExecutionModel.execution_duration_ms.isnot(None))
-                )
+                    func.max(TaskExecutionModel.execution_duration_ms),
+                ).where(and_(base_filter, TaskExecutionModel.execution_duration_ms.isnot(None)))
                 perf_result = await session.execute(perf_query)
                 avg_duration, min_duration, max_duration = perf_result.fetchone()
 
@@ -416,27 +435,16 @@ class ExecutionHistoryService:
                     "analysis_period": {
                         "start_time": start_time.isoformat() if start_time else None,
                         "end_time": end_time.isoformat() if end_time else None,
-                    }
+                    },
                 }
 
         except SQLAlchemyError as e:
             logger.error(f"Failed to get execution analytics: {e}")
             raise
 
-    def _map_status_to_db(self, status: TaskStatus) -> TaskExecutionStatus:
-        """Map domain status to database enum."""
-        mapping = {
-            TaskStatus.PENDING: TaskExecutionStatus.PENDING,
-            TaskStatus.READY: TaskExecutionStatus.READY,
-            TaskStatus.EXECUTING: TaskExecutionStatus.EXECUTING,
-            TaskStatus.AGGREGATING: TaskExecutionStatus.AGGREGATING,
-            TaskStatus.COMPLETED: TaskExecutionStatus.COMPLETED,
-            TaskStatus.FAILED: TaskExecutionStatus.FAILED,
-            TaskStatus.NEEDS_REPLAN: TaskExecutionStatus.NEEDS_REPLAN,
-            TaskStatus.CANCELLED: TaskExecutionStatus.CANCELLED,
-            TaskStatus.PAUSED: TaskExecutionStatus.PAUSED,
-        }
-        return mapping.get(status, TaskExecutionStatus.PENDING)
+    def _map_status_to_db(self, status: TaskStatus) -> TaskStatus:
+        """Map domain status to database enum (direct mapping since model uses TaskStatus)."""
+        return status
 
     async def cleanup_old_executions(self, days: int = 90) -> int:
         """
@@ -448,7 +456,7 @@ class ExecutionHistoryService:
         Returns:
             Number of records cleaned up
         """
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
         try:
             async with self.session_factory() as session:
@@ -458,7 +466,7 @@ class ExecutionHistoryService:
                     .where(
                         and_(
                             TaskExecutionModel.completed_at < cutoff_date,
-                            TaskExecutionModel.is_archived == False
+                            ~TaskExecutionModel.is_archived,
                         )
                     )
                     .values(is_archived=True)
@@ -474,6 +482,6 @@ class ExecutionHistoryService:
             logger.error(f"Failed to cleanup old executions: {e}")
             raise
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get service statistics."""
         return dict(self._stats)

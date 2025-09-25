@@ -4,23 +4,24 @@ Tests for AtomizerService.
 Tests the atomizer service functionality including task evaluation and decision making.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
+import pytest
+
+from roma.application.services.agent_runtime_service import AgentRuntimeService
+from roma.application.services.atomizer_service import AtomizerService
+from roma.application.services.recovery_manager import RecoveryManager
+from roma.domain.context import TaskContext
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.agent_responses import AtomizerResult
 from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.node_action import NodeAction
 from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.agent_responses import AtomizerResult
+from roma.domain.value_objects.node_type import NodeType
 from roma.domain.value_objects.result_envelope import AtomizerEnvelope, ExecutionMetrics
-from roma.application.services.atomizer_service import AtomizerService
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager
-from roma.domain.context import TaskContext
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 @pytest.fixture
@@ -225,7 +226,7 @@ class TestAtomizerService:
         mock_agent_runtime_service.execute_agent.side_effect = Exception("Agent execution failed")
 
         # Setup recovery manager to return failure
-        from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
+        from roma.application.services.recovery_manager import RecoveryAction, RecoveryResult
         recovery_result = RecoveryResult(
             action=RecoveryAction.FAIL_PERMANENTLY,
             reasoning="Atomizer failed permanently",
@@ -250,7 +251,7 @@ class TestAtomizerService:
         mock_agent_runtime_service.execute_agent.side_effect = Exception("Agent execution failed")
 
         # Setup recovery manager to return retry
-        from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
+        from roma.application.services.recovery_manager import RecoveryAction, RecoveryResult
         recovery_result = RecoveryResult(
             action=RecoveryAction.RETRY,
             reasoning="Should retry this operation",
@@ -281,7 +282,7 @@ class TestAtomizerService:
         }
 
         # Setup recovery manager to return failure
-        from roma.application.services.recovery_manager import RecoveryResult, RecoveryAction
+        from roma.application.services.recovery_manager import RecoveryAction, RecoveryResult
         recovery_result = RecoveryResult(
             action=RecoveryAction.FAIL_PERMANENTLY,
             reasoning="Invalid agent response",

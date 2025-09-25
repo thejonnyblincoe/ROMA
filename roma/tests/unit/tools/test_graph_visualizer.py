@@ -4,15 +4,16 @@ Tests for Graph Visualizer (Task 1.2.4)
 Following TDD principles to test graph visualization capabilities.
 """
 
-import pytest
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
 from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 from roma.tools.graph_visualizer import GraphVisualizer, visualize_graph
 
 
@@ -29,16 +30,16 @@ class TestGraphVisualizer:
             node_type=NodeType.PLAN,
             status=TaskStatus.COMPLETED
         )
-        
+
         child1 = TaskNode(
             task_id="child1",
             goal="First child task",
             task_type=TaskType.WRITE,
-            node_type=NodeType.EXECUTE, 
+            node_type=NodeType.EXECUTE,
             status=TaskStatus.EXECUTING,
             parent_id="root"
         )
-        
+
         child2 = TaskNode(
             task_id="child2",
             goal="Second child task",
@@ -47,17 +48,17 @@ class TestGraphVisualizer:
             status=TaskStatus.FAILED,
             parent_id="root"
         )
-        
+
         graph = DynamicTaskGraph(root_node=root)
         await graph.add_node(child1)
         await graph.add_node(child2)
-        
+
         return graph
 
     def test_visualizer_initialization(self, sample_graph):
         """Test GraphVisualizer initialization."""
         visualizer = GraphVisualizer(sample_graph)
-        
+
         assert visualizer.graph == sample_graph
         assert GraphVisualizer.STATUS_COLORS[TaskStatus.PENDING] == "#E8E8E8"
         assert GraphVisualizer.TASK_TYPE_SHAPES[TaskType.THINK] == "ellipse"
@@ -67,17 +68,17 @@ class TestGraphVisualizer:
         """Test basic ASCII rendering."""
         graph = await sample_graph
         visualizer = GraphVisualizer(graph)
-        
+
         ascii_output = visualizer.render_ascii()
-        
+
         # Should contain root and children
         assert "Root task for visualization testing" in ascii_output
-        assert "First child task" in ascii_output 
+        assert "First child task" in ascii_output
         assert "Second child task" in ascii_output
-        
+
         # Should have tree structure symbols
         assert "└──" in ascii_output or "├──" in ascii_output
-        
+
         # Should have status symbols
         assert "🟢" in ascii_output  # Completed
         assert "🔵" in ascii_output  # Executing
@@ -85,12 +86,12 @@ class TestGraphVisualizer:
 
     @pytest.mark.asyncio
     async def test_render_ascii_with_details(self, sample_graph):
-        """Test ASCII rendering with detailed information.""" 
+        """Test ASCII rendering with detailed information."""
         graph = await sample_graph
         visualizer = GraphVisualizer(graph)
-        
+
         ascii_output = visualizer.render_ascii(show_details=True)
-        
+
         # Should include status and type information
         assert "COMPLETED" in ascii_output
         assert "EXECUTING" in ascii_output
@@ -104,9 +105,9 @@ class TestGraphVisualizer:
         """Test ASCII rendering of empty graph."""
         empty_graph = DynamicTaskGraph()
         visualizer = GraphVisualizer(empty_graph)
-        
+
         ascii_output = visualizer.render_ascii()
-        
+
         assert ascii_output == "Empty graph"
 
     @pytest.mark.asyncio
@@ -114,23 +115,23 @@ class TestGraphVisualizer:
         """Test graph statistics calculation."""
         graph = await sample_graph
         visualizer = GraphVisualizer(graph)
-        
+
         stats = visualizer.get_graph_statistics()
-        
+
         # Basic counts
         assert stats["total_nodes"] == 3
         assert stats["total_edges"] == 2
-        
+
         # Status breakdown
         assert stats["status_breakdown"]["COMPLETED"] == 1
         assert stats["status_breakdown"]["EXECUTING"] == 1
         assert stats["status_breakdown"]["FAILED"] == 1
-        
+
         # Type breakdown
         assert stats["type_breakdown"]["THINK"] == 1
         assert stats["type_breakdown"]["WRITE"] == 1
         assert stats["type_breakdown"]["RETRIEVE"] == 1
-        
+
         # Structure metrics
         assert stats["max_depth"] == 1  # Children are depth 1
         assert stats["max_fanout"] == 2  # Root has 2 children
@@ -140,19 +141,19 @@ class TestGraphVisualizer:
         """Test exporting graph summary to file."""
         graph = await sample_graph
         visualizer = GraphVisualizer(graph)
-        
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp:
             output_path = visualizer.export_summary(tmp.name)
-            
+
             # Check file was created
             assert Path(output_path).exists()
-            
+
             # Check content
             content = Path(output_path).read_text(encoding='utf-8')
             assert "ROMA Task Graph Analysis" in content
             assert "total_nodes: 3" in content
             assert "Root task for visualization testing" in content
-            
+
             # Cleanup
             Path(output_path).unlink()
 
@@ -161,18 +162,18 @@ class TestGraphVisualizer:
         """Test Graphviz DOT format generation."""
         graph = await sample_graph
         visualizer = GraphVisualizer(graph)
-        
+
         # Test DOT format (doesn't require graphviz binary)
         try:
             dot_output = visualizer.render_graphviz(output_format="dot")
-            
+
             # Should be valid DOT syntax
             assert "digraph" in dot_output
             assert "root" in dot_output
             assert "child1" in dot_output
             assert "child2" in dot_output
             assert "->" in dot_output  # Graph edges
-            
+
         except ImportError:
             # Graphviz not available, skip test
             pytest.skip("Graphviz not available")
@@ -182,7 +183,7 @@ class TestGraphVisualizer:
         """Test Matplotlib rendering import handling."""
         graph = await sample_graph
         visualizer = GraphVisualizer(graph)
-        
+
         # Test import error handling
         try:
             # This should either work or raise ImportError
@@ -197,12 +198,12 @@ class TestGraphVisualizer:
     async def test_visualize_graph_utility(self, sample_graph):
         """Test utility function for quick visualization."""
         graph = await sample_graph
-        
+
         # Test ASCII method
         ascii_result = visualize_graph(graph, method="ascii")
         assert isinstance(ascii_result, str)
         assert "Root task for visualization testing" in ascii_result
-        
+
         # Test invalid method
         with pytest.raises(ValueError, match="Unknown visualization method"):
             visualize_graph(graph, method="invalid")
@@ -222,9 +223,9 @@ class TestGraphVisualizerPerformance:
             task_type=TaskType.THINK,
             status=TaskStatus.PENDING
         )
-        
+
         graph = DynamicTaskGraph(root_node=root)
-        
+
         # Add 50 children
         for i in range(50):
             child = TaskNode(
@@ -235,25 +236,25 @@ class TestGraphVisualizerPerformance:
                 parent_id="root"
             )
             await graph.add_node(child)
-        
+
         visualizer = GraphVisualizer(graph)
-        
+
         import time
-        
+
         # Test ASCII rendering performance
         start_time = time.time()
         ascii_output = visualizer.render_ascii()
         ascii_time = time.time() - start_time
-        
+
         # Should complete quickly and contain all nodes
         assert ascii_time < 1.0  # Should be very fast
         assert ascii_output.count("Child task") == 50
-        
+
         # Test statistics calculation performance
         start_time = time.time()
         stats = visualizer.get_graph_statistics()
         stats_time = time.time() - start_time
-        
+
         assert stats_time < 0.5  # Statistics should be fast
         assert stats["total_nodes"] == 51
         assert stats["max_fanout"] == 50
@@ -266,9 +267,9 @@ class TestGraphVisualizerEdgeCases:
         """Test statistics on empty graph."""
         empty_graph = DynamicTaskGraph()
         visualizer = GraphVisualizer(empty_graph)
-        
+
         stats = visualizer.get_graph_statistics()
-        
+
         assert stats["total_nodes"] == 0
         assert stats["total_edges"] == 0
         assert all(count == 0 for count in stats["status_breakdown"].values())
@@ -283,13 +284,13 @@ class TestGraphVisualizerEdgeCases:
             task_type=TaskType.THINK,
             status=TaskStatus.PENDING
         )
-        
+
         graph = DynamicTaskGraph(root_node=single_node)
         visualizer = GraphVisualizer(graph)
-        
+
         ascii_output = visualizer.render_ascii()
         assert "Single node test" in ascii_output
-        
+
         stats = visualizer.get_graph_statistics()
         assert stats["total_nodes"] == 1
         assert stats["max_depth"] == 0
@@ -310,17 +311,17 @@ class TestGraphVisualizerEdgeCases:
                 parent_id=parent_id
             )
             nodes.append(node)
-        
+
         graph = DynamicTaskGraph(root_node=nodes[0])
         for node in nodes[1:]:
             await graph.add_node(node)
-        
+
         visualizer = GraphVisualizer(graph)
-        
+
         ascii_output = visualizer.render_ascii()
         # Should show hierarchical structure
         assert "Task at level 0" in ascii_output
         assert "Task at level 3" in ascii_output
-        
+
         stats = visualizer.get_graph_statistics()
         assert stats["max_depth"] == 3  # Deepest node is at depth 3

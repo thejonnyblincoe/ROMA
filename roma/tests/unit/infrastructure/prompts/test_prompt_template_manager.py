@@ -5,18 +5,19 @@ Comprehensive test coverage for template loading, rendering, fallback mechanisms
 and Jinja2 features like includes/extends.
 """
 
-import pytest
-import tempfile
 import os
+import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 from jinja2 import TemplateError
 
-from roma.infrastructure.prompts.prompt_template_manager import PromptTemplateManager
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
 from roma.application.services.context_builder_service import TaskContext
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
+from roma.infrastructure.prompts.prompt_template_manager import PromptTemplateManager
 
 
 class TestPromptTemplateManager:

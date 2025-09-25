@@ -5,14 +5,18 @@ Centralized management of Jinja2 prompt templates with caching and validation.
 Handles template loading, rendering, and validation for all agent types.
 """
 
-from typing import Dict, Any, Optional, TYPE_CHECKING
-from pathlib import Path
 import logging
-from jinja2 import Template, TemplateError, Environment, FileSystemLoader
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
+
+from jinja2 import Environment, FileSystemLoader, Template, TemplateError
 
 if TYPE_CHECKING:
+    from roma.application.services.context_builder_service import ContextBuilderService
+    from roma.domain.context.task_context import TaskContext
     from roma.domain.entities.task_node import TaskNode
-    from roma.application.services.context_builder_service import TaskContext, ContextBuilderService
+
+from datetime import UTC
 
 from roma.domain.value_objects.task_type import TaskType
 
@@ -30,8 +34,8 @@ class PromptTemplateManager:
 
     def __init__(
         self,
-        templates_dir: Optional[str] = None,
-        context_builder: Optional["ContextBuilderService"] = None
+        templates_dir: str | None = None,
+        context_builder: Optional["ContextBuilderService"] = None,
     ):
         """
         Initialize prompt template manager.
@@ -46,7 +50,7 @@ class PromptTemplateManager:
             self.templates_dir = Path(templates_dir)
 
         self.context_builder = context_builder  # Injected dependency
-        self._template_cache: Dict[str, Template] = {}
+        self._template_cache: dict[str, Template] = {}
         self._initialized = False
 
         # Create Jinja2 environment with custom filters
@@ -55,16 +59,15 @@ class PromptTemplateManager:
                 loader=FileSystemLoader(str(self.templates_dir)),
                 trim_blocks=True,
                 lstrip_blocks=True,
-                keep_trailing_newline=True
+                keep_trailing_newline=True,
             )
             # Add custom filters for template use
-            self.env.filters['truncate'] = self._truncate_filter
-            self.env.filters['format_list'] = self._format_list_filter
-            self.env.filters['safe_get'] = self._safe_get_filter
+            self.env.filters["truncate"] = self._truncate_filter
+            self.env.filters["format_list"] = self._format_list_filter
+            self.env.filters["safe_get"] = self._safe_get_filter
         else:
             logger.warning(f"Templates directory not found: {self.templates_dir}")
             self.env = Environment()
-
 
         self._initialized = True
         logger.info(f"PromptTemplateManager initialized with templates dir: {self.templates_dir}")
@@ -122,7 +125,9 @@ class PromptTemplateManager:
                 return fallback_path
 
         # 4. All strategies failed
-        fallback_desc = "insufficient parent levels" if len(current_file.parents) < 4 else "path does not exist"
+        fallback_desc = (
+            "insufficient parent levels" if len(current_file.parents) < 4 else "path does not exist"
+        )
         raise FileNotFoundError(
             f"Cannot find templates directory. Tried:\n"
             f"- Environment variable ROMA_PROMPTS_DIR: {env_dir or 'not set'}\n"
@@ -161,7 +166,9 @@ class PromptTemplateManager:
                     full_path = fallback_full_path
                     logger.debug(f"Using fallback template path: {fallback_path}")
                 else:
-                    raise FileNotFoundError(f"Template not found: {full_path} (fallback {fallback_full_path} also not found)")
+                    raise FileNotFoundError(
+                        f"Template not found: {full_path} (fallback {fallback_full_path} also not found)"
+                    )
             else:
                 raise FileNotFoundError(f"Template not found: {full_path}")
 
@@ -177,14 +184,10 @@ class PromptTemplateManager:
 
         except Exception as e:
             logger.error(f"Failed to load template {template_path}: {e}")
-            raise TemplateError(f"Invalid template {template_path}: {e}")
+            raise TemplateError(f"Invalid template {template_path}: {e}") from e
 
     async def render_agent_prompt(
-        self,
-        agent_type: str,
-        task_type: str,
-        task: "TaskNode",
-        task_context: "TaskContext"
+        self, agent_type: str, task_type: str, task: "TaskNode", task_context: "TaskContext"
     ) -> str:
         """
         Main method: Render prompt for agent with ALL available variables.
@@ -225,27 +228,23 @@ class PromptTemplateManager:
 
         except Exception as e:
             logger.error(f"Failed to render {agent_type}/{task_type} template: {e}")
-            raise TemplateError(f"Template rendering failed for {agent_type}/{task_type}: {e}")
+            raise TemplateError(f"Template rendering failed for {agent_type}/{task_type}: {e}") from e
 
     def get_template_path(self, agent_type: str, task_type: str) -> str:
         """Get template path for agent and task type."""
         return f"{agent_type.lower()}/{task_type.lower()}.jinja2"
 
     def _get_basic_template_variables(
-        self,
-        agent_type: str,
-        task_type: str,
-        task: "TaskNode",
-        task_context: "TaskContext"
-    ) -> Dict[str, Any]:
+        self, agent_type: str, task_type: str, task: "TaskNode", task_context: "TaskContext"
+    ) -> dict[str, Any]:
         """
         Get basic template variables when ContextBuilderService is not available.
 
         Provides minimal required variables for templates to function.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         return {
             # Essential core variables (always available)
@@ -255,32 +254,27 @@ class PromptTemplateManager:
             "goal": task.goal,
             "task_status": task.status.value if task.status else "PENDING",
             "overall_objective": task_context.overall_objective,
-
             # Minimal temporal context (required for LLM grounding)
-            "current_date": now.strftime('%Y-%m-%d'),
+            "current_date": now.strftime("%Y-%m-%d"),
             "current_year": now.year,
-
             # Basic context
-            "constraints": getattr(task_context, 'constraints', []),
-            "user_preferences": getattr(task_context, 'user_preferences', {}),
-            "execution_metadata": getattr(task_context, 'execution_metadata', {}),
-
+            "constraints": getattr(task_context, "constraints", []),
+            "user_preferences": getattr(task_context, "user_preferences", {}),
+            "execution_metadata": getattr(task_context, "execution_metadata", {}),
             # Helper flags
-            "has_constraints": bool(getattr(task_context, 'constraints', [])),
+            "has_constraints": bool(getattr(task_context, "constraints", [])),
             "has_prior_work": False,  # Default when no context builder
-            "has_toolkits": False,    # Default when no context builder
-            "has_artifacts": False,   # Default when no context builder
-
+            "has_toolkits": False,  # Default when no context builder
+            "has_artifacts": False,  # Default when no context builder
             # Task type information from domain layer
             "task_types_info": TaskType.get_all_task_info(),
             "current_task_type_info": {
                 "description": TaskType.from_string(task_type).get_description(),
                 "examples": TaskType.from_string(task_type).get_examples(),
                 "atomic_indicators": TaskType.from_string(task_type).get_atomic_indicators(),
-                "composite_indicators": TaskType.from_string(task_type).get_composite_indicators()
-            }
+                "composite_indicators": TaskType.from_string(task_type).get_composite_indicators(),
+            },
         }
-
 
     # Custom Jinja2 filters for templates
     def _truncate_filter(self, text: str, length: int = 200) -> str:
@@ -303,11 +297,7 @@ class PromptTemplateManager:
             return default
         return str(obj.get(key, default))
 
-    def render_template(
-        self,
-        template_path: str,
-        context: Dict[str, Any]
-    ) -> str:
+    def render_template(self, template_path: str, context: dict[str, Any]) -> str:
         """
         Load and render a template with provided context.
 
@@ -330,7 +320,7 @@ class PromptTemplateManager:
 
         except Exception as e:
             logger.error(f"Template rendering failed for {template_path}: {e}")
-            raise TemplateError(f"Template rendering failed: {e}")
+            raise TemplateError(f"Template rendering failed: {e}") from e
 
     def validate_template(self, template_path: str) -> bool:
         """
@@ -374,7 +364,7 @@ class PromptTemplateManager:
         """
         return f"{agent_type.lower()}/{task_type.lower()}.jinja2"
 
-    def list_templates(self, agent_type: Optional[str] = None) -> list[str]:
+    def list_templates(self, agent_type: str | None = None) -> list[str]:
         """
         List available templates, optionally filtered by agent type.
 
@@ -398,7 +388,7 @@ class PromptTemplateManager:
 
         return sorted(templates)
 
-    def _get_fallback_template_path(self, template_path: str) -> Optional[str]:
+    def _get_fallback_template_path(self, template_path: str) -> str | None:
         """
         Generate fallback template path for legacy filename patterns.
 
@@ -413,12 +403,12 @@ class PromptTemplateManager:
         """
         try:
             # Split path into directory and filename
-            path_parts = template_path.split('/')
+            path_parts = template_path.split("/")
             if len(path_parts) != 2:
                 return None
 
             agent_type, filename = path_parts
-            if not filename.endswith('.jinja2'):
+            if not filename.endswith(".jinja2"):
                 return None
 
             # Extract task type from filename (remove .jinja2 extension)
@@ -440,7 +430,7 @@ class PromptTemplateManager:
         self._template_cache.clear()
         logger.info("Template cache cleared")
 
-    def get_cache_info(self) -> Dict[str, Any]:
+    def get_cache_info(self) -> dict[str, Any]:
         """
         Get information about the template cache.
 
@@ -451,7 +441,7 @@ class PromptTemplateManager:
             "cached_templates": len(self._template_cache),
             "template_paths": list(self._template_cache.keys()),
             "templates_dir": str(self.templates_dir),
-            "initialized": self._initialized
+            "initialized": self._initialized,
         }
 
     def reload_template(self, template_path: str) -> Template:

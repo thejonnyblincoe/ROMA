@@ -6,22 +6,31 @@ Only contains application-level concerns and references to Level 3 (Profile).
 Level 1&2 objects are resolved through dependency injection, not stored here.
 """
 
-from pydantic.dataclasses import dataclass, Field
+from typing import Any
+
 from pydantic import field_validator
-from typing import Dict, Any
-from .profile_config import ProfileConfig
-from .app_config import AppConfig, CacheConfig, LoggingConfig, SecurityConfig, ExperimentConfig, StorageConfig
+from pydantic.dataclasses import dataclass
+
+from .app_config import (
+    AppConfig,
+    CacheConfig,
+    ExperimentConfig,
+    LoggingConfig,
+    SecurityConfig,
+    StorageConfig,
+)
 from .database_config import DatabaseConfig
 from .execution_config import ExecutionConfig
+from .profile_config import ProfileConfig
 
 
 @dataclass(frozen=True)
 class ROMAConfig:
     """Main ROMA configuration - Level 4 (Application)."""
-    
+
     # App metadata (Level 4) - Use direct type annotation for OmegaConf compatibility
     app: AppConfig = AppConfig()
-    
+
     # Level 3: Profile configuration
     profile: ProfileConfig = ProfileConfig()
 
@@ -30,29 +39,31 @@ class ROMAConfig:
     logging: LoggingConfig = LoggingConfig()
     security: SecurityConfig = SecurityConfig()
     storage: StorageConfig = StorageConfig()
-    database: DatabaseConfig = DatabaseConfig(database="roma_db", user="roma_user", password="roma_password")
+    database: DatabaseConfig = DatabaseConfig(
+        database="roma_db", user="roma_user", password="roma_password"
+    )
     experiment: ExperimentConfig = ExperimentConfig()
     execution: ExecutionConfig = ExecutionConfig()
-    
+
     # Profile selection (Level 4 concern)
     default_profile: str = "general_profile"
-    
+
     @field_validator("default_profile")
     @classmethod
     def validate_profile_exists(cls, v: str) -> str:
         if not v or len(v.strip()) == 0:
             raise ValueError("default_profile cannot be empty")
         return v.strip()
-    
-    def validate_profile_completeness(self) -> Dict[str, Any]:
+
+    def validate_profile_completeness(self) -> dict[str, Any]:
         """Validate that the active profile has complete agent mappings."""
         return self.profile.validate_completeness()
-    
+
     def is_valid(self) -> bool:
         """Check if configuration is valid and complete."""
         return len(self.validate_profile_completeness()) == 0
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "app": self.app.to_dict(),
@@ -66,9 +77,9 @@ class ROMAConfig:
             "execution": self.execution.to_dict(),
             "default_profile": self.default_profile,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ROMAConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "ROMAConfig":
         """Create from dictionary with Hydra config mapping."""
         # Handle Hydra's structure where profile data is under 'profiles' key
         profile_data = data.get("profile", {})

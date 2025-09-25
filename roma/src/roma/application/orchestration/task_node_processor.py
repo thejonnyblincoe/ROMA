@@ -9,17 +9,15 @@ Services own business logic with run() as entry points.
 Handlers manage state transitions based on service results.
 """
 
-import asyncio
 import logging
-from datetime import datetime, timezone
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any
+from typing import Any
 
-from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.node_action import NodeAction
-from roma.domain.value_objects.task_status import TaskStatus
 from roma.application.orchestration.graph_state_manager import GraphStateManager
 from roma.domain.value_objects.execution_state import ExecutionState
+from roma.domain.value_objects.node_action import NodeAction
+from roma.domain.value_objects.node_result import NodeResult
+from roma.domain.value_objects.task_status import TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +25,7 @@ logger = logging.getLogger(__name__)
 class NodeActionHandler(ABC):
     """Base handler for managing state transitions based on service results."""
 
-    def __init__(self,
-                 graph_manager: GraphStateManager,
-                 execution_state: ExecutionState):
+    def __init__(self, graph_manager: GraphStateManager, execution_state: ExecutionState):
         """Initialize handler with state management dependencies.
 
         Args:
@@ -84,17 +80,11 @@ class AddSubtasksHandler(NodeActionHandler):
         # Transition parent to appropriate status
         if is_replanning:
             # From NEEDS_REPLAN to READY for re-execution
-            await self.graph.transition_node_status(
-                result.task_id,
-                TaskStatus.READY
-            )
+            await self.graph.transition_node_status(result.task_id, TaskStatus.READY)
             logger.info(f"Replanned {result.task_id} with {len(result.new_nodes)} new tasks")
         else:
             # Normal planning - to WAITING_FOR_CHILDREN
-            await self.graph.transition_node_status(
-                result.task_id,
-                TaskStatus.WAITING_FOR_CHILDREN
-            )
+            await self.graph.transition_node_status(result.task_id, TaskStatus.WAITING_FOR_CHILDREN)
             logger.info(f"Added {len(result.new_nodes)} subtasks for {result.task_id}")
 
 
@@ -110,10 +100,7 @@ class CompleteHandler(NodeActionHandler):
             await self.state.cache_result(result.task_id, result.envelope)
 
         # Transition to completed
-        await self.graph.transition_node_status(
-            result.task_id,
-            TaskStatus.COMPLETED
-        )
+        await self.graph.transition_node_status(result.task_id, TaskStatus.COMPLETED)
 
         # Mark as completed in execution state
         await self.state.mark_node_completed(result.task_id)
@@ -130,20 +117,14 @@ class AggregateHandler(NodeActionHandler):
         # This handler completes the aggregation lifecycle
 
         # First transition to aggregating status briefly
-        await self.graph.transition_node_status(
-            result.task_id,
-            TaskStatus.AGGREGATING
-        )
+        await self.graph.transition_node_status(result.task_id, TaskStatus.AGGREGATING)
 
         # Cache the aggregated result if provided
         if result.envelope:
             await self.state.cache_result(result.task_id, result.envelope)
 
         # Complete the aggregation by transitioning to COMPLETED
-        await self.graph.transition_node_status(
-            result.task_id,
-            TaskStatus.COMPLETED
-        )
+        await self.graph.transition_node_status(result.task_id, TaskStatus.COMPLETED)
 
         # Mark as completed in execution state
         await self.state.mark_node_completed(result.task_id)
@@ -157,17 +138,13 @@ class ReplanHandler(NodeActionHandler):
         self._log_action("Marking for replan", result.task_id)
 
         # Update metadata with replan reason if provided
-        if result.metadata and 'replan_reason' in result.metadata:
+        if result.metadata and "replan_reason" in result.metadata:
             await self.graph.update_node_metadata(
-                result.task_id,
-                {'replan_reason': result.metadata['replan_reason']}
+                result.task_id, {"replan_reason": result.metadata["replan_reason"]}
             )
 
         # Transition to needs replan
-        await self.graph.transition_node_status(
-            result.task_id,
-            TaskStatus.NEEDS_REPLAN
-        )
+        await self.graph.transition_node_status(result.task_id, TaskStatus.NEEDS_REPLAN)
 
 
 class RetryHandler(NodeActionHandler):
@@ -178,21 +155,20 @@ class RetryHandler(NodeActionHandler):
         self._log_action("Retrying", result.task_id)
 
         # Increment actual TaskNode retry_count field
-        updated_node = await self.graph.increment_node_retry_count(result.task_id)
+        await self.graph.increment_node_retry_count(result.task_id)
 
         # Update metadata with error information
         await self.graph.update_node_metadata(
             result.task_id,
             {
-                'last_error': result.metadata.get('error', 'Unknown') if result.metadata else 'Unknown'
-            }
+                "last_error": result.metadata.get("error", "Unknown")
+                if result.metadata
+                else "Unknown"
+            },
         )
 
         # Reset to ready state for retry
-        await self.graph.transition_node_status(
-            result.task_id,
-            TaskStatus.READY
-        )
+        await self.graph.transition_node_status(result.task_id, TaskStatus.READY)
 
 
 class FailHandler(NodeActionHandler):
@@ -204,8 +180,8 @@ class FailHandler(NodeActionHandler):
 
         # Store error in metadata
         error_info = {
-            'error': str(result.error) if result.error else 'Unknown error',
-            'failure_timestamp': datetime.now(timezone.utc).isoformat()
+            "error": str(result.error) if result.error else "Unknown error",
+            "failure_timestamp": self.state.execution_metadata.get("execution_timestamp"),
         }
 
         # Add any additional metadata from result
@@ -215,10 +191,7 @@ class FailHandler(NodeActionHandler):
         await self.graph.update_node_metadata(result.task_id, error_info)
 
         # Transition to failed
-        await self.graph.transition_node_status(
-            result.task_id,
-            TaskStatus.FAILED
-        )
+        await self.graph.transition_node_status(result.task_id, TaskStatus.FAILED)
 
         # Mark as failed in execution state
         await self.state.mark_node_failed(result.task_id)
@@ -244,9 +217,7 @@ class TaskNodeProcessor:
     state management (handlers).
     """
 
-    def __init__(self,
-                 graph_manager: GraphStateManager,
-                 execution_state: ExecutionState):
+    def __init__(self, graph_manager: GraphStateManager, execution_state: ExecutionState):
         """Initialize processor with state management dependencies.
 
         Args:
@@ -296,9 +267,9 @@ class TaskNodeProcessor:
             # Re-raise to let orchestrator handle the error
             raise
 
-    def get_handler_stats(self) -> Dict[str, Any]:
+    def get_handler_stats(self) -> dict[str, Any]:
         """Get statistics about handler usage."""
         return {
             "handlers_available": list(self.handlers.keys()),
-            "handler_count": len(self.handlers)
+            "handler_count": len(self.handlers),
         }

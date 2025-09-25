@@ -10,14 +10,15 @@ import logging
 import os
 import shutil
 import time
-import yaml
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
+from typing import Any
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
 
-async def async_makedirs(path: Union[str, Path], parents: bool = True, exist_ok: bool = True) -> None:
+async def async_makedirs(path: str | Path, parents: bool = True, exist_ok: bool = True) -> None:
     """
     Async directory creation.
 
@@ -26,17 +27,18 @@ async def async_makedirs(path: Union[str, Path], parents: bool = True, exist_ok:
         parents: Create parent directories if needed
         exist_ok: Don't raise error if directory exists
     """
-    def _mkdir():
+
+    def _mkdir() -> None:
         path_obj = Path(path)
         path_obj.mkdir(parents=parents, exist_ok=exist_ok)
         # Ensure the created directory has proper write permissions
         if path_obj.exists():
-            os.chmod(path_obj, 0o755)
+            path_obj.chmod(0o755)
 
     await asyncio.get_event_loop().run_in_executor(None, _mkdir)
 
 
-async def async_path_exists(path: Union[str, Path]) -> bool:
+async def async_path_exists(path: str | Path) -> bool:
     """
     Async path existence check.
 
@@ -47,12 +49,10 @@ async def async_path_exists(path: Union[str, Path]) -> bool:
         True if path exists
     """
     path_obj = Path(path)
-    return await asyncio.get_event_loop().run_in_executor(
-        None, path_obj.exists
-    )
+    return await asyncio.get_event_loop().run_in_executor(None, path_obj.exists)
 
 
-async def async_is_file(path: Union[str, Path]) -> bool:
+async def async_is_file(path: str | Path) -> bool:
     """
     Async file check.
 
@@ -63,12 +63,10 @@ async def async_is_file(path: Union[str, Path]) -> bool:
         True if path is a file
     """
     path_obj = Path(path)
-    return await asyncio.get_event_loop().run_in_executor(
-        None, path_obj.is_file
-    )
+    return await asyncio.get_event_loop().run_in_executor(None, path_obj.is_file)
 
 
-async def async_is_dir(path: Union[str, Path]) -> bool:
+async def async_is_dir(path: str | Path) -> bool:
     """
     Async directory check.
 
@@ -79,12 +77,10 @@ async def async_is_dir(path: Union[str, Path]) -> bool:
         True if path is a directory
     """
     path_obj = Path(path)
-    return await asyncio.get_event_loop().run_in_executor(
-        None, path_obj.is_dir
-    )
+    return await asyncio.get_event_loop().run_in_executor(None, path_obj.is_dir)
 
 
-async def async_file_stat(path: Union[str, Path]):
+async def async_file_stat(path: str | Path) -> os.stat_result | None:
     """
     Async file stat.
 
@@ -96,14 +92,12 @@ async def async_file_stat(path: Union[str, Path]):
     """
     path_obj = Path(path)
     try:
-        return await asyncio.get_event_loop().run_in_executor(
-            None, path_obj.stat
-        )
+        return await asyncio.get_event_loop().run_in_executor(None, path_obj.stat)
     except FileNotFoundError:
         return None
 
 
-async def async_file_size(path: Union[str, Path]) -> Optional[int]:
+async def async_file_size(path: str | Path) -> int | None:
     """
     Async file size check.
 
@@ -117,7 +111,7 @@ async def async_file_size(path: Union[str, Path]) -> Optional[int]:
     return stat_result.st_size if stat_result else None
 
 
-async def async_unlink(path: Union[str, Path]) -> bool:
+async def async_unlink(path: str | Path) -> bool:
     """
     Async file deletion.
 
@@ -129,9 +123,7 @@ async def async_unlink(path: Union[str, Path]) -> bool:
     """
     path_obj = Path(path)
     try:
-        await asyncio.get_event_loop().run_in_executor(
-            None, path_obj.unlink
-        )
+        await asyncio.get_event_loop().run_in_executor(None, path_obj.unlink)
         return True
     except FileNotFoundError:
         return False
@@ -140,7 +132,7 @@ async def async_unlink(path: Union[str, Path]) -> bool:
         raise
 
 
-async def async_rename(src: Union[str, Path], dst: Union[str, Path]) -> None:
+async def async_rename(src: str | Path, dst: str | Path) -> None:
     """
     Async file rename/move.
 
@@ -150,12 +142,10 @@ async def async_rename(src: Union[str, Path], dst: Union[str, Path]) -> None:
     """
     src_obj = Path(src)
     dst_obj = Path(dst)
-    await asyncio.get_event_loop().run_in_executor(
-        None, src_obj.rename, dst_obj
-    )
+    await asyncio.get_event_loop().run_in_executor(None, src_obj.rename, dst_obj)
 
 
-async def async_copy2(src: Union[str, Path], dst: Union[str, Path]) -> None:
+async def async_copy2(src: str | Path, dst: str | Path) -> None:
     """
     Async file copy with metadata preservation.
 
@@ -163,12 +153,10 @@ async def async_copy2(src: Union[str, Path], dst: Union[str, Path]) -> None:
         src: Source path
         dst: Destination path
     """
-    await asyncio.get_event_loop().run_in_executor(
-        None, shutil.copy2, str(src), str(dst)
-    )
+    await asyncio.get_event_loop().run_in_executor(None, shutil.copy2, str(src), str(dst))
 
 
-async def async_move(src: Union[str, Path], dst: Union[str, Path]) -> None:
+async def async_move(src: str | Path, dst: str | Path) -> None:
     """
     Async file move.
 
@@ -176,12 +164,10 @@ async def async_move(src: Union[str, Path], dst: Union[str, Path]) -> None:
         src: Source path
         dst: Destination path
     """
-    await asyncio.get_event_loop().run_in_executor(
-        None, shutil.move, str(src), str(dst)
-    )
+    await asyncio.get_event_loop().run_in_executor(None, shutil.move, str(src), str(dst))
 
 
-async def async_glob(path: Union[str, Path], pattern: str) -> List[Path]:
+async def async_glob(path: str | Path, pattern: str) -> list[Path]:
     """
     Async glob pattern matching.
 
@@ -198,7 +184,7 @@ async def async_glob(path: Union[str, Path], pattern: str) -> List[Path]:
     )
 
 
-async def async_rglob(path: Union[str, Path], pattern: str) -> List[Path]:
+async def async_rglob(path: str | Path, pattern: str) -> list[Path]:
     """
     Async recursive glob pattern matching.
 
@@ -215,7 +201,7 @@ async def async_rglob(path: Union[str, Path], pattern: str) -> List[Path]:
     )
 
 
-async def async_read_bytes(path: Union[str, Path]) -> bytes:
+async def async_read_bytes(path: str | Path) -> bytes:
     """
     Async binary file reading.
 
@@ -226,12 +212,10 @@ async def async_read_bytes(path: Union[str, Path]) -> bytes:
         File contents as bytes
     """
     path_obj = Path(path)
-    return await asyncio.get_event_loop().run_in_executor(
-        None, path_obj.read_bytes
-    )
+    return await asyncio.get_event_loop().run_in_executor(None, path_obj.read_bytes)
 
 
-async def async_write_bytes(path: Union[str, Path], data: bytes) -> None:
+async def async_write_bytes(path: str | Path, data: bytes) -> None:
     """
     Async binary file writing.
 
@@ -240,12 +224,10 @@ async def async_write_bytes(path: Union[str, Path], data: bytes) -> None:
         data: Data to write
     """
     path_obj = Path(path)
-    await asyncio.get_event_loop().run_in_executor(
-        None, path_obj.write_bytes, data
-    )
+    await asyncio.get_event_loop().run_in_executor(None, path_obj.write_bytes, data)
 
 
-async def async_read_text(path: Union[str, Path], encoding: str = "utf-8") -> str:
+async def async_read_text(path: str | Path, encoding: str = "utf-8") -> str:
     """
     Async text file reading.
 
@@ -257,12 +239,10 @@ async def async_read_text(path: Union[str, Path], encoding: str = "utf-8") -> st
         File contents as string
     """
     path_obj = Path(path)
-    return await asyncio.get_event_loop().run_in_executor(
-        None, path_obj.read_text, encoding
-    )
+    return await asyncio.get_event_loop().run_in_executor(None, path_obj.read_text, encoding)
 
 
-async def async_write_text(path: Union[str, Path], text: str, encoding: str = "utf-8") -> None:
+async def async_write_text(path: str | Path, text: str, encoding: str = "utf-8") -> None:
     """
     Async text file writing.
 
@@ -272,12 +252,10 @@ async def async_write_text(path: Union[str, Path], text: str, encoding: str = "u
         encoding: Text encoding
     """
     path_obj = Path(path)
-    await asyncio.get_event_loop().run_in_executor(
-        None, path_obj.write_text, text, encoding
-    )
+    await asyncio.get_event_loop().run_in_executor(None, path_obj.write_text, text, encoding)
 
 
-async def async_yaml_load(path: Union[str, Path]) -> Dict[str, Any]:
+async def async_yaml_load(path: str | Path) -> dict[str, Any]:
     """
     Async YAML file loading.
 
@@ -287,14 +265,14 @@ async def async_yaml_load(path: Union[str, Path]) -> Dict[str, Any]:
     Returns:
         Parsed YAML data
     """
-    def _load_yaml():
-        with open(path, 'r') as f:
-            return yaml.safe_load(f)
+
+    def _load_yaml() -> Any:
+        return yaml.safe_load(Path(path).read_text())
 
     return await asyncio.get_event_loop().run_in_executor(None, _load_yaml)
 
 
-async def async_yaml_dump(path: Union[str, Path], data: Dict[str, Any], **kwargs) -> None:
+async def async_yaml_dump(path: str | Path, data: dict[str, Any], **kwargs: Any) -> None:
     """
     Async YAML file writing.
 
@@ -303,17 +281,15 @@ async def async_yaml_dump(path: Union[str, Path], data: Dict[str, Any], **kwargs
         data: Data to write
         **kwargs: Additional arguments for yaml.dump
     """
-    def _dump_yaml():
-        with open(path, 'w') as f:
-            yaml.dump(data, f, **kwargs)
+
+    def _dump_yaml() -> None:
+        Path(path).write_text(yaml.dump(data, **kwargs))
 
     await asyncio.get_event_loop().run_in_executor(None, _dump_yaml)
 
 
 async def async_cleanup_old_files(
-    directory: Union[str, Path],
-    older_than_hours: int = 24,
-    pattern: str = "*"
+    directory: str | Path, older_than_hours: int = 24, pattern: str = "*"
 ) -> int:
     """
     Async cleanup of old files.
@@ -349,7 +325,7 @@ async def async_cleanup_old_files(
     return cleaned_count
 
 
-async def async_calculate_directory_size(directory: Union[str, Path]) -> Dict[str, Any]:
+async def async_calculate_directory_size(directory: str | Path) -> dict[str, Any]:
     """
     Async directory size calculation.
 
@@ -380,5 +356,5 @@ async def async_calculate_directory_size(directory: Union[str, Path]) -> Dict[st
         "total_size_bytes": total_size,
         "total_size_mb": round(total_size / (1024 * 1024), 2),
         "file_count": file_count,
-        "directory": str(directory_path)
+        "directory": str(directory_path),
     }

@@ -5,20 +5,20 @@ Application layer service that orchestrates checkpoint operations using reposito
 """
 
 import asyncio
+import gzip
 import logging
 import pickle
-import gzip
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 from roma.domain.interfaces.persistence import CheckpointRepository, RecoveryRepository
 from roma.domain.value_objects.persistence import (
-    CheckpointType,
-    RecoveryStatus,
+    CheckpointAnalytics,
     CheckpointRecord,
     CheckpointSummary,
-    CheckpointAnalytics,
+    CheckpointType,
+    RecoveryStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,9 +33,7 @@ class CheckpointService:
     """
 
     def __init__(
-        self,
-        checkpoint_repository: CheckpointRepository,
-        recovery_repository: RecoveryRepository
+        self, checkpoint_repository: CheckpointRepository, recovery_repository: RecoveryRepository
     ):
         """
         Initialize checkpoint service with repository dependencies.
@@ -58,13 +56,13 @@ class CheckpointService:
         self,
         execution_id: str,
         checkpoint_name: str,
-        checkpoint_data: Dict[str, Any],
+        checkpoint_data: dict[str, Any],
         checkpoint_type: CheckpointType = CheckpointType.AUTOMATIC,
-        task_graph_snapshot: Optional[Dict[str, Any]] = None,
-        execution_context: Optional[Dict[str, Any]] = None,
-        agent_states: Optional[Dict[str, Any]] = None,
-        large_data: Optional[Any] = None,
-        expires_in_hours: Optional[int] = None
+        task_graph_snapshot: dict[str, Any] | None = None,
+        execution_context: dict[str, Any] | None = None,
+        agent_states: dict[str, Any] | None = None,
+        large_data: Any | None = None,
+        expires_in_hours: int | None = None,
     ) -> str:
         """
         Create a new execution checkpoint.
@@ -96,13 +94,15 @@ class CheckpointService:
         # Calculate expiration
         expires_at = None
         if expires_in_hours:
-            expires_at = (datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)).isoformat()
+            expires_at = (datetime.now(UTC) + timedelta(hours=expires_in_hours)).isoformat()
 
         # Get next sequence number
         sequence_number = await self.checkpoint_repo.get_next_sequence_number(execution_id)
 
         # Calculate data size
-        data_size_bytes = len(str(checkpoint_data).encode()) + (len(processed_large_data) if processed_large_data else 0)
+        data_size_bytes = len(str(checkpoint_data).encode()) + (
+            len(processed_large_data) if processed_large_data else 0
+        )
 
         # Create checkpoint record
         checkpoint_record = CheckpointRecord(
@@ -116,9 +116,9 @@ class CheckpointService:
             execution_context=execution_context,
             agent_states=agent_states,
             sequence_number=sequence_number,
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
             expires_at=expires_at,
-            data_size_bytes=data_size_bytes
+            data_size_bytes=data_size_bytes,
         )
 
         # Create checkpoint via repository
@@ -130,7 +130,7 @@ class CheckpointService:
         logger.info(f"Created checkpoint {checkpoint_name} for execution {execution_id}")
         return checkpoint_id
 
-    async def get_checkpoint(self, checkpoint_id: str) -> Optional[CheckpointRecord]:
+    async def get_checkpoint(self, checkpoint_id: str) -> CheckpointRecord | None:
         """
         Get checkpoint by ID.
 
@@ -149,10 +149,8 @@ class CheckpointService:
         return checkpoint_record
 
     async def get_latest_checkpoint(
-        self,
-        execution_id: str,
-        checkpoint_type: Optional[CheckpointType] = None
-    ) -> Optional[CheckpointRecord]:
+        self, execution_id: str, checkpoint_type: CheckpointType | None = None
+    ) -> CheckpointRecord | None:
         """
         Get the latest checkpoint for an execution.
 
@@ -166,10 +164,8 @@ class CheckpointService:
         return await self.checkpoint_repo.get_latest_checkpoint(execution_id, checkpoint_type)
 
     async def list_checkpoints(
-        self,
-        execution_id: str,
-        include_expired: bool = False
-    ) -> List[CheckpointSummary]:
+        self, execution_id: str, include_expired: bool = False
+    ) -> list[CheckpointSummary]:
         """
         List all checkpoints for an execution.
 
@@ -186,9 +182,9 @@ class CheckpointService:
         self,
         task_id: str,
         execution_id: str,
-        checkpoint_id: Optional[str] = None,
+        checkpoint_id: str | None = None,
         recovery_strategy: str = "default",
-        error_context: Optional[Dict[str, Any]] = None
+        error_context: dict[str, Any] | None = None,
     ) -> str:
         """
         Start a recovery operation.
@@ -213,7 +209,7 @@ class CheckpointService:
             checkpoint_id=checkpoint_id,
             recovery_strategy=recovery_strategy,
             error_context=error_context,
-            attempt_number=attempt_number
+            attempt_number=attempt_number,
         )
 
         async with self._lock:
@@ -226,9 +222,9 @@ class CheckpointService:
         self,
         recovery_id: str,
         status: RecoveryStatus,
-        state_data: Optional[Dict[str, Any]] = None,
-        recovery_result: Optional[Dict[str, Any]] = None,
-        failure_reason: Optional[str] = None
+        state_data: dict[str, Any] | None = None,
+        recovery_result: dict[str, Any] | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         """
         Update recovery operation status.
@@ -245,7 +241,7 @@ class CheckpointService:
             status=status,
             state_data=state_data,
             recovery_result=recovery_result,
-            failure_reason=failure_reason
+            failure_reason=failure_reason,
         )
         logger.debug(f"Updated recovery {recovery_id} status to {status}")
 
@@ -290,6 +286,6 @@ class CheckpointService:
         analytics = await self.checkpoint_repo.get_checkpoint_analytics()
         return analytics
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get service statistics."""
         return dict(self._stats)

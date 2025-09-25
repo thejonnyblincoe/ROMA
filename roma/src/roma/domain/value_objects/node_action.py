@@ -43,9 +43,9 @@ class NodeAction(Enum):
         """Create NodeAction from string value."""
         try:
             return cls(value.lower().strip())
-        except ValueError:
+        except ValueError as e:
             valid_values = [action.value for action in cls]
-            raise ValueError(f"Invalid NodeAction '{value}'. Valid values: {valid_values}")
+            raise ValueError(f"Invalid NodeAction '{value}'. Valid values: {valid_values}") from e
 
     @property
     def is_terminal(self) -> bool:

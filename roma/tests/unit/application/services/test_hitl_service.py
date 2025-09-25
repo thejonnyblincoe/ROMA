@@ -5,20 +5,24 @@ Tests the Human-in-the-Loop service functionality including request handling,
 timeout management, and replanning approval workflows.
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
-from roma.domain.value_objects.hitl_request import (
-    HITLRequest, HITLResponse, HITLRequestType, HITLRequestStatus
-)
+import pytest
+
 from roma.application.services.hitl_service import HITLService
 from roma.domain.context import TaskContext
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.hitl_request import (
+    HITLRequest,
+    HITLRequestStatus,
+    HITLRequestType,
+    HITLResponse,
+)
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 @pytest.fixture

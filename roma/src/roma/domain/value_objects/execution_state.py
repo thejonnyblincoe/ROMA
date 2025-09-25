@@ -6,12 +6,13 @@ node counts, and result caching with thread safety.
 """
 
 import asyncio
-from pydantic import BaseModel, Field, ConfigDict, PrivateAttr
-from typing import Dict, Set, Any, Optional
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
-from roma.domain.value_objects.result_envelope import AnyResultEnvelope
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+
 from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.result_envelope import AnyResultEnvelope
 
 
 class ExecutionState(BaseModel):
@@ -22,16 +23,12 @@ class ExecutionState(BaseModel):
     for concurrent access safety during parallel node execution.
     """
 
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        validate_assignment=True
-    )
+    model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
 
     # Core execution identity
     execution_id: str = Field(..., description="Unique execution identifier")
     start_time: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        description="When execution started"
+        default_factory=lambda: datetime.now(UTC), description="When execution started"
     )
 
     # Execution context (immutable after creation)
@@ -41,11 +38,10 @@ class ExecutionState(BaseModel):
     # Mutable state (protected by lock)
     iterations: int = Field(default=0, ge=0, description="Number of orchestration iterations")
     total_nodes_processed: int = Field(default=0, ge=0, description="Total nodes processed so far")
-    completed_node_ids: Set[str] = Field(default_factory=set, description="IDs of completed nodes")
-    failed_node_ids: Set[str] = Field(default_factory=set, description="IDs of failed nodes")
-    result_cache: Dict[str, AnyResultEnvelope] = Field(
-        default_factory=dict,
-        description="Cache of node execution results"
+    completed_node_ids: set[str] = Field(default_factory=set, description="IDs of completed nodes")
+    failed_node_ids: set[str] = Field(default_factory=set, description="IDs of failed nodes")
+    result_cache: dict[str, AnyResultEnvelope] = Field(
+        default_factory=dict, description="Cache of node execution results"
     )
 
     # Private lock for thread safety
@@ -85,7 +81,7 @@ class ExecutionState(BaseModel):
         async with self._lock:
             self.result_cache[node_id] = result
 
-    async def get_cached_result(self, node_id: str) -> Optional[AnyResultEnvelope]:
+    async def get_cached_result(self, node_id: str) -> AnyResultEnvelope | None:
         """Thread-safe result retrieval."""
         async with self._lock:
             return self.result_cache.get(node_id)
@@ -98,9 +94,9 @@ class ExecutionState(BaseModel):
     # Read operations (thread-safe without locks due to Python GIL for primitives)
     def get_execution_time(self) -> float:
         """Get current execution time in seconds."""
-        return (datetime.now(timezone.utc) - self.start_time).total_seconds()
+        return (datetime.now(UTC) - self.start_time).total_seconds()
 
-    def get_completion_stats(self) -> Dict[str, int]:
+    def get_completion_stats(self) -> dict[str, int]:
         """Get completion statistics snapshot."""
         # These reads are atomic in Python due to GIL
         return {
@@ -108,7 +104,7 @@ class ExecutionState(BaseModel):
             "failed": len(self.failed_node_ids),
             "total_processed": self.total_nodes_processed,
             "cached_results": len(self.result_cache),
-            "iterations": self.iterations
+            "iterations": self.iterations,
         }
 
     def is_node_completed(self, node_id: str) -> bool:

@@ -2,12 +2,12 @@
 Event Storage Model for PostgreSQL Persistence
 """
 
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, Integer, Index, Text
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import DateTime, Index, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -25,116 +25,85 @@ class EventModel(Base):
 
     # Primary key
     id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
-        primary_key=True,
-        default=lambda: str(uuid4()),
-        nullable=False
+        UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()), nullable=False
     )
 
     # Core event fields
     task_id: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-        index=True,
-        comment="Task ID this event belongs to"
+        String(255), nullable=False, index=True, comment="Task ID this event belongs to"
     )
 
     event_type: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
         index=True,
-        comment="Type of event (task_created, task_completed, etc.)"
+        comment="Type of event (task_created, task_completed, etc.)",
     )
 
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         index=True,
-        default=lambda: datetime.now(timezone.utc),
-        comment="When the event occurred"
+        default=lambda: datetime.now(UTC),
+        comment="When the event occurred",
     )
 
     # Event metadata and details
-    event_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB,
-        nullable=True,
-        comment="Event-specific metadata and data"
+    event_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, comment="Event-specific metadata and data"
     )
 
     # Event versioning and ordering
     version: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=1,
-        comment="Event version for schema evolution"
+        Integer, nullable=False, default=1, comment="Event version for schema evolution"
     )
 
-    sequence_number: Mapped[Optional[int]] = mapped_column(
-        Integer,
-        nullable=True,
-        comment="Sequence number within task for ordering"
+    sequence_number: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, comment="Sequence number within task for ordering"
     )
 
     # Source and correlation
-    source: Mapped[Optional[str]] = mapped_column(
-        String(100),
-        nullable=True,
-        comment="Source of the event (agent, system, user)"
+    source: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, comment="Source of the event (agent, system, user)"
     )
 
-    correlation_id: Mapped[Optional[str]] = mapped_column(
-        String(255),
-        nullable=True,
-        index=True,
-        comment="Correlation ID for tracking related events"
+    correlation_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True, comment="Correlation ID for tracking related events"
     )
 
     # Additional event data
-    event_data: Mapped[Optional[str]] = mapped_column(
-        Text,
-        nullable=True,
-        comment="Large event data that doesn't fit in metadata"
+    event_data: Mapped[str | None] = mapped_column(
+        Text, nullable=True, comment="Large event data that doesn't fit in metadata"
     )
 
     # Performance and retention
     is_archived: Mapped[bool] = mapped_column(
-        nullable=False,
-        default=False,
-        index=True,
-        comment="Whether event has been archived"
+        nullable=False, default=False, index=True, comment="Whether event has been archived"
     )
 
-    archived_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-        comment="When the event was archived"
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="When the event was archived"
     )
 
     # Define composite indexes for common query patterns
     __table_args__ = (
         # Most common: get events by task_id ordered by timestamp
         Index("idx_events_task_timestamp", "task_id", "timestamp"),
-
         # Event type queries with time ranges
         Index("idx_events_type_timestamp", "event_type", "timestamp"),
-
         # Correlation tracking
         Index("idx_events_correlation", "correlation_id", "timestamp"),
-
         # Task sequence ordering
         Index("idx_events_task_sequence", "task_id", "sequence_number"),
-
         # Archival queries
         Index("idx_events_archived", "is_archived", "created_at"),
-
         # Source analysis
         Index("idx_events_source_timestamp", "source", "timestamp"),
-
         # Metadata queries (GIN index for JSONB)
         Index("idx_events_metadata_gin", "event_metadata", postgresql_using="gin"),
     )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert model to dictionary."""
         return {
             "id": self.id,
@@ -154,7 +123,7 @@ class EventModel(Base):
         }
 
     @classmethod
-    def from_task_event(cls, event: Any, correlation_id: Optional[str] = None) -> "EventModel":
+    def from_task_event(cls, event: Any, correlation_id: str | None = None) -> "EventModel":
         """
         Create EventModel from a domain event.
 

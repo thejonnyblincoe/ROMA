@@ -6,15 +6,16 @@ Defines the repository interface for execution history persistence operations.
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Optional
+from typing import Any
+
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.value_objects.persistence import (
-    TaskRelationshipType,
+    ExecutionAnalytics,
     ExecutionRecord,
     ExecutionTreeNode,
-    ExecutionAnalytics,
+    TaskRelationshipType,
 )
+from roma.domain.value_objects.task_status import TaskStatus
 
 
 class ExecutionHistoryRepository(ABC):
@@ -29,8 +30,8 @@ class ExecutionHistoryRepository(ABC):
     async def create_execution(
         self,
         task: TaskNode,
-        execution_context: Optional[dict] = None,
-        agent_config: Optional[dict] = None
+        execution_context: dict[str, Any] | None = None,
+        agent_config: dict[str, Any] | None = None,
     ) -> str:
         """
         Create a new execution record.
@@ -43,16 +44,15 @@ class ExecutionHistoryRepository(ABC):
         Returns:
             Execution ID
         """
-        pass
 
     @abstractmethod
     async def update_execution_status(
         self,
         task_id: str,
         status: TaskStatus,
-        result: Optional[dict] = None,
-        error_info: Optional[dict] = None,
-        execution_duration_ms: Optional[int] = None
+        result: dict[str, Any] | None = None,
+        error_info: dict[str, Any] | None = None,
+        execution_duration_ms: int | None = None,
     ) -> None:
         """
         Update execution status and result.
@@ -64,7 +64,6 @@ class ExecutionHistoryRepository(ABC):
             error_info: Error information if failed
             execution_duration_ms: Execution duration in milliseconds
         """
-        pass
 
     @abstractmethod
     async def add_task_relationship(
@@ -72,8 +71,8 @@ class ExecutionHistoryRepository(ABC):
         parent_task_id: str,
         child_task_id: str,
         relationship_type: TaskRelationshipType,
-        order_index: Optional[int] = None,
-        metadata: Optional[dict] = None
+        order_index: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Add a relationship between tasks.
@@ -85,15 +84,14 @@ class ExecutionHistoryRepository(ABC):
             order_index: Order index for ordered relationships
             metadata: Relationship metadata
         """
-        pass
 
     @abstractmethod
     async def get_execution_history(
         self,
-        task_id: Optional[str] = None,
-        execution_id: Optional[str] = None,
-        include_children: bool = False
-    ) -> Optional[ExecutionRecord]:
+        task_id: str | None = None,
+        execution_id: str | None = None,
+        include_children: bool = False,
+    ) -> ExecutionRecord | None:
         """
         Get execution history for a task.
 
@@ -105,7 +103,6 @@ class ExecutionHistoryRepository(ABC):
         Returns:
             Execution history or None if not found
         """
-        pass
 
     @abstractmethod
     async def get_execution_tree(self, root_task_id: str) -> ExecutionTreeNode:
@@ -118,10 +115,9 @@ class ExecutionHistoryRepository(ABC):
         Returns:
             Complete execution tree
         """
-        pass
 
     @abstractmethod
-    async def get_child_executions(self, parent_task_id: str) -> List[ExecutionRecord]:
+    async def get_child_executions(self, parent_task_id: str) -> list[ExecutionRecord]:
         """
         Get child executions for a parent task.
 
@@ -131,13 +127,10 @@ class ExecutionHistoryRepository(ABC):
         Returns:
             List of child execution data
         """
-        pass
 
     @abstractmethod
     async def get_execution_analytics(
-        self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None
+        self, start_time: datetime | None = None, end_time: datetime | None = None
     ) -> ExecutionAnalytics:
         """
         Get execution analytics and performance metrics.
@@ -149,7 +142,6 @@ class ExecutionHistoryRepository(ABC):
         Returns:
             Analytics data
         """
-        pass
 
     @abstractmethod
     async def cleanup_old_executions(self, days: int = 90) -> int:
@@ -162,4 +154,3 @@ class ExecutionHistoryRepository(ABC):
         Returns:
             Number of records cleaned up
         """
-        pass

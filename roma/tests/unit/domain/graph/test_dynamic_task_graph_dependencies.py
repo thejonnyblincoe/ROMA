@@ -4,14 +4,14 @@ Test dependency handling in DynamicTaskGraph.
 Tests the core dependency edge functionality added to fix sibling dependencies.
 """
 
-import pytest
 import asyncio
-from typing import List
+
+import pytest
 
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
 from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestDynamicTaskGraphDependencies:
@@ -23,7 +23,7 @@ class TestDynamicTaskGraphDependencies:
         return DynamicTaskGraph()
 
     @pytest.fixture
-    def task_nodes(self) -> List[TaskNode]:
+    def task_nodes(self) -> list[TaskNode]:
         """Create test task nodes."""
         return [
             TaskNode(
@@ -118,7 +118,7 @@ class TestDynamicTaskGraphDependencies:
             await graph.add_dependency_edge("task_a", "task_b")
 
     @pytest.mark.asyncio
-    async def test_get_ready_nodes_respects_dependencies(self, graph: DynamicTaskGraph, task_nodes: List[TaskNode]):
+    async def test_get_ready_nodes_respects_dependencies(self, graph: DynamicTaskGraph, task_nodes: list[TaskNode]):
         """Test that get_ready_nodes respects dependency order."""
         # Add all nodes
         for node in task_nodes:

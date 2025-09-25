@@ -5,29 +5,29 @@ Tests the complete integration of SystemManager with ContextBuilder,
 Storage, and AgentRuntime services for multimodal task execution.
 """
 
-import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
 
-from roma.infrastructure.orchestration.system_manager import SystemManager
+import pytest
+
+from roma.application.orchestration.system_manager import SystemManager
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.config.roma_config import ROMAConfig
-from roma.domain.value_objects.config.profile_config import ProfileConfig, AgentMappingConfig
 from roma.domain.value_objects.config.app_config import StorageConfig
+from roma.domain.value_objects.config.profile_config import AgentMappingConfig, ProfileConfig
+from roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.domain.value_objects.task_status import TaskStatus
 
 
 class TestSystemIntegration:
     """Test complete system integration."""
-    
+
     @pytest.fixture
     def temp_storage_path(self):
         """Create temporary storage path for testing."""
         with tempfile.TemporaryDirectory() as temp_dir:
             yield temp_dir
-    
+
     @pytest.fixture
     def system_config(self, temp_storage_path):
         """Create system configuration for testing."""
@@ -75,16 +75,16 @@ class TestSystemIntegration:
     def system_manager(self, system_config):
         """Create SystemManager instance for integration testing."""
         return SystemManager(system_config)
-    
+
     @pytest.mark.asyncio
     async def test_system_initialization(self, system_config):
         """Test that system initializes all components correctly."""
         manager = SystemManager(system_config)
         await manager.initialize("test_profile")
-        
+
         try:
             system_info = manager.get_system_info()
-            
+
             assert system_info["status"] == "initialized"
             assert system_info["current_profile"] == "test_profile"
             assert system_info["components"]["event_store"] is True
@@ -93,7 +93,7 @@ class TestSystemIntegration:
             assert system_info["components"]["toolkit_manager"] is True
         finally:
             await manager.shutdown()
-    
+
     @pytest.mark.asyncio
     async def test_goal_execution_with_context(self, system_manager):
         """Test goal execution with multimodal context building."""
@@ -110,13 +110,13 @@ class TestSystemIntegration:
             "success": True,
             "artifacts": [
                 {
-                    "name": "market_report.txt", 
+                    "name": "market_report.txt",
                     "type": "text",
                     "content": b"Market analysis report content"
                 }
             ]
         })
-        
+
         try:
             result = await system_manager.execute_task(goal)
 
@@ -143,7 +143,7 @@ class TestSystemIntegration:
             assert "overall_objective" in context
         finally:
             await system_manager.shutdown()
-    
+
     @pytest.mark.asyncio
     async def test_artifact_storage_integration(self, system_manager, temp_storage_path):
         """Test that artifacts are stored correctly during execution."""
@@ -179,7 +179,7 @@ class TestSystemIntegration:
 
         finally:
             await system_manager.shutdown()
-    
+
     @pytest.mark.asyncio
     async def test_context_builder_integration(self, system_manager):
         """Test that ContextBuilder is properly integrated."""
@@ -225,7 +225,7 @@ class TestSystemIntegration:
             assert result["task"] == goal
         finally:
             await system_manager.shutdown()
-    
+
     @pytest.mark.asyncio
     async def test_profile_switching(self, system_manager, system_config):
         """Test switching between different profiles."""
@@ -246,7 +246,7 @@ class TestSystemIntegration:
 
         finally:
             await system_manager.shutdown()
-    
+
     @pytest.mark.asyncio
     async def test_error_handling_and_recovery(self, system_manager):
         """Test system error handling during execution."""
@@ -276,7 +276,7 @@ class TestSystemIntegration:
             assert execution_info["task"] == goal
         finally:
             await system_manager.shutdown()
-    
+
     @pytest.mark.asyncio
     async def test_concurrent_execution_safety(self, system_manager):
         """Test system handles concurrent executions safely."""
@@ -316,24 +316,24 @@ class TestSystemIntegration:
             assert len(system_manager._active_executions) == 3
         finally:
             await system_manager.shutdown()
-    
+
     @pytest.mark.asyncio
     async def test_configuration_validation(self, system_manager):
         """Test configuration validation functionality."""
         validation_result = system_manager.validate_configuration()
-        
+
         assert "valid" in validation_result
         assert "errors" in validation_result
         assert "warnings" in validation_result
-        
+
         # With our test config, should be valid
         assert validation_result["valid"] is True
         assert len(validation_result["errors"]) == 0
-    
+
     def test_available_profiles(self, system_manager):
         """Test getting available profiles."""
         profiles = system_manager.get_available_profiles()
-        
+
         assert isinstance(profiles, list)
         assert "test_profile" in profiles
         assert len(profiles) > 0
@@ -341,17 +341,17 @@ class TestSystemIntegration:
 
 class TestSystemManagerEdgeCases:
     """Test edge cases and error conditions."""
-    
+
     @pytest.mark.asyncio
     async def test_uninitialized_system_execution(self):
         """Test execution fails when system is not initialized."""
         config = {"framework": {"type": "agno"}}
         manager = SystemManager(config)
-        
+
         # Should fail without initialization
         with pytest.raises(RuntimeError, match="SystemManager not initialized"):
             await manager.execute_task("Test goal")
-    
+
     @pytest.mark.asyncio
     async def test_invalid_profile_initialization(self):
         """Test initialization with invalid profile."""

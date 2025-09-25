@@ -5,21 +5,22 @@ Framework-agnostic agent interface supporting generic typing for structured outp
 All agents follow the same interface with different response types.
 """
 
-from typing import TypeVar, Generic, Protocol, Dict, Any
 from abc import abstractmethod
+from typing import Any, Protocol, TypeVar
+
 from roma.domain.entities.task_node import TaskNode
 from roma.domain.value_objects.agent_responses import (
-    AtomizerResult,
-    PlannerResult,
-    ExecutorResult,
     AggregatorResult,
-    PlanModifierResult
+    AtomizerResult,
+    ExecutorResult,
+    PlanModifierResult,
+    PlannerResult,
 )
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
-class Agent(Protocol, Generic[T]):
+class Agent[T](Protocol):
     """
     Abstract agent interface for all ROMA agents.
 
@@ -28,7 +29,7 @@ class Agent(Protocol, Generic[T]):
     """
 
     @abstractmethod
-    async def run(self, task: TaskNode, context: Dict[str, Any]) -> T:
+    async def run(self, task: TaskNode, context: dict[str, Any]) -> T:
         """
         Execute agent with task and context.
 
@@ -65,7 +66,7 @@ AGENT_TYPES = {
     "planner": PlannerResult,
     "executor": ExecutorResult,
     "aggregator": AggregatorResult,
-    "plan_modifier": PlanModifierResult
+    "plan_modifier": PlanModifierResult,
 }
 
 

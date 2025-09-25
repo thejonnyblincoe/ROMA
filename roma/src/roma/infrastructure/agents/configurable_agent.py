@@ -5,24 +5,24 @@ Generic agent implementation that can be configured for any agent type
 using Jinja2 templates and Agno's native output_schema support.
 """
 
-from typing import TypeVar, Generic, Type, Optional, TYPE_CHECKING
 import logging
+from typing import TYPE_CHECKING, Optional, TypeVar
 
-from roma.domain.interfaces.agent import Agent
 from roma.domain.entities.task_node import TaskNode
+from roma.domain.interfaces.configurable_agent import IConfigurableAgent
 from roma.domain.value_objects.config.agent_config import AgentConfig
 from roma.infrastructure.adapters.agno_adapter import AgnoFrameworkAdapter
 from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
 
 if TYPE_CHECKING:
+    from roma.domain.context.task_context import TaskContext
     from roma.infrastructure.prompts.prompt_template_manager import PromptTemplateManager
-    from roma.application.services.context_builder_service import TaskContext
 
-T = TypeVar('T')
+T = TypeVar("T")
 logger = logging.getLogger(__name__)
 
 
-class ConfigurableAgent(Agent[T], Generic[T]):
+class ConfigurableAgent(IConfigurableAgent[T]):
     """
     Configurable agent that delegates to specialized services.
 
@@ -35,8 +35,8 @@ class ConfigurableAgent(Agent[T], Generic[T]):
         self,
         config: AgentConfig,
         framework_adapter: AgnoFrameworkAdapter,
-        output_schema: Type[T],
-        prompt_template_manager: "PromptTemplateManager"
+        output_schema: type[T],
+        prompt_template_manager: "PromptTemplateManager",
     ):
         """
         Initialize configurable agent with dependencies.
@@ -53,7 +53,7 @@ class ConfigurableAgent(Agent[T], Generic[T]):
         self.prompt_manager = prompt_template_manager
 
         # Injected dependencies
-        self.toolkit_manager: Optional[AgnoToolkitManager] = None
+        self.toolkit_manager: AgnoToolkitManager | None = None
 
         self.agent_name = config.name
         logger.info(f"Initialized {self.agent_name} with output schema {output_schema.__name__}")
@@ -69,17 +69,23 @@ class ConfigurableAgent(Agent[T], Generic[T]):
         """
         return self.agent_name
 
-    async def run(self, task: TaskNode, context: "TaskContext") -> T:
+    async def run(self, task: TaskNode, context: Optional["TaskContext"] = None) -> T:
         """
         Execute agent with proper separation of concerns.
 
         Args:
             task: TaskNode to process
-            context: TaskContext from ContextBuilderService
+            context: Optional TaskContext from ContextBuilderService
 
         Returns:
             Structured result of type T
+
+        Raises:
+            ValueError: If context is None (required for agent execution)
         """
+        if context is None:
+            raise ValueError("TaskContext is required for agent execution")
+
         try:
             # Delegate prompt rendering to PromptTemplateManager
             # Use the agent config's prompt_template directly
@@ -88,12 +94,17 @@ class ConfigurableAgent(Agent[T], Generic[T]):
 
                 # Get template variables
                 if self.prompt_manager.context_builder:
-                    template_vars = await self.prompt_manager.context_builder.export_template_variables(
-                        task, context
+                    template_vars = (
+                        await self.prompt_manager.context_builder.export_template_variables(
+                            task, context
+                        )
                     )
                 else:
                     template_vars = self.prompt_manager._get_basic_template_variables(
-                        self.config.type, self.config.task_type.value if self.config.task_type else "GENERAL", task, context
+                        self.config.type,
+                        self.config.task_type.value if self.config.task_type else "GENERAL",
+                        task,
+                        context,
                     )
 
                 prompt = template.render(**template_vars).strip()
@@ -103,7 +114,7 @@ class ConfigurableAgent(Agent[T], Generic[T]):
                     agent_type=self.config.type,
                     task_type=self.config.task_type.value if self.config.task_type else "GENERAL",
                     task=task,
-                    task_context=context
+                    task_context=context,
                 )
 
             # Get tools from configuration
@@ -118,7 +129,7 @@ class ConfigurableAgent(Agent[T], Generic[T]):
                 output_schema=self.output_schema,
                 tools=tools,
                 agent_name=self.agent_name,
-                model_config=model_config
+                model_config=model_config,
             )
 
             logger.info(f"{self.agent_name} completed successfully")
@@ -127,7 +138,6 @@ class ConfigurableAgent(Agent[T], Generic[T]):
         except Exception as e:
             logger.error(f"{self.agent_name} execution failed: {e}")
             raise
-
 
     def _get_tools(self) -> list:
         """Get tool names from configuration."""
@@ -140,7 +150,9 @@ class ConfigurableAgent(Agent[T], Generic[T]):
         tool_names = []
         for tool_config in self.config.tools:
             tool_names.append(tool_config.name)
-            logger.debug(f"Added tool name {tool_config.name} ({tool_config.type}) to agent {self.agent_name}")
+            logger.debug(
+                f"Added tool name {tool_config.name} ({tool_config.type}) to agent {self.agent_name}"
+            )
 
         return tool_names
 
@@ -159,7 +171,7 @@ class ConfigurableAgent(Agent[T], Generic[T]):
         """Get agent type from configuration."""
         return self.config.type
 
-    def get_task_type(self) -> Optional[str]:
+    def get_task_type(self) -> str | None:
         """Get task type this agent is configured for."""
         return self.config.task_type.value if self.config.task_type else None
 

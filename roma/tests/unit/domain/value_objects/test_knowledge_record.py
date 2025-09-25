@@ -2,13 +2,13 @@
 Tests for KnowledgeRecord value object.
 """
 
-import pytest
-from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
+
 from roma.domain.value_objects.knowledge_record import KnowledgeRecord
-from roma.domain.value_objects.task_type import TaskType
 from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestKnowledgeRecord:

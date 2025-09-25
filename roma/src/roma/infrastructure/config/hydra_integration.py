@@ -5,41 +5,42 @@ Registers domain configuration value objects with Hydra ConfigStore.
 This is the infrastructure layer that bridges domain configs with Hydra framework.
 """
 
-from hydra.core.config_store import ConfigStore
 from pathlib import Path
-import os
+
+from hydra.core.config_store import ConfigStore
+
 from roma.domain.value_objects.config import (
-    ROMAConfig,
-    ProfileConfig,
     AgentConfig,
-    ModelConfig,
     AgentMappingConfig,
     AppConfig,
     CacheConfig,
-    LoggingConfig,
-    SecurityConfig,
     ExperimentConfig,
+    LoggingConfig,
+    ModelConfig,
+    ProfileConfig,
+    ROMAConfig,
+    SecurityConfig,
 )
 
 
 def discover_profiles(config_dir: str = "config/profiles") -> list[str]:
     """Dynamically discover available profile YAML files."""
     profiles_dir = Path(config_dir)
-    
+
     if not profiles_dir.exists():
         return []
-    
+
     profile_names = []
     for yaml_file in profiles_dir.glob("*.yaml"):
         # Remove .yaml extension to get profile name
         profile_name = yaml_file.stem
         if profile_name != "__init__":  # Skip any init files
             profile_names.append(profile_name)
-    
+
     return profile_names
 
 
-def register_configs(config_dir: str = None) -> ConfigStore:
+def register_configs(config_dir: str | None = None) -> ConfigStore:
     """Register configuration schemas with Hydra ConfigStore."""
 
     cs = ConfigStore.instance()
@@ -68,7 +69,7 @@ def register_configs(config_dir: str = None) -> ConfigStore:
     else:
         # Try common locations
         for potential_dir in ["config", "../config", "../../config"]:
-            if os.path.exists(f"{potential_dir}/profiles"):
+            if Path(f"{potential_dir}/profiles").exists():
                 profile_names = discover_profiles(f"{potential_dir}/profiles")
                 break
         else:

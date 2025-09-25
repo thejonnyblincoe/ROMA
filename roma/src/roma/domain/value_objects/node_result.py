@@ -5,62 +5,51 @@ Defines the result of processing a single task node through the agent pipeline.
 Used to communicate outcomes, actions, and data between orchestration components.
 """
 
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Dict, Any
-from .node_action import NodeAction
-from .result_envelope import AnyResultEnvelope
-from ..entities.task_node import TaskNode
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.node_action import NodeAction
+from roma.domain.value_objects.result_envelope import AnyResultEnvelope
 
 
 class NodeResult(BaseModel):
     """Result of processing a single node through the agent pipeline."""
 
-    model_config = ConfigDict(
-        frozen=True,
-        arbitrary_types_allowed=True,
-        validate_assignment=True
-    )
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True, validate_assignment=True)
 
     # Required fields
     task_id: str = Field(..., description="ID of the task this result is for")
     action: NodeAction = Field(..., description="Action to take based on processing result")
 
     # Optional result data
-    envelope: Optional[AnyResultEnvelope] = Field(
-        default=None,
-        description="Result envelope from agent execution"
+    envelope: AnyResultEnvelope | None = Field(
+        default=None, description="Result envelope from agent execution"
     )
 
-    new_nodes: List[TaskNode] = Field(
-        default_factory=list,
-        description="New nodes to add to graph (for ADD_SUBTASKS action)"
+    new_nodes: list[TaskNode] = Field(
+        default_factory=list, description="New nodes to add to graph (for ADD_SUBTASKS action)"
     )
 
-    error: Optional[str] = Field(
-        default=None,
-        description="Error message if processing failed"
-    )
+    error: str | None = Field(default=None, description="Error message if processing failed")
 
-    metadata: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional metadata about the processing"
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Additional metadata about the processing"
     )
 
     # Execution timing
-    processing_time_ms: Optional[float] = Field(
-        default=None,
-        description="Time taken to process the node in milliseconds"
+    processing_time_ms: float | None = Field(
+        default=None, description="Time taken to process the node in milliseconds"
     )
 
     # Agent information
-    agent_name: Optional[str] = Field(
-        default=None,
-        description="Name of the agent that processed the node"
+    agent_name: str | None = Field(
+        default=None, description="Name of the agent that processed the node"
     )
 
-    agent_type: Optional[str] = Field(
-        default=None,
-        description="Type of agent (atomizer, planner, executor, etc.)"
+    agent_type: str | None = Field(
+        default=None, description="Type of agent (atomizer, planner, executor, etc.)"
     )
 
     def __str__(self) -> str:
@@ -120,17 +109,19 @@ class NodeResult(BaseModel):
             raise ValueError("COMPLETE action should have result envelope")
 
         if self.new_nodes and self.action != NodeAction.ADD_SUBTASKS:
-            raise ValueError(f"new_nodes should only be provided with ADD_SUBTASKS action, got {self.action}")
+            raise ValueError(
+                f"new_nodes should only be provided with ADD_SUBTASKS action, got {self.action}"
+            )
 
     @classmethod
     def success(
         cls,
         task_id: str,
         envelope: AnyResultEnvelope,
-        agent_name: Optional[str] = None,
-        agent_type: Optional[str] = None,
-        processing_time_ms: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        agent_name: str | None = None,
+        agent_type: str | None = None,
+        processing_time_ms: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> "NodeResult":
         """Create a successful completion result."""
         return cls(
@@ -140,18 +131,18 @@ class NodeResult(BaseModel):
             agent_name=agent_name,
             agent_type=agent_type,
             processing_time_ms=processing_time_ms,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
     @classmethod
     def planning_result(
         cls,
         task_id: str,
-        subtasks: List[TaskNode],
-        envelope: Optional[AnyResultEnvelope] = None,
-        agent_name: Optional[str] = None,
-        processing_time_ms: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        subtasks: list[TaskNode],
+        envelope: AnyResultEnvelope | None = None,
+        agent_name: str | None = None,
+        processing_time_ms: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> "NodeResult":
         """Create a planning result with subtasks."""
         return cls(
@@ -162,7 +153,7 @@ class NodeResult(BaseModel):
             agent_name=agent_name,
             agent_type="planner",
             processing_time_ms=processing_time_ms,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
     @classmethod
@@ -170,9 +161,9 @@ class NodeResult(BaseModel):
         cls,
         task_id: str,
         envelope: AnyResultEnvelope,
-        agent_name: Optional[str] = None,
-        processing_time_ms: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        agent_name: str | None = None,
+        processing_time_ms: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> "NodeResult":
         """Create an aggregation result."""
         return cls(
@@ -182,7 +173,7 @@ class NodeResult(BaseModel):
             agent_name=agent_name,
             agent_type="aggregator",
             processing_time_ms=processing_time_ms,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
     @classmethod
@@ -190,10 +181,10 @@ class NodeResult(BaseModel):
         cls,
         task_id: str,
         error: str,
-        agent_name: Optional[str] = None,
-        agent_type: Optional[str] = None,
-        processing_time_ms: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        agent_name: str | None = None,
+        agent_type: str | None = None,
+        processing_time_ms: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> "NodeResult":
         """Create a failure result."""
         return cls(
@@ -203,7 +194,7 @@ class NodeResult(BaseModel):
             agent_name=agent_name,
             agent_type=agent_type,
             processing_time_ms=processing_time_ms,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
     @classmethod
@@ -211,10 +202,10 @@ class NodeResult(BaseModel):
         cls,
         task_id: str,
         error: str,
-        agent_name: Optional[str] = None,
-        agent_type: Optional[str] = None,
-        processing_time_ms: Optional[float] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        agent_name: str | None = None,
+        agent_type: str | None = None,
+        processing_time_ms: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> "NodeResult":
         """Create a retry result."""
         return cls(
@@ -224,19 +215,19 @@ class NodeResult(BaseModel):
             agent_name=agent_name,
             agent_type=agent_type,
             processing_time_ms=processing_time_ms,
-            metadata=metadata or {}
+            metadata=metadata or {},
         )
 
     @classmethod
     def replan(
         cls,
         task_id: str,
-        parent_id: Optional[str] = None,
-        reason: Optional[str] = None,
-        agent_name: Optional[str] = None,
-        agent_type: Optional[str] = None,
-        processing_time_ms: Optional[float] = None,
-        **kwargs
+        parent_id: str | None = None,
+        reason: str | None = None,
+        agent_name: str | None = None,
+        agent_type: str | None = None,
+        processing_time_ms: float | None = None,
+        **kwargs: Any,
     ) -> "NodeResult":
         """Create a replan result to mark node/parent for replanning."""
         return cls(
@@ -245,9 +236,5 @@ class NodeResult(BaseModel):
             agent_name=agent_name,
             agent_type=agent_type,
             processing_time_ms=processing_time_ms,
-            metadata={
-                "parent_id": parent_id,
-                "reason": reason or "replanning_requested",
-                **kwargs
-            }
+            metadata={"parent_id": parent_id, "reason": reason or "replanning_requested", **kwargs},
         )

@@ -5,11 +5,13 @@ Testing event emission and handling in DynamicTaskGraph operations.
 """
 
 import pytest
+
 from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
 from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.value_objects.node_type import NodeType
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
+
 # Events are handled by GraphStateManager, not DynamicTaskGraph directly
 
 
@@ -161,7 +163,7 @@ class TestGraphEventLogging:
 
         # Operation ordering is maintained in DynamicTaskGraph
         # Event ordering consistency is handled by GraphStateManager
-        
+
         # Rapid sequence of operations
         node1 = TaskNode(task_id="node1", goal="First", task_type=TaskType.THINK, status=TaskStatus.PENDING)
         node2 = TaskNode(task_id="node2", goal="Second", task_type=TaskType.WRITE, status=TaskStatus.PENDING)
@@ -181,7 +183,7 @@ class TestGraphEventLogging:
 
 class TestEventLoggingPerformance:
     """Test performance impact of event logging."""
-    
+
     @pytest.mark.performance
     @pytest.mark.asyncio
     async def test_event_logging_performance_impact(self):

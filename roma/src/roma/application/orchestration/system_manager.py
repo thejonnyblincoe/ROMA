@@ -9,43 +9,47 @@ Acts as the main entry point and dependency injection container for the system.
 Integrates: ContextBuilder + Storage + ToolkitManager + Agent Runtime
 """
 
+import contextlib
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List, Union
+from datetime import datetime
+from typing import Any
 
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.node_type import NodeType
-from roma.domain.value_objects.config.roma_config import ROMAConfig
-from roma.domain.value_objects.result_envelope import ResultEnvelope, ExecutionMetrics, AnyResultEnvelope
-from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
-from roma.application.services.event_store import InMemoryEventStore
-from roma.application.services.event_publisher import EventPublisher, initialize_event_publisher
-from roma.infrastructure.persistence.connection_manager import DatabaseConnectionManager
-from roma.infrastructure.persistence.postgres_event_store import PostgreSQLEventStore
-from roma.infrastructure.persistence.repositories.checkpoint_repository_impl import SQLAlchemyCheckpointRepository, SQLAlchemyRecoveryRepository
-from roma.infrastructure.persistence.repositories.execution_history_repository_impl import SQLAlchemyExecutionHistoryRepository
-from roma.application.services.checkpoint_service import CheckpointService
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.artifact_service import ArtifactService
-from roma.application.services.context_builder_service import ContextBuilderService, TaskContext
-from roma.application.services.knowledge_store_service import KnowledgeStoreService
+from roma.application.orchestration.execution_orchestrator import ExecutionOrchestrator
 from roma.application.orchestration.graph_state_manager import GraphStateManager
 from roma.application.orchestration.parallel_execution_engine import ParallelExecutionEngine
-from roma.application.orchestration.execution_orchestrator import ExecutionOrchestrator
+from roma.application.services.agent_runtime_service import AgentRuntimeService
 from roma.application.services.agent_service_registry import AgentServiceRegistry
-from roma.application.services.hitl_service import HITLService
-from roma.domain.value_objects.execution_result import ExecutionResult
-from roma.application.services.recovery_manager import RecoveryManager
-from roma.application.services.execution_context import ExecutionContext
+from roma.application.services.artifact_service import ArtifactService
+from roma.application.services.checkpoint_service import CheckpointService
+from roma.application.services.context_builder_service import ContextBuilderService
 from roma.application.services.deadlock_detector import DeadlockDetector
-from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
-from roma.infrastructure.storage.local_storage import LocalFileStorage
-from roma.infrastructure.storage.storage_interface import StorageConfig as InfraStorageConfig
+from roma.application.services.event_publisher import EventPublisher, initialize_event_publisher
+from roma.application.services.event_store import InMemoryEventStore
+from roma.application.services.execution_context import ExecutionContext
+from roma.application.services.hitl_service import HITLService
+from roma.application.services.knowledge_store_service import KnowledgeStoreService
+from roma.application.services.recovery_manager import RecoveryManager
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.interfaces.agent_factory import IAgentFactory
+from roma.domain.interfaces.storage import IStorage
+from roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.domain.value_objects.storage_config import StorageConfig
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 from roma.infrastructure.agents.agent_factory import AgentFactory
+from roma.infrastructure.persistence.connection_manager import DatabaseConnectionManager
+from roma.infrastructure.persistence.postgres_event_store import PostgreSQLEventStore
+from roma.infrastructure.persistence.repositories.checkpoint_repository_impl import (
+    SQLAlchemyCheckpointRepository,
+    SQLAlchemyRecoveryRepository,
+)
+from roma.infrastructure.persistence.repositories.execution_history_repository_impl import (
+    SQLAlchemyExecutionHistoryRepository,
+)
+from roma.infrastructure.storage.local_storage import LocalFileStorage
+from roma.infrastructure.toolkits.agno_toolkit_manager import AgnoToolkitManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,63 +62,63 @@ class SystemManager:
     executing any type of task through intelligent agent decomposition.
     Configuration is injected directly from Hydra/CLI.
     """
-    
+
     def __init__(self, config: ROMAConfig):
         """
         Initialize system manager with configuration object.
-        
+
         Args:
             config: ROMAConfig object from Hydra CLI
         """
         self.config = config
         self._initialized = False
-        
+
         # Core components
-        self._event_store: Optional[Union[InMemoryEventStore, PostgreSQLEventStore]] = None
-        self._event_publisher: Optional[EventPublisher] = None
-        self._connection_manager: Optional[DatabaseConnectionManager] = None
-        self._task_graph: Optional[DynamicTaskGraph] = None
-        self._graph_state_manager: Optional[GraphStateManager] = None
-        self._parallel_execution_engine: Optional[ParallelExecutionEngine] = None
-        self._execution_orchestrator: Optional[ExecutionOrchestrator] = None
-        self._agent_service_registry: Optional[AgentServiceRegistry] = None
-        self._agent_runtime_service: Optional[AgentRuntimeService] = None
-        self._toolkit_manager: Optional[AgnoToolkitManager] = None
-        self._context_builder: Optional[ContextBuilderService] = None
-        self._storage: Optional[LocalFileStorage] = None
-        self._artifact_service: Optional[ArtifactService] = None
-        self._knowledge_store: Optional[KnowledgeStoreService] = None
-        self._recovery_manager: Optional[RecoveryManager] = None
-        self._agent_factory: Optional[AgentFactory] = None
-        self._hitl_service: Optional[HITLService] = None
-        self._deadlock_detector: Optional[DeadlockDetector] = None
+        self._event_store: InMemoryEventStore | PostgreSQLEventStore | None = None
+        self._event_publisher: EventPublisher | None = None
+        self._connection_manager: DatabaseConnectionManager | None = None
+        self._task_graph: DynamicTaskGraph | None = None
+        self._graph_state_manager: GraphStateManager | None = None
+        self._parallel_execution_engine: ParallelExecutionEngine | None = None
+        self._execution_orchestrator: ExecutionOrchestrator | None = None
+        self._agent_service_registry: AgentServiceRegistry | None = None
+        self._agent_runtime_service: AgentRuntimeService | None = None
+        self._toolkit_manager: AgnoToolkitManager | None = None
+        self._context_builder: ContextBuilderService | None = None
+        self._storage: IStorage | None = None
+        self._artifact_service: ArtifactService | None = None
+        self._knowledge_store: KnowledgeStoreService | None = None
+        self._recovery_manager: RecoveryManager | None = None
+        self._agent_factory: IAgentFactory | None = None
+        self._hitl_service: HITLService | None = None
+        self._deadlock_detector: DeadlockDetector | None = None
 
         # Persistence components
-        self._checkpoint_repository: Optional[SQLAlchemyCheckpointRepository] = None
-        self._recovery_repository: Optional[SQLAlchemyRecoveryRepository] = None
-        self._execution_history_repository: Optional[SQLAlchemyExecutionHistoryRepository] = None
-        self._checkpoint_service: Optional[Any] = None
+        self._checkpoint_repository: SQLAlchemyCheckpointRepository | None = None
+        self._recovery_repository: SQLAlchemyRecoveryRepository | None = None
+        self._execution_history_repository: SQLAlchemyExecutionHistoryRepository | None = None
+        self._checkpoint_service: Any | None = None
 
         # System state
-        self._current_profile: Optional[str] = None
-        self._active_executions: Dict[str, Dict[str, Any]] = {}
-        self._active_contexts: Dict[str, ExecutionContext] = {}
-        
+        self._current_profile: str | None = None
+        self._active_executions: dict[str, dict[str, Any]] = {}
+        self._active_contexts: dict[str, ExecutionContext] = {}
+
         logger.info("SystemManager initialized with configuration")
-        
+
     async def initialize(self, profile_name: str) -> None:
         """
         Initialize system with specified profile.
-        
+
         Args:
             profile_name: Name of the profile to initialize with
         """
         if self._initialized:
             logger.warning("SystemManager already initialized")
             return
-            
+
         logger.info(f"Initializing ROMA v2 system with profile: {profile_name}")
-        
+
         try:
             # Initialize components in dependency order
             await self._initialize_event_store()
@@ -140,25 +144,26 @@ class SystemManager:
 
             # Load profile from config
             await self._load_profile(profile_name)
-            
+
             self._initialized = True
             self._current_profile = profile_name
-            
+
             logger.info(f"✅ ROMA system initialized with profile: {profile_name}")
-            
+
         except Exception as e:
             logger.error(f"System initialization failed: {e}")
             await self._cleanup()
             raise
-            
+
     async def _initialize_event_store(self) -> None:
         """Initialize event store - PostgreSQL if configured, otherwise in-memory."""
         # Check if PostgreSQL is configured and available
-        if (self.config.database and
-            self.config.database.host and
-            self.config.database.host.lower() not in ["localhost", "127.0.0.1"] or
-            self.config.database.get_connection_string_from_env()):
-
+        if (
+            self.config.database
+            and self.config.database.host
+            and self.config.database.host.lower() not in ["localhost", "127.0.0.1"]
+            or self.config.database.get_connection_string_from_env()
+        ):
             try:
                 # Initialize PostgreSQL connection manager
                 self._connection_manager = DatabaseConnectionManager(self.config.database)
@@ -171,7 +176,9 @@ class SystemManager:
                     await self._event_store.initialize()
                     logger.info("✅ PostgreSQL event store initialized")
                 else:
-                    logger.warning("PostgreSQL connection unhealthy, falling back to in-memory store")
+                    logger.warning(
+                        "PostgreSQL connection unhealthy, falling back to in-memory store"
+                    )
                     self._event_store = InMemoryEventStore()
             except Exception as e:
                 logger.error(f"Failed to initialize PostgreSQL event store: {e}")
@@ -199,13 +206,13 @@ class SystemManager:
         logger.info("✅ DynamicTaskGraph initialized")
 
         # Note: Event publishing is handled by GraphStateManager to avoid duplicates
-        
+
     async def _initialize_storage(self) -> None:
         """Initialize goofys-based storage."""
         mount_path = self.config.storage.mount_path
 
-        # Create infrastructure StorageConfig from domain config
-        config = InfraStorageConfig.from_mount_path(mount_path)
+        # Create StorageConfig from domain config
+        config = StorageConfig.from_mount_path(mount_path)
         self._storage = LocalFileStorage(config)
         logger.info(f"Storage initialized at: {mount_path}")
 
@@ -225,11 +232,9 @@ class SystemManager:
 
     async def _initialize_context_builder(self) -> None:
         """Initialize context builder service with knowledge store."""
-        self._context_builder = ContextBuilderService(
-            knowledge_store=self._knowledge_store
-        )
+        self._context_builder = ContextBuilderService(knowledge_store=self._knowledge_store)
         logger.info("✅ ContextBuilderService initialized")
-        
+
     async def _initialize_toolkit_manager(self) -> None:
         """Initialize toolkit manager."""
         self._toolkit_manager = AgnoToolkitManager()
@@ -241,7 +246,7 @@ class SystemManager:
 
         try:
             # Get tools from Hydra config
-            tools_config = getattr(self.config, 'tools', None)
+            tools_config = getattr(self.config, "tools", None)
             if not tools_config:
                 logger.warning("No tools configuration found in config")
                 return
@@ -249,7 +254,7 @@ class SystemManager:
             # Register each tool category
             tool_count = 0
             for category_name, tools in tools_config.items():
-                if category_name == 'presets':
+                if category_name == "presets":
                     # Skip presets, they're combinations
                     continue
 
@@ -261,7 +266,9 @@ class SystemManager:
                             # Register the tool config with toolkit manager
                             self._toolkit_manager.register_tool_config(tool_config)
                             tool_count += 1
-                            logger.debug(f"Registered tool: {tool_config.name} (type: {tool_config.type})")
+                            logger.debug(
+                                f"Registered tool: {tool_config.name} (type: {tool_config.type})"
+                            )
                         except Exception as tool_error:
                             logger.error(f"Failed to register tool {tool_name}: {tool_error}")
 
@@ -276,17 +283,16 @@ class SystemManager:
         """Initialize agent factory with configuration."""
         self._agent_factory = AgentFactory(self.config)
         logger.info("✅ AgentFactory initialized")
-        
+
     async def _initialize_agent_runtime_service(self) -> None:
         """Initialize agent runtime service with dependencies."""
         # Create agent runtime service with simplified dependencies
         self._agent_runtime_service = AgentRuntimeService(
-            agent_factory=self._agent_factory,
-            event_publisher=self._event_publisher
+            agent_factory=self._agent_factory, event_publisher=self._event_publisher
         )
 
         await self._agent_runtime_service.initialize()
-        
+
     async def _initialize_recovery_manager(self) -> None:
         """Initialize recovery manager with circuit breaker and execution config."""
         self._recovery_manager = RecoveryManager(execution_config=self.config.execution)
@@ -308,7 +314,9 @@ class SystemManager:
                 logger.info("✅ RecoveryRepository initialized")
 
                 # Initialize execution history repository
-                self._execution_history_repository = SQLAlchemyExecutionHistoryRepository(session_factory)
+                self._execution_history_repository = SQLAlchemyExecutionHistoryRepository(
+                    session_factory
+                )
                 logger.info("✅ ExecutionHistoryRepository initialized")
 
                 logger.info("✅ All persistence repositories initialized")
@@ -333,7 +341,7 @@ class SystemManager:
             try:
                 self._checkpoint_service = CheckpointService(
                     checkpoint_repository=self._checkpoint_repository,
-                    recovery_repository=self._recovery_repository
+                    recovery_repository=self._recovery_repository,
                 )
                 logger.info("✅ CheckpointService initialized")
             except Exception as e:
@@ -347,11 +355,11 @@ class SystemManager:
     async def _initialize_hitl_service(self) -> None:
         """Initialize HITL service for human interaction."""
         # HITL service can be disabled by setting enabled=False
-        hitl_enabled = getattr(self.config.execution, 'hitl_enabled', False)
+        hitl_enabled = getattr(self.config.execution, "hitl_enabled", False)
         if hitl_enabled:
             self._hitl_service = HITLService(
                 enabled=True,
-                default_timeout_seconds=getattr(self.config.execution, 'hitl_timeout_seconds', 300)
+                default_timeout_seconds=getattr(self.config.execution, "hitl_timeout_seconds", 300),
             )
             logger.info("✅ HITLService initialized (enabled)")
         else:
@@ -365,23 +373,20 @@ class SystemManager:
 
         self._deadlock_detector = DeadlockDetector(
             graph=self._task_graph,
-            stall_threshold_seconds=getattr(self.config.execution, 'deadlock_timeout_seconds', 600)
+            stall_threshold_seconds=getattr(self.config.execution, "deadlock_timeout_seconds", 600),
         )
         logger.info("✅ DeadlockDetector initialized")
 
     async def _initialize_graph_state_manager(self) -> None:
         """Initialize graph state manager for atomic state transitions."""
-        self._graph_state_manager = GraphStateManager(
-            self._task_graph,
-            self._event_publisher
-        )
+        self._graph_state_manager = GraphStateManager(self._task_graph, self._event_publisher)
         logger.info("✅ GraphStateManager initialized")
 
     async def _initialize_parallel_execution_engine(self) -> None:
         """Initialize parallel execution engine for concurrent task processing."""
         self._parallel_execution_engine = ParallelExecutionEngine(
             state_manager=self._graph_state_manager,
-            max_concurrent_tasks=self.config.execution.max_concurrent_tasks
+            max_concurrent_tasks=self.config.execution.max_concurrent_tasks,
         )
         logger.info("✅ ParallelExecutionEngine initialized")
 
@@ -393,7 +398,7 @@ class SystemManager:
             hitl_service=self._hitl_service,
             checkpoint_repository=self._checkpoint_repository,
             recovery_repository=self._recovery_repository,
-            execution_history_repository=self._execution_history_repository
+            execution_history_repository=self._execution_history_repository,
         )
         logger.info("✅ AgentServiceRegistry initialized")
 
@@ -408,7 +413,7 @@ class SystemManager:
             event_publisher=self._event_publisher,
             execution_config=self.config.execution,
             deadlock_detector=self._deadlock_detector,
-            knowledge_store=self._knowledge_store
+            knowledge_store=self._knowledge_store,
         )
         logger.info("✅ ExecutionOrchestrator initialized")
 
@@ -417,8 +422,8 @@ class SystemManager:
         # Use the profile from ROMAConfig
         profile_config = self.config.profile
         logger.info(f"Profile {profile_name} loaded successfully with config: {profile_config}")
-            
-    async def execute_task(self, task: str, **options) -> Dict[str, Any]:
+
+    async def execute_task(self, task: str, **options) -> dict[str, Any]:
         """
         Execute any type of task using the new orchestration architecture.
 
@@ -448,13 +453,13 @@ class SystemManager:
                 task_id=f"root_{execution_id}",
                 goal=task,
                 task_type=TaskType.THINK,  # Will be determined by atomizer
-                status=TaskStatus.PENDING
+                status=TaskStatus.PENDING,
             )
 
             # Create execution context with isolated resources
             execution_context = ExecutionContext(
                 execution_id=execution_id,
-                base_storage_config=InfraStorageConfig.from_mount_path(self.config.storage.mount_path)
+                base_storage_config=StorageConfig.from_mount_path(self.config.storage.mount_path),
             )
             execution_context.set_config(self.config)
             await execution_context.initialize()
@@ -462,27 +467,21 @@ class SystemManager:
             # Store execution context
             self._active_contexts[execution_id] = execution_context
 
-            # Create a per-execution deadlock detector bound to the isolated graph
-            execution_deadlock_detector = DeadlockDetector(
-                graph=execution_context.task_graph,
-                stall_threshold_seconds=getattr(self.config.execution, 'deadlock_timeout_seconds', 600)
-            )
-
             # Create execution-specific orchestrator with isolated resources
             execution_orchestrator = ExecutionOrchestrator(
                 graph_state_manager=execution_context.graph_state_manager,
                 parallel_engine=ParallelExecutionEngine(
                     state_manager=execution_context.graph_state_manager,
                     max_concurrent_tasks=self.config.execution.max_concurrent_tasks,
-                    recovery_manager=self._recovery_manager
+                    recovery_manager=self._recovery_manager,
                 ),
                 agent_service_registry=self._agent_service_registry,
                 context_builder=execution_context.context_builder,
                 recovery_manager=self._recovery_manager,
                 event_publisher=execution_context.event_publisher,
                 execution_config=self.config.execution,
-                deadlock_detector=execution_deadlock_detector,
-                knowledge_store=execution_context.knowledge_store
+                deadlock_detector=self._deadlock_detector,
+                knowledge_store=execution_context.knowledge_store,
             )
 
             # Track execution
@@ -494,17 +493,17 @@ class SystemManager:
                 "task": task,
                 "options": options,
                 "graph": execution_context.task_graph,
-                "orchestrator": execution_orchestrator
+                "orchestrator": execution_orchestrator,
             }
             self._active_executions[execution_id] = execution_info
 
             # Execute through execution-specific orchestrator
-            logger.info(f"Delegating execution to isolated ExecutionOrchestrator for task: {task[:100]}...")
+            logger.info(
+                f"Delegating execution to isolated ExecutionOrchestrator for task: {task[:100]}..."
+            )
 
             execution_result = await execution_orchestrator.execute(
-                root_task=root_task,
-                overall_objective=task,
-                execution_id=execution_id
+                root_task=root_task, overall_objective=task, execution_id=execution_id
             )
 
             # Store artifacts from final result if available
@@ -515,7 +514,9 @@ class SystemManager:
                 )
 
             # Update execution tracking
-            execution_info["status"] = TaskStatus.COMPLETED if execution_result.success else TaskStatus.FAILED
+            execution_info["status"] = (
+                TaskStatus.COMPLETED if execution_result.success else TaskStatus.FAILED
+            )
             execution_info["end_time"] = datetime.now()
             execution_info["execution_result"] = execution_result
             execution_info["artifact_refs"] = artifact_refs
@@ -530,7 +531,7 @@ class SystemManager:
                 execution_result=execution_result,
                 artifact_refs=artifact_refs,
                 options=options,
-                execution_orchestrator=execution_orchestrator
+                execution_orchestrator=execution_orchestrator,
             )
 
         except Exception as e:
@@ -548,7 +549,9 @@ class SystemManager:
                 try:
                     await execution_orchestrator.cleanup_execution(execution_id)
                 except Exception as cleanup_error:
-                    logger.error(f"Error during orchestrator cleanup for {execution_id}: {cleanup_error}")
+                    logger.error(
+                        f"Error during orchestrator cleanup for {execution_id}: {cleanup_error}"
+                    )
 
             # Return error response
             return self._build_error_result(
@@ -556,7 +559,7 @@ class SystemManager:
                 task=task,
                 error=e,
                 start_time=start_time,
-                options=options
+                options=options,
             )
 
         finally:
@@ -571,34 +574,35 @@ class SystemManager:
                         execution_info.pop("graph", None)
                         execution_info.pop("orchestrator", None)
                     except Exception as tracking_error:
-                        logger.error(f"Error updating execution tracking for {execution_id}: {tracking_error}")
+                        logger.error(
+                            f"Error updating execution tracking for {execution_id}: {tracking_error}"
+                        )
                     finally:
                         # Always remove from active executions to prevent memory leak
-                        try:
-                            del self._active_executions[execution_id]
-                        except KeyError:
+                        with contextlib.suppress(KeyError):
                             # Already removed, ignore
-                            pass
+                            del self._active_executions[execution_id]
 
                 # Clean up execution context
                 if execution_id in self._active_contexts:
                     try:
                         await self._active_contexts[execution_id].cleanup()
                     except Exception as cleanup_error:
-                        logger.error(f"Error cleaning up execution context {execution_id}: {cleanup_error}")
+                        logger.error(
+                            f"Error cleaning up execution context {execution_id}: {cleanup_error}"
+                        )
                     finally:
                         # Always remove from active contexts to prevent memory leak
-                        try:
-                            del self._active_contexts[execution_id]
-                        except KeyError:
+                        with contextlib.suppress(KeyError):
                             # Already removed, ignore
-                            pass
+                            del self._active_contexts[execution_id]
             except Exception as final_cleanup_error:
                 # Log any errors in final cleanup but don't re-raise
-                logger.error(f"Critical error during final cleanup for {execution_id}: {final_cleanup_error}")
-            
-    
-    def get_system_info(self) -> Dict[str, Any]:
+                logger.error(
+                    f"Critical error during final cleanup for {execution_id}: {final_cleanup_error}"
+                )
+
+    def get_system_info(self) -> dict[str, Any]:
         """Get comprehensive system information with robust error handling."""
         if not self._initialized:
             return {"status": "not_initialized"}
@@ -611,7 +615,7 @@ class SystemManager:
         except Exception as e:
             logger.warning(f"Failed to get runtime metrics: {e}")
             runtime_metrics = {"error": "metrics_unavailable"}
-        
+
         return {
             "status": "initialized",
             "current_profile": self._current_profile,
@@ -622,106 +626,98 @@ class SystemManager:
                 "event_store": self._event_store is not None,
                 "task_graph": self._task_graph is not None,
                 "agent_runtime_service": self._agent_runtime_service is not None,
-                "toolkit_manager": self._toolkit_manager is not None
+                "toolkit_manager": self._toolkit_manager is not None,
             },
-            "runtime_metrics": runtime_metrics
+            "runtime_metrics": runtime_metrics,
         }
-        
-    def validate_configuration(self) -> Dict[str, Any]:
+
+    def validate_configuration(self) -> dict[str, Any]:
         """Validate system configuration."""
         errors = []
         warnings = []
-        
+
         # Check if profile is configured
         if not self.config.profile:
             warnings.append("Profile not configured")
-            
-        return {
-            "valid": len(errors) == 0,
-            "errors": errors,
-            "warnings": warnings
-        }
-        
-    def get_current_profile(self) -> Optional[str]:
+
+        return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+    def get_current_profile(self) -> str | None:
         """Get current active profile."""
         return self._current_profile
-        
-    def get_available_profiles(self) -> List[str]:
+
+    def get_available_profiles(self) -> list[str]:
         """Get list of available profiles."""
         # Return the current profile name since ROMAConfig only contains one profile
         return [self.config.profile.name] if self.config.profile.name else []
-        
-    async def switch_profile(self, profile_name: str) -> Dict[str, Any]:
+
+    async def switch_profile(self, profile_name: str) -> dict[str, Any]:
         """Switch to different profile."""
         if not self._initialized:
             raise RuntimeError("SystemManager not initialized")
-            
+
         try:
             logger.info(f"Switching to profile: {profile_name}")
-            
+
             # Clear current state
             self._active_executions.clear()
-            
+
             # Reset task graph
             if self._task_graph:
                 self._task_graph = DynamicTaskGraph()
-                
+
             # Load new profile
             await self._load_profile(profile_name)
             self._current_profile = profile_name
-            
+
             return {
                 "success": True,
                 "profile": profile_name,
                 "message": f"Switched to {profile_name}",
-                "system_info": self.get_system_info()
+                "system_info": self.get_system_info(),
             }
-            
+
         except Exception as e:
             logger.error(f"Failed to switch profile: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "profile": profile_name
-            }
-            
+            return {"success": False, "error": str(e), "profile": profile_name}
+
     async def shutdown(self) -> None:
         """Shutdown system manager and all components."""
         if not self._initialized:
             return
-            
+
         logger.info("Shutting down ROMA SystemManager")
-        
+
         # Cancel active executions
         for execution_info in self._active_executions.values():
             if execution_info["status"] in [TaskStatus.PENDING, TaskStatus.EXECUTING]:
                 execution_info["status"] = TaskStatus.FAILED
-                
+
         self._active_executions.clear()
-        
+
         # Shutdown components
         if self._agent_runtime_service:
             await self._agent_runtime_service.shutdown()
-            
+
         if self._event_store:
             await self._event_store.clear()
-            
+
         self._initialized = False
         logger.info("✅ SystemManager shutdown complete")
-        
+
     async def _cleanup(self) -> None:
         """Clean up partially initialized components."""
         logger.info("Cleaning up SystemManager components")
-        
+
         if self._agent_runtime_service:
             try:
                 await self._agent_runtime_service.shutdown()
             except Exception as e:
                 logger.error(f"Error cleaning up agent runtime service: {e}")
-                
+
         if self._event_store:
             try:
-                if hasattr(self._event_store, 'close'):
+                if hasattr(self._event_store, "close"):
                     await self._event_store.close()
                 else:
                     await self._event_store.clear()
@@ -779,7 +775,7 @@ class SystemManager:
         """Get the knowledge store component."""
         return self._knowledge_store
 
-    def get_component_status(self) -> Dict[str, bool]:
+    def get_component_status(self) -> dict[str, bool]:
         """Get initialization status of all components."""
         return {
             "event_store": self._event_store is not None,
@@ -804,10 +800,10 @@ class SystemManager:
         execution_id: str,
         task: str,
         execution_result: Any,
-        artifact_refs: List[str],
-        options: Dict[str, Any],
-        execution_orchestrator: Any
-    ) -> Dict[str, Any]:
+        artifact_refs: list[str],
+        options: dict[str, Any],
+        execution_orchestrator: Any,
+    ) -> dict[str, Any]:
         """Build standardized execution result response."""
         return {
             "execution_id": execution_id,
@@ -815,7 +811,8 @@ class SystemManager:
             "status": "completed" if execution_result.success else "failed",
             "result": (
                 execution_result.final_result.extract_primary_output()
-                if execution_result.final_result else None
+                if execution_result.final_result
+                else None
             ),
             "execution_time": execution_result.execution_time_seconds,
             "node_count": execution_result.total_nodes,
@@ -824,15 +821,18 @@ class SystemManager:
             "iterations": execution_result.iterations,
             "framework": self._get_safe_framework_name(),
             "artifacts": len(artifact_refs),
-            "error_details": execution_result.error_details if execution_result.has_errors else None,
+            "error_details": execution_result.error_details
+            if execution_result.has_errors
+            else None,
             "orchestration_metrics": execution_orchestrator.get_orchestration_metrics(execution_id),
             # Legacy compatibility fields
             "final_output": (
                 execution_result.final_result.extract_primary_output()
-                if execution_result.final_result else None
+                if execution_result.final_result
+                else None
             ),
             "hitl_enabled": options.get("enable_hitl", False),
-            "framework_result": execution_result.to_dict()
+            "framework_result": execution_result.to_dict(),
         }
 
     def _build_error_result(
@@ -841,8 +841,8 @@ class SystemManager:
         task: str,
         error: Exception,
         start_time: datetime,
-        options: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
         """Build standardized error response."""
         return {
             "execution_id": execution_id,
@@ -856,7 +856,7 @@ class SystemManager:
             "artifacts": 0,
             "final_output": None,
             "hitl_enabled": options.get("enable_hitl", False),
-            "framework_result": None
+            "framework_result": None,
         }
 
     def _get_safe_framework_name(self) -> str:

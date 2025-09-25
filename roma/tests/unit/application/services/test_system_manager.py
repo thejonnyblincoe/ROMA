@@ -4,17 +4,16 @@ Tests for SystemManager - ROMA v2 Application Layer.
 Tests the central orchestrator managing all ROMA v2 components.
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock, patch
-from typing import Dict, Any
+from unittest.mock import AsyncMock, Mock, patch
 
-from roma.infrastructure.orchestration.system_manager import SystemManager
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.config.roma_config import ROMAConfig
+import pytest
+
+from roma.application.orchestration.system_manager import SystemManager
+from roma.domain.value_objects.config.app_config import StorageConfig
 from roma.domain.value_objects.config.profile_config import ProfileConfig
-from roma.domain.value_objects.config.app_config import AppConfig, StorageConfig
+from roma.domain.value_objects.config.roma_config import ROMAConfig
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 @pytest.fixture
@@ -44,14 +43,14 @@ def system_manager(sample_config) -> SystemManager:
 
 class TestSystemManager:
     """Test cases for SystemManager."""
-    
+
     def test_initialization(self, system_manager):
         """Test SystemManager initialization."""
         assert system_manager.config is not None
         assert not system_manager._initialized
         assert system_manager._current_profile is None
         assert len(system_manager._active_executions) == 0
-        
+
     @pytest.mark.asyncio
     async def test_initialize_with_profile(self, system_manager):
         """Test system initialization with profile."""
@@ -99,34 +98,34 @@ class TestSystemManager:
                 # Clean up patches
                 for patch_context in init_patches:
                     patch_context.stop()
-            
+
     @pytest.mark.asyncio
     async def test_initialize_already_initialized(self, system_manager):
         """Test initialization when already initialized."""
         system_manager._initialized = True
-        
+
         with patch.object(system_manager, '_initialize_event_store') as mock_init:
             await system_manager.initialize("test_profile")
             mock_init.assert_not_called()
-            
+
     @pytest.mark.asyncio
     async def test_execute_task_not_initialized(self, system_manager):
         """Test task execution when not initialized."""
         with pytest.raises(RuntimeError, match="SystemManager not initialized"):
             await system_manager.execute_task("test task")
-            
+
     @pytest.mark.asyncio
     async def test_execute_task_success(self, system_manager):
         """Test successful task execution."""
         system_manager._initialized = True
-        
+
         # Mock dependencies
         mock_task_graph = Mock()
         mock_task_graph.add_node = AsyncMock()
         mock_task_graph.update_node_status = AsyncMock()
         mock_task_graph.get_all_nodes.return_value = [Mock()]
         system_manager._task_graph = mock_task_graph
-        
+
         mock_runtime_service = Mock()
         mock_runtime_service.get_framework_name.return_value = "agno"
         mock_runtime_service.get_agent = AsyncMock(return_value=Mock())  # Changed to get_agent and made async
@@ -157,13 +156,13 @@ class TestSystemManager:
         mock_execution_orchestrator.cleanup_execution = AsyncMock()
         mock_execution_orchestrator.get_orchestration_metrics = Mock(return_value={})
         system_manager._execution_orchestrator = mock_execution_orchestrator
-        
+
         # Mock the task execution
         mock_result = {
             "result": "Task completed successfully",
             "task_id": "test_id"
         }
-        
+
         # Mock the execution orchestrator
         from roma.domain.value_objects.execution_result import ExecutionResult
         mock_execution_result = ExecutionResult(
@@ -204,13 +203,13 @@ class TestSystemManager:
             assert result["status"] == "completed"
             assert "execution_time" in result
             assert "node_count" in result
-            
+
     @pytest.mark.skip(reason="Complex test requiring ExecutionOrchestrator architecture refactoring")
     @pytest.mark.asyncio
     async def test_execute_task(self, system_manager):
         """Test task execution through agent runtime service."""
         system_manager._initialized = True
-        
+
         # Mock agent runtime service
         mock_agent = Mock()
         mock_runtime_service = Mock()
@@ -218,7 +217,7 @@ class TestSystemManager:
         mock_runtime_service.execute_agent = AsyncMock(return_value={"result": "success"})
         mock_runtime_service.get_framework_name.return_value = "agno"
         system_manager._agent_runtime_service = mock_runtime_service
-        
+
         # Mock task graph
         mock_task_graph = Mock()
         mock_task_graph.update_node_status = AsyncMock()
@@ -229,7 +228,7 @@ class TestSystemManager:
         mock_recovery_manager.record_success = AsyncMock()
         mock_recovery_manager.handle_failure = AsyncMock(return_value=Mock())
         system_manager._recovery_manager = mock_recovery_manager
-        
+
         # Create test task
         from roma.domain.entities.task_node import TaskNode
         task = TaskNode(
@@ -238,7 +237,7 @@ class TestSystemManager:
             task_type=TaskType.THINK,
             status=TaskStatus.PENDING
         )
-        
+
         # Mock the execution orchestrator to return expected result
         mock_orchestrator = Mock()
         mock_orchestrator.execute_task = AsyncMock(return_value={
@@ -250,7 +249,7 @@ class TestSystemManager:
         system_manager._execution_orchestrator = mock_orchestrator
 
         result = await system_manager.execute_task("test goal")
-        
+
         # Verify execution orchestrator was called
         mock_orchestrator.execute_task.assert_called_once()
 
@@ -259,104 +258,104 @@ class TestSystemManager:
         assert result["status"] == "completed"
         assert "execution_id" in result
         assert "execution_time" in result
-        
+
     def test_get_system_info_not_initialized(self, system_manager):
         """Test system info when not initialized."""
         info = system_manager.get_system_info()
         assert info["status"] == "not_initialized"
-        
+
     def test_get_system_info_initialized(self, system_manager):
         """Test system info when initialized."""
         system_manager._initialized = True
         system_manager._current_profile = "test_profile"
-        
+
         # Mock runtime service
         mock_runtime_service = Mock()
         mock_runtime_service.get_framework_name.return_value = "agno"
         mock_runtime_service.get_runtime_metrics.return_value = {"agents_created": 5}
         system_manager._agent_runtime_service = mock_runtime_service
-        
+
         # Mock task graph
         mock_task_graph = Mock()
         mock_task_graph.get_all_nodes.return_value = [Mock(), Mock()]
         system_manager._task_graph = mock_task_graph
-        
+
         info = system_manager.get_system_info()
-        
+
         assert info["status"] == "initialized"
         assert info["current_profile"] == "test_profile"
         assert info["framework"] == "agno"
         assert info["total_nodes"] == 2
         assert "components" in info
         assert "runtime_metrics" in info
-        
+
     def test_validate_configuration_valid(self, system_manager):
         """Test configuration validation with valid config."""
         result = system_manager.validate_configuration()
         assert result["valid"] is True
         assert len(result["errors"]) == 0
-        
+
     def test_validate_configuration_missing_framework(self, system_manager):
         """Test configuration validation with missing framework."""
         # Use default config but test validation logic
         result = system_manager.validate_configuration()
         # Should pass validation with valid config
         assert result["valid"] is True
-        
+
     def test_get_available_profiles(self, system_manager):
         """Test getting available profiles."""
         profiles = system_manager.get_available_profiles()
         assert "test_profile" in profiles
-        
+
     @pytest.mark.asyncio
     async def test_switch_profile_not_initialized(self, system_manager):
         """Test switching profile when not initialized."""
         with pytest.raises(RuntimeError, match="SystemManager not initialized"):
             await system_manager.switch_profile("new_profile")
-            
+
     @pytest.mark.asyncio
     async def test_switch_profile_success(self, system_manager):
         """Test successful profile switching."""
         system_manager._initialized = True
-        
+
         # Mock task graph
         mock_task_graph = Mock()
         system_manager._task_graph = mock_task_graph
-        
+
         with patch.object(system_manager, '_load_profile', new_callable=AsyncMock), \
              patch.object(system_manager, 'get_system_info', return_value={"status": "ok"}):
-            
+
             result = await system_manager.switch_profile("new_profile")
-            
+
             assert result["success"] is True
             assert result["profile"] == "new_profile"
             assert system_manager._current_profile == "new_profile"
-            
+
     @pytest.mark.asyncio
     async def test_shutdown(self, system_manager):
         """Test system shutdown."""
         system_manager._initialized = True
-        
+
         # Mock components
         mock_runtime_service = Mock()
         mock_runtime_service.shutdown = AsyncMock()
         system_manager._agent_runtime_service = mock_runtime_service
-        
+
         mock_event_store = Mock()
         mock_event_store.clear = AsyncMock()
         system_manager._event_store = mock_event_store
-        
+
         # Add active execution
         system_manager._active_executions["test"] = {"status": TaskStatus.EXECUTING}
-        
+
         await system_manager.shutdown()
-        
+
         # Verify shutdown sequence
         mock_runtime_service.shutdown.assert_called_once()
         mock_event_store.clear.assert_called_once()
         assert not system_manager._initialized
         assert len(system_manager._active_executions) == 0
-        
+
     @pytest.mark.asyncio
     async def test_cleanup_on_initialization_failure(self, system_manager):
         """Test cleanup when initialization fails."""

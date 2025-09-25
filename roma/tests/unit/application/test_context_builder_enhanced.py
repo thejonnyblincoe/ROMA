@@ -8,29 +8,24 @@ Tests the enhanced multimodal context assembly functionality including:
 - Thread-safe knowledge persistence
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, Mock
-from typing import Dict, Any, List
 
 from roma.application.services.context_builder_service import (
     ContextBuilderService,
     ContextItem,
-    TaskContext,
-    ContextConfig
 )
 from roma.application.services.knowledge_store_service import KnowledgeStoreService
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.entities.artifacts.file_artifact import FileArtifact
 from roma.domain.entities.artifacts.image_artifact import ImageArtifact
-from roma.domain.entities.media_file import MediaFile
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.media_type import MediaType
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.value_objects.agent_responses import ExecutorResult
+from roma.domain.value_objects.agent_type import AgentType
 from roma.domain.value_objects.context_item_type import ContextItemType
 from roma.domain.value_objects.knowledge_record import KnowledgeRecord
-from roma.domain.value_objects.result_envelope import ResultEnvelope, ExecutionMetrics
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.agent_responses import ExecutorResult
+from roma.domain.value_objects.result_envelope import ExecutionMetrics, ResultEnvelope
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 class TestEnhancedContextBuilder:
@@ -71,7 +66,7 @@ class TestEnhancedContextBuilder:
         )
 
     @pytest.fixture
-    def sample_knowledge_records(self) -> List[KnowledgeRecord]:
+    def sample_knowledge_records(self) -> list[KnowledgeRecord]:
         """Create sample knowledge records for testing."""
         # Create execution metrics
         metrics = ExecutionMetrics(execution_time=1.5)

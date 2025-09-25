@@ -5,19 +5,19 @@ Tests the deadlock detection service functionality including cycle detection,
 deadlock analysis, and monitoring.
 """
 
-import pytest
-from unittest.mock import Mock
-from uuid import uuid4
 
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.task_type import TaskType
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.node_type import NodeType
-from roma.domain.value_objects.deadlock_analysis import (
-    DeadlockReport, DeadlockType, DeadlockSeverity
-)
-from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+import pytest
+
 from roma.application.services.deadlock_detector import DeadlockDetector
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.graph.dynamic_task_graph import DynamicTaskGraph
+from roma.domain.value_objects.deadlock_analysis import (
+    DeadlockReport,
+    DeadlockSeverity,
+    DeadlockType,
+)
+from roma.domain.value_objects.task_status import TaskStatus
+from roma.domain.value_objects.task_type import TaskType
 
 
 @pytest.fixture

@@ -4,10 +4,8 @@ Database Management CLI for ROMA v2.0
 
 import asyncio
 import os
-import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from alembic import command
@@ -58,8 +56,7 @@ class DatabaseManager:
 
             # Check if database exists
             result = await conn.execute(
-                "SELECT 1 FROM pg_database WHERE datname = %s",
-                (self.config.database,)
+                "SELECT 1 FROM pg_database WHERE datname = %s", (self.config.database,)
             )
 
             if not result.fetchone():
@@ -174,11 +171,7 @@ def db_cli(ctx, db_host, db_port, db_name, db_user, db_password):
         db_password = os.getenv("ROMA_DB_PASSWORD", "roma_password")
 
     config = DatabaseConfig(
-        host=db_host,
-        port=db_port,
-        database=db_name,
-        user=db_user,
-        password=db_password
+        host=db_host, port=db_port, database=db_name, user=db_user, password=db_password
     )
 
     ctx.ensure_object(dict)

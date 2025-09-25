@@ -6,20 +6,20 @@ Used for replanning scenarios when failure thresholds are exceeded.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-from roma.domain.entities.task_node import TaskNode
-from roma.domain.value_objects.agent_type import AgentType
-from roma.domain.value_objects.node_result import NodeResult
-from roma.domain.value_objects.node_action import NodeAction
-from roma.domain.value_objects.task_status import TaskStatus
-from roma.domain.value_objects.agent_responses import PlanModifierResult
-from roma.domain.value_objects.result_envelope import ExecutionMetrics, PlanModifierEnvelope
-from roma.domain.interfaces.agent_service import PlanModifierServiceInterface
-from roma.domain.context import TaskContext
-from roma.application.services.agent_runtime_service import AgentRuntimeService
-from roma.application.services.recovery_manager import RecoveryManager, RecoveryAction
 from roma.application.services.hitl_service import HITLService
+from roma.domain.context import TaskContext
+from roma.domain.entities.task_node import TaskNode
+from roma.domain.interfaces.agent_runtime_service import IAgentRuntimeService
+from roma.domain.interfaces.agent_service import PlanModifierServiceInterface
+from roma.domain.interfaces.recovery_manager import IRecoveryManager
+from roma.domain.value_objects.agent_responses import PlanModifierResult
+from roma.domain.value_objects.agent_type import AgentType
+from roma.domain.value_objects.node_action import NodeAction
+from roma.domain.value_objects.node_result import NodeResult
+from roma.domain.value_objects.recovery_action import RecoveryAction
+from roma.domain.value_objects.result_envelope import ExecutionMetrics, PlanModifierEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,9 @@ class PlanModifierService(PlanModifierServiceInterface):
 
     def __init__(
         self,
-        agent_runtime_service: AgentRuntimeService,
-        recovery_manager: RecoveryManager,
-        hitl_service: Optional[HITLService] = None
+        agent_runtime_service: IAgentRuntimeService,
+        recovery_manager: IRecoveryManager,
+        hitl_service: HITLService | None = None,
     ):
         """Initialize with required dependencies."""
         self.agent_runtime_service = agent_runtime_service
@@ -52,9 +52,9 @@ class PlanModifierService(PlanModifierServiceInterface):
         self,
         task: TaskNode,
         context: TaskContext,
-        failed_children: List[TaskNode] = None,
+        failed_children: list[TaskNode] = None,
         failure_reason: str = None,
-        **kwargs
+        **_kwargs,
     ) -> NodeResult:
         """
         Run plan modifier to adjust plans based on failures.
@@ -93,11 +93,15 @@ class PlanModifierService(PlanModifierServiceInterface):
             )
 
             envelope = await self.agent_runtime_service.execute_agent(
-                plan_modifier_agent, task, enhanced_context, AgentType.PLAN_MODIFIER, context.execution_id
+                plan_modifier_agent,
+                task,
+                enhanced_context,
+                AgentType.PLAN_MODIFIER,
+                context.execution_id,
             )
 
             # Extract plan modifier result
-            if not envelope or not hasattr(envelope, 'result'):
+            if not envelope or not hasattr(envelope, "result"):
                 raise ValueError("Plan modifier returned invalid envelope")
 
             plan_modifier_result: PlanModifierResult = envelope.result
@@ -113,9 +117,9 @@ class PlanModifierService(PlanModifierServiceInterface):
             execution_time = context.execution_metadata.get("execution_time", 0.0)
             metrics = ExecutionMetrics(
                 execution_time=execution_time,
-                tokens_used=getattr(envelope, 'tokens_used', 0),
-                cost_estimate=getattr(envelope, 'cost_estimate', 0.0),
-                model_calls=1
+                tokens_used=getattr(envelope, "tokens_used", 0),
+                cost_estimate=getattr(envelope, "cost_estimate", 0.0),
+                model_calls=1,
             )
 
             # Create typed envelope
@@ -125,7 +129,7 @@ class PlanModifierService(PlanModifierServiceInterface):
                 execution_id=context.execution_id,
                 agent_type=AgentType.PLAN_MODIFIER,
                 execution_metrics=metrics,
-                output_text=f"Modified plan with {len(new_subtask_nodes)} subtasks"
+                output_text=f"Modified plan with {len(new_subtask_nodes)} subtasks",
             )
 
             # Record success with recovery manager
@@ -136,7 +140,7 @@ class PlanModifierService(PlanModifierServiceInterface):
                 action=NodeAction.ADD_SUBTASKS,  # Changed from REPLAN
                 envelope=plan_modifier_envelope,
                 new_nodes=new_subtask_nodes,
-                agent_name=getattr(plan_modifier_agent, 'name', 'PlanModifierAgent'),
+                agent_name=getattr(plan_modifier_agent, "name", "PlanModifierAgent"),
                 agent_type=AgentType.PLAN_MODIFIER.value,
                 processing_time_ms=execution_time * 1000,
                 metadata={
@@ -144,8 +148,8 @@ class PlanModifierService(PlanModifierServiceInterface):
                     "failed_children_count": len(failed_children),
                     "new_subtask_count": len(new_subtask_nodes),
                     "changes_made": plan_modifier_result.changes_made,
-                    "impact_assessment": plan_modifier_result.impact_assessment
-                }
+                    "impact_assessment": plan_modifier_result.impact_assessment,
+                },
             )
 
         except Exception as e:
@@ -155,31 +159,30 @@ class PlanModifierService(PlanModifierServiceInterface):
             recovery_result = await self.recovery_manager.handle_failure(task, e)
 
             if recovery_result.action == RecoveryAction.RETRY:
-                return NodeResult.retry(task_id=task.task_id, 
+                return NodeResult.retry(
+                    task_id=task.task_id,
                     error=str(e),
                     agent_name="PlanModifierAgent",
                     agent_type=AgentType.PLAN_MODIFIER.value,
                     metadata={
                         "retry_count": recovery_result.metadata.get("retry_attempt", 1),
-                        "failure_reason": failure_reason
-                    }
+                        "failure_reason": failure_reason,
+                    },
                 )
             else:
-                return NodeResult.failure(task_id=task.task_id, 
+                return NodeResult.failure(
+                    task_id=task.task_id,
                     error=str(e),
                     agent_name="PlanModifierAgent",
                     agent_type=AgentType.PLAN_MODIFIER.value,
                     metadata={
                         "recovery_action": recovery_result.action.value,
-                        "failure_reason": failure_reason
-                    }
+                        "failure_reason": failure_reason,
+                    },
                 )
 
     def _enhance_context_for_replanning(
-        self,
-        context: TaskContext,
-        failed_children: List[TaskNode],
-        failure_reason: str
+        self, context: TaskContext, failed_children: list[TaskNode], failure_reason: str
     ) -> TaskContext:
         """
         Enhance context with replanning-specific information.
@@ -195,13 +198,15 @@ class PlanModifierService(PlanModifierServiceInterface):
         # Extract failure information
         failure_info = []
         for failed_child in failed_children:
-            failure_info.append({
-                "task_id": failed_child.task_id,
-                "goal": failed_child.goal,
-                "task_type": failed_child.task_type.value,
-                "failure_count": failed_child.retry_count,
-                "metadata": failed_child.metadata
-            })
+            failure_info.append(
+                {
+                    "task_id": failed_child.task_id,
+                    "goal": failed_child.goal,
+                    "task_type": failed_child.task_type.value,
+                    "failure_count": failed_child.retry_count,
+                    "metadata": failed_child.metadata,
+                }
+            )
 
         # Create enhanced metadata
         enhanced_metadata = {
@@ -210,7 +215,7 @@ class PlanModifierService(PlanModifierServiceInterface):
             "failed_children": failure_info,
             "failed_children_count": len(failed_children),
             "replanning_timestamp": context.execution_metadata.get("execution_timestamp"),
-            "original_task_id": context.task.task_id
+            "original_task_id": context.task.task_id,
         }
 
         logger.info(
@@ -223,14 +228,12 @@ class PlanModifierService(PlanModifierServiceInterface):
             task=context.task,
             overall_objective=context.overall_objective,
             execution_id=context.execution_id,
-            execution_metadata=enhanced_metadata
+            execution_metadata=enhanced_metadata,
         )
 
     async def _convert_modified_plan_to_nodes(
-        self,
-        plan_modifier_result: PlanModifierResult,
-        parent: TaskNode
-    ) -> List[TaskNode]:
+        self, plan_modifier_result: PlanModifierResult, parent: TaskNode
+    ) -> list[TaskNode]:
         """
         Convert modified plan to TaskNode subtasks.
 
@@ -267,8 +270,8 @@ class PlanModifierService(PlanModifierServiceInterface):
                     "estimated_effort": subtask.estimated_effort,
                     "subtask_metadata": subtask.metadata or {},
                     "is_replanned": True,
-                    "replan_iteration": parent.metadata.get("replan_count", 0) + 1
-                }
+                    "replan_iteration": parent.metadata.get("replan_count", 0) + 1,
+                },
             )
             task_nodes.append(task_node)
 
@@ -302,12 +305,12 @@ class PlanModifierService(PlanModifierServiceInterface):
 
         return task_nodes
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get plan modifier service statistics."""
         base_stats = super().get_stats()
         return {
             **base_stats,
-            "replans_performed": getattr(self, '_replans_performed', 0),
-            "successful_replans": getattr(self, '_successful_replans', 0),
-            "average_failed_children": getattr(self, '_avg_failed_children', 0.0)
+            "replans_performed": getattr(self, "_replans_performed", 0),
+            "successful_replans": getattr(self, "_successful_replans", 0),
+            "average_failed_children": getattr(self, "_avg_failed_children", 0.0),
         }
