@@ -520,3 +520,58 @@ class TaskDAG:
                 continue
 
         raise ValueError(f"Task {task_id} not found in DAG hierarchy")
+
+    def get_all_tasks(self) -> Dict[str, TaskNode]:
+        """Get all tasks in this DAG and its subgraphs."""
+        all_tasks = {}
+
+        # Add tasks from this DAG
+        for task_id in self.graph.nodes():
+            all_tasks[task_id] = self.get_node(task_id)
+
+        # Add tasks from subgraphs
+        for subgraph in self.subgraphs.values():
+            all_tasks.update(subgraph.get_all_tasks())
+
+        return all_tasks
+
+    async def reset_task_retry_counter(self, task_id: str) -> TaskNode:
+        """Reset retry counter for a specific task."""
+        task = self.get_node(task_id)
+        # Create a new task with reset retry count in metrics
+        new_metrics = task.metrics.model_copy(update={'retry_count': 0})
+        updated_task = task.model_copy(update={'metrics': new_metrics})
+        self.update_node(updated_task)
+        return updated_task
+
+    async def prepare_task_for_retry(self, task_id: str) -> TaskNode:
+        """Prepare a task for retry by transitioning to READY state."""
+        task = self.get_node(task_id)
+        # Clear any error state and transition to ready
+        updated_task = task.transition_to(TaskStatus.READY)
+        self.update_node(updated_task)
+        return updated_task
+
+    async def restore_task_result(self, task_id: str, result: Any, status: Optional[str] = None) -> TaskNode:
+        """Restore a task's result and status from checkpoint."""
+        task = self.get_node(task_id)
+
+        # Parse status if provided
+        task_status = None
+        if status:
+            from src.roma_dspy.types.task_status import TaskStatus
+            try:
+                # Handle both string and TaskStatus enum
+                if isinstance(status, str):
+                    task_status = TaskStatus(status)
+                else:
+                    task_status = status
+            except (ValueError, AttributeError):
+                # Invalid status, keep current
+                task_status = None
+
+        # Use restore_state to bypass transition validation
+        updated_task = task.restore_state(result=result, status=task_status)
+
+        self.update_node(updated_task)
+        return updated_task

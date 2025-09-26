@@ -7,6 +7,24 @@ from .node_type import NodeType, NodeTypeLiteral
 from .prediction_strategy import PredictionStrategy
 from .task_status import TaskStatus, TaskStatusLiteral
 from .task_type import TaskType, TaskTypeLiteral
+from .resilience_types import RetryStrategy, CircuitState, CircuitOpenError
+from .resilience_models import RetryConfig, CircuitBreakerConfig, FailureContext, CircuitMetrics
+from .checkpoint_types import (
+    CheckpointState,
+    RecoveryStrategy,
+    CheckpointTrigger,
+    RecoveryError,
+    CheckpointCorruptedError,
+    CheckpointExpiredError,
+    CheckpointNotFoundError
+)
+from .checkpoint_models import (
+    CheckpointData,
+    CheckpointConfig,
+    RecoveryPlan,
+    TaskSnapshot,
+    DAGSnapshot
+)
 
 __all__ = [
     "AgentType",
@@ -24,4 +42,23 @@ __all__ = [
     "TaskStatusLiteral",
     "TaskType",
     "TaskTypeLiteral",
+    "RetryStrategy",
+    "CircuitState",
+    "CircuitOpenError",
+    "RetryConfig",
+    "CircuitBreakerConfig",
+    "FailureContext",
+    "CircuitMetrics",
+    "CheckpointState",
+    "RecoveryStrategy",
+    "CheckpointTrigger",
+    "RecoveryError",
+    "CheckpointCorruptedError",
+    "CheckpointExpiredError",
+    "CheckpointNotFoundError",
+    "CheckpointData",
+    "CheckpointConfig",
+    "RecoveryPlan",
+    "TaskSnapshot",
+    "DAGSnapshot",
 ]

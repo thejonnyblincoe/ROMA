@@ -45,6 +45,7 @@ class NodeMetrics(BaseModel):
     aggregator_duration: Optional[float] = Field(default=None, description="Aggregator execution time")
     total_duration: Optional[float] = Field(default=None, description="Total execution time")
     retry_count: int = Field(default=0, description="Number of retries")
+    max_retries: int = Field(default=3, description="Maximum allowed retries")
     subtasks_created: int = Field(default=0, description="Number of subtasks created")
     max_depth_reached: int = Field(default=0, description="Maximum recursion depth reached")
 

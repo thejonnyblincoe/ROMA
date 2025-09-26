@@ -14,7 +14,10 @@ from src.roma_dspy.engine.event_loop import EventLoopController
 from src.roma_dspy.engine.runtime import ModuleRuntime
 from src.roma_dspy.modules import Aggregator, Atomizer, Executor, Planner, Verifier
 from src.roma_dspy.signatures import TaskNode
-from src.roma_dspy.types import TaskStatus
+from src.roma_dspy.types import TaskStatus, AgentType
+from src.roma_dspy.types.checkpoint_types import CheckpointTrigger
+from src.roma_dspy.types.checkpoint_models import CheckpointConfig
+from src.roma_dspy.resilience.checkpoint_manager import CheckpointManager
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -45,7 +48,9 @@ class RecursiveSolver:
         verifier: Optional[Verifier] = None,
         max_depth: int = 2,
         lm: Optional[dspy.LM] = None,
-        enable_logging: bool = False
+        enable_logging: bool = False,
+        enable_checkpoints: bool = True,
+        checkpoint_config: Optional[CheckpointConfig] = None
     ):
         """
         Initialize the recursive solver.
@@ -70,6 +75,11 @@ class RecursiveSolver:
 
         self.max_depth = max_depth
         self.last_dag = None  # Store last DAG for visualization
+
+        # Initialize checkpoint system - pass explicit config, no settings dependency
+        self.checkpoint_enabled = enable_checkpoints
+        checkpoint_cfg = checkpoint_config or CheckpointConfig()
+        self.checkpoint_manager = CheckpointManager(checkpoint_cfg) if enable_checkpoints else None
 
         self.runtime = ModuleRuntime(
             atomizer=self.atomizer,
@@ -138,11 +148,48 @@ class RecursiveSolver:
         # Initialize task and DAG
         task, dag = self._initialize_task_and_dag(task, dag, depth)
 
-        # Execute based on current state
-        task = await self._async_execute_state_machine(task, dag)
+        # Create initial checkpoint before execution
+        checkpoint_id = None
+        if self.checkpoint_manager:
+            try:
+                checkpoint_id = await self.checkpoint_manager.create_checkpoint(
+                    checkpoint_id=None,
+                    dag=dag,
+                    trigger=CheckpointTrigger.BEFORE_PLANNING,
+                    current_depth=depth,
+                    max_depth=self.max_depth,
+                    solver_config={
+                        'max_depth': self.max_depth,
+                        'enable_logging': logger.level <= logging.DEBUG
+                    }
+                )
+                logger.debug(f"Created initial checkpoint: {checkpoint_id}")
+            except Exception as e:
+                logger.warning(f"Failed to create initial checkpoint: {e}")
 
-        logger.debug(f"Completed async_solve with status: {task.status}")
-        return task
+        try:
+            # Execute based on current state
+            task = await self._async_execute_state_machine(task, dag, checkpoint_id)
+
+            logger.debug(f"Completed async_solve with status: {task.status}")
+            return task
+        except Exception as e:
+            # Enhance error with task hierarchy context
+            error_msg = f"Task '{task.task_id}' failed at depth {task.depth}: {str(e)}"
+            if task.goal:
+                error_msg += f"\nTask goal: {task.goal[:100]}..."
+
+            # Add checkpoint recovery info
+            if checkpoint_id and self.checkpoint_manager:
+                error_msg += f"\nCheckpoint {checkpoint_id} available for recovery"
+                logger.error(error_msg)
+            else:
+                logger.error(error_msg)
+
+            # Re-raise with enhanced context but preserve original exception type
+            enhanced_error = type(e)(error_msg)
+            enhanced_error.__cause__ = e
+            raise enhanced_error from e
 
     async def async_event_solve(
         self,
@@ -161,7 +208,13 @@ class RecursiveSolver:
 
         task, dag = self._initialize_task_and_dag(task, dag, depth)
 
-        controller = EventLoopController(dag, self.runtime, priority_fn=priority_fn)
+        # Pass checkpoint manager to event controller if available
+        controller = EventLoopController(
+            dag,
+            self.runtime,
+            priority_fn=priority_fn,
+            checkpoint_manager=self.checkpoint_manager
+        )
         await controller.run(max_concurrency=concurrency)
 
         updated_task = dag.get_node(task.task_id)
@@ -247,7 +300,7 @@ class RecursiveSolver:
 
         return task
 
-    async def _async_execute_state_machine(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
+    async def _async_execute_state_machine(self, task: TaskNode, dag: TaskDAG, checkpoint_id: Optional[str] = None) -> TaskNode:
         """Execute asynchronous state machine for task processing."""
         # Check for forced execution at max depth
         if task.should_force_execute():
@@ -266,10 +319,36 @@ class RecursiveSolver:
             logger.debug(f"Async planning task: {task.goal[:50]}...")
             task = await self.runtime.plan_async(task, dag)
 
+            # Create checkpoint after planning (expensive operation completed)
+            if self.checkpoint_manager and task.status == TaskStatus.PLAN_DONE:
+                try:
+                    await self.checkpoint_manager.create_checkpoint(
+                        checkpoint_id=f"{checkpoint_id}_after_plan" if checkpoint_id else None,
+                        dag=dag,
+                        trigger=CheckpointTrigger.AFTER_PLANNING,
+                        current_depth=task.depth,
+                        max_depth=self.max_depth
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create post-planning checkpoint: {e}")
+
         if task.status == TaskStatus.EXECUTING:
             logger.debug(f"Async executing task: {task.goal[:50]}...")
             task = await self.runtime.execute_async(task, dag)
         elif task.status == TaskStatus.PLAN_DONE:
+            # Create checkpoint before aggregation (preserve completed subtasks)
+            if self.checkpoint_manager:
+                try:
+                    await self.checkpoint_manager.create_checkpoint(
+                        checkpoint_id=f"{checkpoint_id}_before_agg" if checkpoint_id else None,
+                        dag=dag,
+                        trigger=CheckpointTrigger.BEFORE_AGGREGATION,
+                        current_depth=task.depth,
+                        max_depth=self.max_depth
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to create pre-aggregation checkpoint: {e}")
+
             task = await self.runtime.process_subgraph_async(task, dag, self.async_solve)
 
         return task

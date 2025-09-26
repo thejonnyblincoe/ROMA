@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Callable, Optional, Set, Tuple
 
@@ -10,7 +11,11 @@ from src.roma_dspy.engine.events import EventType, TaskEvent
 from src.roma_dspy.engine.runtime import ModuleRuntime
 from src.roma_dspy.engine.scheduler import EventScheduler
 from src.roma_dspy.signatures import TaskNode
-from src.roma_dspy.types import TaskStatus
+from src.roma_dspy.types import TaskStatus, FailureContext
+from src.roma_dspy.types.checkpoint_types import CheckpointTrigger, RecoveryStrategy
+from src.roma_dspy.resilience import create_default_retry_policy
+from src.roma_dspy.resilience.checkpoint_manager import CheckpointManager
+from src.roma_dspy.types.checkpoint_models import CheckpointConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,7 @@ class EventLoopController:
         dag: TaskDAG,
         runtime: ModuleRuntime,
         priority_fn: Optional[Callable[[TaskNode], int]] = None,
+        checkpoint_manager: Optional[CheckpointManager] = None,
     ) -> None:
         self.dag = dag
         self.runtime = runtime
@@ -33,6 +39,12 @@ class EventLoopController:
         self.scheduler.register_processor(EventType.FAILED, self._handle_failed)
         self._queued: Set[Tuple[str, str]] = set()  # (dag_id, task_id)
 
+        # Initialize checkpoint manager for recovery - pass explicit config
+        self.checkpoint_manager = checkpoint_manager or CheckpointManager(CheckpointConfig())
+        self._failure_count = 0
+        self._max_recovery_attempts = 3
+        self._max_queued_tasks = 1000  # Prevent unbounded queue growth
+
     async def run(self, max_concurrency: int = 1) -> None:
         """Seed initial tasks and process events until completion."""
 
@@ -41,6 +53,10 @@ class EventLoopController:
 
     async def enqueue_ready_tasks(self) -> None:
         """Inspect DAG hierarchy and queue tasks whose dependencies cleared."""
+        # Prevent unbounded queue growth
+        if len(self._queued) >= self._max_queued_tasks:
+            logger.warning(f"Queue limit reached ({self._max_queued_tasks}), skipping new task enqueue")
+            return
 
         for task, owning_dag in self.dag.iter_ready_nodes():
             key = (owning_dag.dag_id, task.task_id)
@@ -180,11 +196,76 @@ class EventLoopController:
         if owning_dag is None:
             return None
 
-        # TODO: implement retry/backoff strategy
+        try:
+            task = owning_dag.get_node(event.task_id)
+        except ValueError:
+            logger.warning("Task %s not found in dag %s", event.task_id, owning_dag.dag_id)
+            return None
+
+        # Implement retry/backoff strategy
+        retry_policy = create_default_retry_policy()
+
+        # Check if retry is possible
+        if task.can_retry:
+            # Create failure context for retry calculation
+            failure_context = FailureContext(
+                error_type=type(event.data).__name__ if event.data else "Unknown",
+                error_message=str(event.data) if event.data else "Task failed",
+                task_type=task.task_type,
+                metadata={
+                    "task_id": task.task_id,
+                    "depth": task.depth,
+                    "retry_count": task.retry_count
+                }
+            )
+
+            # Calculate backoff delay
+            delay = retry_policy.calculate_delay(
+                task.retry_count,
+                task.task_type,
+                failure_context
+            )
+
+            logger.info(
+                "Retrying task %s (attempt %d/%d) after %.2fs delay. Error: %s",
+                task.task_id,
+                task.retry_count + 1,
+                task.max_retries,
+                delay,
+                event.data
+            )
+
+            # Apply delay
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+            # Update task and transition to READY
+            try:
+                updated_task = task.increment_retry()
+                updated_task = updated_task.transition_to(TaskStatus.READY)
+                await owning_dag.update_node(updated_task)
+
+                # Remove from queued set and re-add with new state
+                key = (owning_dag.dag_id, task.task_id)
+                self._queued.discard(key)
+                self._queued.add(key)
+
+                return self._make_ready_event(updated_task, owning_dag)
+
+            except ValueError as e:
+                logger.error(
+                    "Failed to increment retry for task %s: %s",
+                    task.task_id,
+                    str(e)
+                )
+                # Fall through to permanent failure handling
+
+        # Task failed permanently - either can't retry or max retries exceeded
         logger.error(
-            "Task %s in dag %s failed: %s",
-            event.task_id,
+            "Task %s in dag %s permanently failed after %d retries: %s",
+            task.task_id,
             owning_dag.dag_id,
+            task.retry_count,
             event.data,
         )
         await owning_dag.mark_failed(event.task_id, error=event.data)

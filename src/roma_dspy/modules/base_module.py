@@ -6,6 +6,8 @@ import inspect
 from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping, List
 
 from src.roma_dspy.types.prediction_strategy import PredictionStrategy
+from src.roma_dspy.resilience import with_module_resilience
+from src.roma_dspy.settings import settings
 
 
 class BaseModule(dspy.Module):
@@ -16,6 +18,10 @@ class BaseModule(dspy.Module):
     - Build a predictor from a PredictionStrategy for a given signature.
     - Sync and async entrypoints (forward / aforward) with optional tools, context and per-call kwargs.
     """
+
+    def __call__(self, *args, **kwargs):
+        """Delegate to forward method for compatibility with runtime calls."""
+        return self.forward(*args, **kwargs)
 
     def __init__(
         self,
@@ -101,7 +107,7 @@ class BaseModule(dspy.Module):
         filtered = self._filter_kwargs(target_method, extra)
 
         with dspy.context(**ctx):
-            return self._predictor(goal=input_task, **filtered)
+            return self._execute_predictor(input_task, filtered)
 
     async def aforward(
         self,
@@ -137,11 +143,7 @@ class BaseModule(dspy.Module):
         filtered = self._filter_kwargs(method_for_filter, extra)
 
         with dspy.context(**ctx):
-            acall = getattr(self._predictor, "acall", None)
-            if acall is not None and method_for_filter is not None and hasattr(self._predictor, "aforward"):
-                return await self._predictor.acall(goal=input_task, **filtered)
-            # Fallback to sync if async not available
-            return self._predictor(goal=input_task, **filtered)
+            return await self._execute_predictor_async(input_task, filtered, method_for_filter)
     
     def get_model_config(self, *, redact_secrets: bool = True) -> Dict[str, Any]:
         """
@@ -251,3 +253,36 @@ class BaseModule(dspy.Module):
         if allowed is None:
             return dict(kwargs)
         return {k: v for k, v in kwargs.items() if k in allowed}
+
+    # ---------- Resilient Predictor Execution ----------
+
+    @with_module_resilience(module_name="base_predictor")
+    def _execute_predictor(self, input_task: str, filtered: Dict[str, Any]):
+        """Execute predictor with resilience protection."""
+        return self._predictor(goal=input_task, **filtered)
+
+    @with_module_resilience(module_name="base_predictor")
+    async def _execute_predictor_async(self, input_task: str, filtered: Dict[str, Any], method_for_filter: Optional[Any]):
+        """Execute predictor asynchronously with resilience protection."""
+        acall = getattr(self._predictor, "acall", None)
+        if acall is not None and method_for_filter is not None and hasattr(self._predictor, "aforward"):
+            return await self._predictor.acall(goal=input_task, **filtered)
+        # Fallback to sync if async not available
+        return self._predictor(goal=input_task, **filtered)
+
+    @classmethod
+    def with_settings_resilience(
+        cls,
+        *,
+        signature: Any,
+        prediction_strategy: Union[PredictionStrategy, str] = PredictionStrategy.CHAIN_OF_THOUGHT,
+        **kwargs
+    ):
+        """Create BaseModule with resilience configuration from global settings."""
+        # Settings are now available through the resilience decorators
+        # The decorators will use the global circuit breaker and retry policies
+        return cls(
+            signature=signature,
+            prediction_strategy=prediction_strategy,
+            **kwargs
+        )

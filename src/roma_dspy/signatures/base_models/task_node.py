@@ -41,6 +41,8 @@ class TaskNode(BaseModel):
 
     # Execution results
     result: Optional[Any] = Field(default=None, description="Task execution result")
+    error: Optional[str] = Field(default=None, description="Error message if task failed")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Task metadata")
 
     # Immutable relationships
     dependencies: FrozenSet[str] = Field(default_factory=frozenset, description="Task dependencies")
@@ -127,19 +129,47 @@ class TaskNode(BaseModel):
     def with_result(self, result: Any, metadata: Optional[Dict[str, Any]] = None) -> "TaskNode":
         """
         Create new instance with successful completion.
-        
+
         Args:
             result: The execution result
             metadata: Optional metadata to merge
-            
+
         Returns:
             New TaskNode instance with COMPLETED status and result
         """
         updates: Dict[str, Any] = {'result': result}
         if metadata:
             updates['metadata'] = {**self.metadata, **metadata}
-            
+
         return self.transition_to(TaskStatus.COMPLETED, **updates)
+
+    def restore_state(self, result: Any = None, status: TaskStatus = None, error: str = None, **updates) -> "TaskNode":
+        """
+        Create new instance with restored state, bypassing transition validation.
+        Used for checkpoint restoration where normal state transitions don't apply.
+
+        Args:
+            result: The execution result to restore
+            status: The status to restore
+            error: The error message to restore
+            **updates: Additional field updates
+
+        Returns:
+            New TaskNode instance with restored state
+        """
+        restore_updates: Dict[str, Any] = {
+            'version': self.version + 1,
+            **updates
+        }
+
+        if result is not None:
+            restore_updates['result'] = result
+        if status is not None:
+            restore_updates['status'] = status
+        if error is not None:
+            restore_updates['error'] = error
+
+        return self.model_copy(update=restore_updates)
 
     def add_child(self, child_id: str) -> "TaskNode":
         """
@@ -284,10 +314,20 @@ class TaskNode(BaseModel):
         return None
     
     @property
+    def retry_count(self) -> int:
+        """Get current retry count from metrics."""
+        return self.metrics.retry_count
+
+    @property
+    def max_retries(self) -> int:
+        """Get maximum retries from metrics."""
+        return self.metrics.max_retries
+
+    @property
     def can_retry(self) -> bool:
         """Check if task can be retried."""
         return self.retry_count < self.max_retries
-    
+
     @property
     def retry_exhausted(self) -> bool:
         """Check if all retries have been exhausted."""
@@ -296,18 +336,22 @@ class TaskNode(BaseModel):
     def increment_retry(self) -> "TaskNode":
         """
         Create new instance with incremented retry count.
-        
+
         Returns:
             New TaskNode instance with incremented retry count
-            
+
         Raises:
             ValueError: If maximum retries already reached
         """
         if self.retry_exhausted:
             raise ValueError(f"Maximum retries ({self.max_retries}) already reached")
-            
+
+        new_metrics = self.metrics.model_copy(update={
+            "retry_count": self.metrics.retry_count + 1
+        })
+
         return self.model_copy(update={
-            "retry_count": self.retry_count + 1,
+            "metrics": new_metrics,
         })
     
     def record_module_execution(
