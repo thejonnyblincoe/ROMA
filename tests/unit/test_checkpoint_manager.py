@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Set
 from unittest.mock import Mock, patch
 
-from src.roma_dspy.engine.dag import TaskDAG
+from src.roma_dspy.core.engine.dag import TaskDAG
 from src.roma_dspy.resilience.checkpoint_manager import CheckpointManager
-from src.roma_dspy.signatures import TaskNode
+from src.roma_dspy.core.signatures import TaskNode
 from src.roma_dspy.types import TaskType, TaskStatus, AgentType
 from src.roma_dspy.types.checkpoint_types import (
     CheckpointTrigger,

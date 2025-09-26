@@ -9,11 +9,11 @@ from typing import Callable, Optional, Union, Tuple
 
 import dspy
 
-from src.roma_dspy.engine import TaskDAG
-from src.roma_dspy.engine.event_loop import EventLoopController
-from src.roma_dspy.engine.runtime import ModuleRuntime
-from src.roma_dspy.modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from src.roma_dspy.signatures import TaskNode
+from src.roma_dspy.core.engine import TaskDAG
+from src.roma_dspy.core.engine.event_loop import EventLoopController
+from src.roma_dspy.core.engine.runtime import ModuleRuntime
+from src.roma_dspy.core.modules import Aggregator, Atomizer, Executor, Planner, Verifier
+from src.roma_dspy.core.signatures import TaskNode
 from src.roma_dspy.types import TaskStatus, AgentType
 from src.roma_dspy.types.checkpoint_types import CheckpointTrigger
 from src.roma_dspy.types.checkpoint_models import CheckpointConfig

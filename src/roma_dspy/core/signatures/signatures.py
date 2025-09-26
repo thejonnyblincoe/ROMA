@@ -1,8 +1,12 @@
 import dspy
 from typing import Optional, Dict, List, Any
-from src.roma_dspy.signatures.base_models.subtask import SubTask
-from src.roma_dspy.signatures.base_models.results import AtomizerResponse, PlannerResult, ExecutorResult
-from src.roma_dspy.types.node_type import NodeType
+from .base_models.subtask import SubTask
+from .base_models.results import (
+    AtomizerResponse,
+    PlannerResult,
+    ExecutorResult,
+)
+from ...types import NodeType
 
 
 class AtomizerSignature(dspy.Signature):

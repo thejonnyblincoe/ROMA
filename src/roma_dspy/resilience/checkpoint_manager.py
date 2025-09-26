@@ -11,8 +11,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from src.roma_dspy.engine.dag import TaskDAG
-from src.roma_dspy.signatures import TaskNode
+from src.roma_dspy.core.engine.dag import TaskDAG
+from src.roma_dspy.core.signatures import TaskNode
 from src.roma_dspy.types.checkpoint_types import (
     CheckpointState,
     RecoveryStrategy,

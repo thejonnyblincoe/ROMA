@@ -6,13 +6,13 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, AsyncMock
 
-from src.roma_dspy.engine.dag import TaskDAG
-from src.roma_dspy.engine.event_loop import EventLoopController
-from src.roma_dspy.engine.runtime import ModuleRuntime
-from src.roma_dspy.engine.solve import RecursiveSolver
-from src.roma_dspy.modules import Atomizer, Planner, Executor, Aggregator
+from src.roma_dspy.core.engine.dag import TaskDAG
+from src.roma_dspy.core.engine.event_loop import EventLoopController
+from src.roma_dspy.core.engine.runtime import ModuleRuntime
+from src.roma_dspy.core.engine.solve import RecursiveSolver
+from src.roma_dspy.core.modules import Atomizer, Planner, Executor, Aggregator
 from src.roma_dspy.resilience.checkpoint_manager import CheckpointManager
-from src.roma_dspy.signatures import TaskNode, SubTask
+from src.roma_dspy.core.signatures import TaskNode, SubTask
 from src.roma_dspy.types import (
     TaskType,
     TaskStatus,

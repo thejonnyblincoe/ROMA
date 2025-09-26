@@ -14,10 +14,9 @@ from collections import defaultdict
 import json
 import re
 
-from src.roma_dspy.signatures.base_models.task_node import TaskNode
-from src.roma_dspy.types.task_status import TaskStatus
-from src.roma_dspy.types.node_type import NodeType
-from src.roma_dspy.engine.dag import TaskDAG
+from ..signatures.base_models.task_node import TaskNode
+from ...types import TaskStatus, NodeType
+from .dag import TaskDAG
 
 
 class ExecutionVisualizer:

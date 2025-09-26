@@ -6,11 +6,11 @@ import asyncio
 import logging
 from typing import Callable, Optional, Set, Tuple
 
-from src.roma_dspy.engine.dag import TaskDAG
-from src.roma_dspy.engine.events import EventType, TaskEvent
-from src.roma_dspy.engine.runtime import ModuleRuntime
-from src.roma_dspy.engine.scheduler import EventScheduler
-from src.roma_dspy.signatures import TaskNode
+from src.roma_dspy.core.engine.dag import TaskDAG
+from src.roma_dspy.core.engine.events import EventType, TaskEvent
+from src.roma_dspy.core.engine.runtime import ModuleRuntime
+from src.roma_dspy.core.engine.scheduler import EventScheduler
+from src.roma_dspy.core.signatures import TaskNode
 from src.roma_dspy.types import TaskStatus, FailureContext
 from src.roma_dspy.types.checkpoint_types import CheckpointTrigger, RecoveryStrategy
 from src.roma_dspy.resilience import create_default_retry_policy

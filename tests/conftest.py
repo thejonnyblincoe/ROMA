@@ -17,10 +17,8 @@ os.environ.setdefault("DSPY_CACHE_DIR", cache_path)
 
 import pytest
 
-from src.roma_dspy.signatures.base_models.subtask import SubTask
-from src.roma_dspy.types.node_type import NodeType
-from src.roma_dspy.types.prediction_strategy import PredictionStrategy
-from src.roma_dspy.types.task_type import TaskType
+from roma_dspy import SubTask
+from roma_dspy.types import NodeType, PredictionStrategy, TaskType
 
 
 def _build_response(signature: Any, payload: Dict[str, Any]) -> Any:

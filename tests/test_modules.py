@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.roma_dspy.modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from src.roma_dspy.signatures.base_models.subtask import SubTask
-from src.roma_dspy.types.node_type import NodeType
-from src.roma_dspy.types.task_type import TaskType
+from roma_dspy import Aggregator, Atomizer, Executor, Planner, Verifier, SubTask
+from roma_dspy.types import NodeType, TaskType
 
 
 class DummyLM:

@@ -1,9 +1,13 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, FrozenSet, List
-from src.roma_dspy.types.task_type import TaskType
-from src.roma_dspy.types.node_type import NodeType
-from src.roma_dspy.types.task_status import TaskStatus
-from src.roma_dspy.types.module_result import ModuleResult, StateTransition, NodeMetrics
+from ....types import (
+    TaskType,
+    NodeType,
+    TaskStatus,
+    ModuleResult,
+    StateTransition,
+    NodeMetrics,
+)
 from datetime import datetime, timezone
 from uuid import uuid4
 

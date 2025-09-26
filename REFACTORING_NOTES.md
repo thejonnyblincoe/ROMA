@@ -86,7 +86,7 @@ To use the refactored version:
 
 1. Import from the new module:
    ```python
-   from src.roma_dspy.engine.solve_refactored import RecursiveSolver, solve, async_solve
+   from roma_dspy.core.engine.solve_refactored import RecursiveSolver, solve, async_solve
    ```
 
 2. The API is backward compatible - all existing code will work

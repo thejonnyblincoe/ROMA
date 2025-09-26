@@ -1,4 +1,5 @@
-# /Users/salahalzubi/cursor_projects/ROMA-DSPy/src/roma_dspy/modules/base_module.py
+"""Shared base class for ROMA-DSPy DSPy modules."""
+
 from __future__ import annotations
 
 import dspy

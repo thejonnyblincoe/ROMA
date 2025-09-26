@@ -3,11 +3,11 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from src.roma_dspy.engine.runtime import ModuleRuntime
+from src.roma_dspy.core.engine.runtime import ModuleRuntime
 from src.roma_dspy.resilience import module_circuit_breaker
-from src.roma_dspy.engine.dag import TaskDAG
-from src.roma_dspy.modules import Atomizer, Planner, Executor, Aggregator
-from src.roma_dspy.signatures import TaskNode
+from src.roma_dspy.core.engine.dag import TaskDAG
+from src.roma_dspy.core.modules import Atomizer, Planner, Executor, Aggregator
+from src.roma_dspy.core.signatures import TaskNode
 from src.roma_dspy.types import TaskType, TaskStatus, AgentType
 
 
@@ -286,8 +286,8 @@ class TestErrorPropagation:
 
     # ==================== Module Decorator Integration Tests ====================
 
-    @patch('src.roma_dspy.engine.runtime.measure_execution_time')
-    @patch('src.roma_dspy.engine.runtime.with_module_resilience')
+    @patch('src.roma_dspy.core.engine.runtime.measure_execution_time')
+    @patch('src.roma_dspy.core.engine.runtime.with_module_resilience')
     def test_resilience_decorators_applied(self, mock_resilience, mock_timing, runtime):
         """Test that resilience decorators are properly applied to module methods."""
         # Verify decorators are applied to the protected methods

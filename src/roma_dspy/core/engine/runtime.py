@@ -6,9 +6,9 @@ import asyncio
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Iterable, List, Optional
 
-from src.roma_dspy.engine.dag import TaskDAG
-from src.roma_dspy.modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from src.roma_dspy.signatures import SubTask, TaskNode
+from src.roma_dspy.core.engine.dag import TaskDAG
+from src.roma_dspy.core.modules import Aggregator, Atomizer, Executor, Planner, Verifier
+from src.roma_dspy.core.signatures import SubTask, TaskNode
 from src.roma_dspy.types import ModuleResult, NodeType, TaskStatus, AgentType
 from src.roma_dspy.resilience import with_module_resilience, measure_execution_time
 

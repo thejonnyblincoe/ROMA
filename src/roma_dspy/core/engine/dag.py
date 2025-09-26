@@ -7,9 +7,8 @@ import networkx as nx
 from datetime import datetime
 from uuid import uuid4
 
-from src.roma_dspy.signatures.base_models.task_node import TaskNode
-from src.roma_dspy.types.task_status import TaskStatus
-from src.roma_dspy.types.node_type import NodeType
+from ..signatures.base_models.task_node import TaskNode
+from ...types import TaskStatus, NodeType
 
 
 class TaskDAG:
