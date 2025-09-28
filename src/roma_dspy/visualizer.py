@@ -274,7 +274,8 @@ class TreeVisualizer:
     Shows the complete execution tree with detailed information.
     """
 
-    def __init__(self, use_colors: bool = True, show_ids: bool = False, show_timing: bool = True):
+    def __init__(self, use_colors: bool = True, show_ids: bool = False,
+                 show_timing: bool = True, show_tokens: bool = True):
         """
         Initialize tree visualizer.
 
@@ -282,10 +283,12 @@ class TreeVisualizer:
             use_colors: Whether to use ANSI colors
             show_ids: Whether to show task IDs
             show_timing: Whether to show timing information
+            show_tokens: Whether to show token usage and costs
         """
         self.use_colors = use_colors
         self.show_ids = show_ids
         self.show_timing = show_timing
+        self.show_tokens = show_tokens
         self.rt_viz = RealTimeVisualizer(use_colors=use_colors)  # Reuse color methods
 
     def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> str:
@@ -322,6 +325,19 @@ class TreeVisualizer:
         # Add statistics
         lines.append("")
         lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+
+        # Add token metrics if enabled
+        if self.show_tokens:
+            tree_metrics = root_task.get_tree_metrics(dag)
+            if tree_metrics.total_tokens > 0:
+                lines.append(self.rt_viz.color("💰 TREE TOTALS", ColorCode.BOLD))
+                lines.append(f"  Total Prompt Tokens: {tree_metrics.prompt_tokens:,}")
+                lines.append(f"  Total Completion Tokens: {tree_metrics.completion_tokens:,}")
+                lines.append(f"  Total Tokens: {tree_metrics.total_tokens:,}")
+                cost_str = f"  Total Cost: ${tree_metrics.cost:.6f}"
+                lines.append(self.rt_viz.color(cost_str, ColorCode.BRIGHT_GREEN))
+                lines.append("")
+
         if dag:
             lines.extend(self._generate_statistics(dag))
         else:
@@ -367,10 +383,36 @@ class TreeVisualizer:
         # Add execution history
         if task.execution_history:
             detail_prefix = prefix + ("    " if is_last else "│   ")
+            has_token_data = False
+
             for module_name, result in task.execution_history.items():
                 emoji = self.rt_viz.get_module_emoji(module_name)
                 duration = self.rt_viz.format_duration(result.duration)
-                lines.append(f"{detail_prefix}{emoji} {module_name}: {duration}")
+
+                # Add token metrics if available and enabled
+                if self.show_tokens and result.token_metrics:
+                    metrics = result.token_metrics
+                    # Show cost even if token counts aren't available
+                    if metrics.cost > 0:
+                        has_token_data = True
+                        if metrics.total_tokens > 0:
+                            token_str = f"[{metrics.prompt_tokens}/{metrics.completion_tokens} tokens, ${metrics.cost:.6f}]"
+                        else:
+                            token_str = f"[${metrics.cost:.6f}]"
+                        token_colored = self.rt_viz.color(token_str, ColorCode.CYAN)
+                        lines.append(f"{detail_prefix}{emoji} {module_name}: {duration} {token_colored}")
+                    else:
+                        lines.append(f"{detail_prefix}{emoji} {module_name}: {duration}")
+                else:
+                    lines.append(f"{detail_prefix}{emoji} {module_name}: {duration}")
+
+            # Add node totals if showing tokens and we have data
+            if self.show_tokens and has_token_data:
+                node_metrics = task.get_node_metrics()
+                if node_metrics.total_tokens > 0:
+                    total_str = f"💰 Node Total: {node_metrics.total_tokens} tokens, ${node_metrics.cost:.6f}"
+                    total_colored = self.rt_viz.color(total_str, ColorCode.BRIGHT_YELLOW)
+                    lines.append(f"{detail_prefix}{total_colored}")
 
         # Process subgraph if exists
         if task.subgraph_id and dag:

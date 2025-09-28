@@ -9,7 +9,7 @@ from typing import Any, Awaitable, Callable, Iterable, List, Optional
 from .dag import TaskDAG
 from ..modules import Aggregator, Atomizer, Executor, Planner, Verifier
 from ..signatures import SubTask, TaskNode
-from ...types import ModuleResult, NodeType, TaskStatus
+from ...types import ModuleResult, NodeType, TaskStatus, TokenMetrics
 
 
 SolveFn = Callable[[TaskNode, TaskDAG, int], TaskNode]
@@ -39,13 +39,15 @@ class ModuleRuntime:
 
     def atomize(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
         task = task.transition_to(TaskStatus.ATOMIZING)
-        result, duration = self._execute_module(self.atomizer, task.goal)
+        result, duration, token_metrics, messages = self._execute_module(self.atomizer, task.goal)
         task = self._record_module_result(
             task,
             "atomizer",
             task.goal,
             {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
             duration,
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.set_node_type(result.node_type)
         dag.update_node(task)
@@ -53,13 +55,15 @@ class ModuleRuntime:
 
     async def atomize_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
         task = task.transition_to(TaskStatus.ATOMIZING)
-        result, duration = await self._async_execute_module(self.atomizer, task.goal)
+        result, duration, token_metrics, messages = await self._async_execute_module(self.atomizer, task.goal)
         task = self._record_module_result(
             task,
             "atomizer",
             task.goal,
             {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
             duration,
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.set_node_type(result.node_type)
         dag.update_node(task)
@@ -74,7 +78,7 @@ class ModuleRuntime:
         return task
 
     def plan(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        result, duration = self._execute_module(self.planner, task.goal)
+        result, duration, token_metrics, messages = self._execute_module(self.planner, task.goal)
         task = self._record_module_result(
             task,
             "planner",
@@ -84,6 +88,8 @@ class ModuleRuntime:
                 "dependencies": result.dependencies_graph,
             },
             duration,
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = self._create_subtask_graph(task, dag, result)
         task = task.transition_to(TaskStatus.PLAN_DONE)
@@ -91,7 +97,7 @@ class ModuleRuntime:
         return task
 
     async def plan_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        result, duration = await self._async_execute_module(self.planner, task.goal)
+        result, duration, token_metrics, messages = await self._async_execute_module(self.planner, task.goal)
         task = self._record_module_result(
             task,
             "planner",
@@ -101,6 +107,8 @@ class ModuleRuntime:
                 "dependencies": result.dependencies_graph,
             },
             duration,
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = self._create_subtask_graph(task, dag, result)
         task = task.transition_to(TaskStatus.PLAN_DONE)
@@ -108,26 +116,30 @@ class ModuleRuntime:
         return task
 
     def execute(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        result, duration = self._execute_module(self.executor, task.goal)
+        result, duration, token_metrics, messages = self._execute_module(self.executor, task.goal)
         task = self._record_module_result(
             task,
             "executor",
             task.goal,
             result.output,
             duration,
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.with_result(result.output)
         dag.update_node(task)
         return task
 
     async def execute_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        result, duration = await self._async_execute_module(self.executor, task.goal)
+        result, duration, token_metrics, messages = await self._async_execute_module(self.executor, task.goal)
         task = self._record_module_result(
             task,
             "executor",
             task.goal,
             result.output,
             duration,
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.with_result(result.output)
         dag.update_node(task)
@@ -137,7 +149,7 @@ class ModuleRuntime:
         task = task.set_node_type(NodeType.EXECUTE)
         task = task.transition_to(TaskStatus.EXECUTING)
         dag.update_node(task)
-        result, duration = self._execute_module(self.executor, task.goal)
+        result, duration, token_metrics, messages = self._execute_module(self.executor, task.goal)
         task = self._record_module_result(
             task,
             "executor",
@@ -145,6 +157,8 @@ class ModuleRuntime:
             result.output,
             duration,
             metadata={"forced": True, "depth": task.depth},
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.with_result(result.output)
         dag.update_node(task)
@@ -154,7 +168,7 @@ class ModuleRuntime:
         task = task.set_node_type(NodeType.EXECUTE)
         task = task.transition_to(TaskStatus.EXECUTING)
         dag.update_node(task)
-        result, duration = await self._async_execute_module(self.executor, task.goal)
+        result, duration, token_metrics, messages = await self._async_execute_module(self.executor, task.goal)
         task = self._record_module_result(
             task,
             "executor",
@@ -162,6 +176,8 @@ class ModuleRuntime:
             result.output,
             duration,
             metadata={"forced": True, "depth": task.depth},
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.with_result(result.output)
         dag.update_node(task)
@@ -172,7 +188,7 @@ class ModuleRuntime:
             return task
         task = task.transition_to(TaskStatus.AGGREGATING)
         subtask_results = self._collect_subtask_results(subgraph)
-        result, duration = self._execute_module(
+        result, duration, token_metrics, messages = self._execute_module(
             self.aggregator,
             original_goal=task.goal,
             subtasks_results=subtask_results,
@@ -183,6 +199,8 @@ class ModuleRuntime:
             {"original_goal": task.goal, "subtask_count": len(subtask_results)},
             result.synthesized_result,
             duration,
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.with_result(result.synthesized_result)
         dag.update_node(task)
@@ -198,7 +216,7 @@ class ModuleRuntime:
             return task
         task = task.transition_to(TaskStatus.AGGREGATING)
         subtask_results = self._collect_subtask_results(subgraph)
-        result, duration = await self._async_execute_module(
+        result, duration, token_metrics, messages = await self._async_execute_module(
             self.aggregator,
             original_goal=task.goal,
             subtasks_results=subtask_results,
@@ -209,6 +227,8 @@ class ModuleRuntime:
             {"original_goal": task.goal, "subtask_count": len(subtask_results)},
             result.synthesized_result,
             duration,
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.with_result(result.synthesized_result)
         dag.update_node(task)
@@ -278,13 +298,65 @@ class ModuleRuntime:
         start_time = datetime.now()
         result = module(*args, **kwargs)
         duration = (datetime.now() - start_time).total_seconds()
-        return result, duration
+
+        # Extract token metrics from module history if available
+        token_metrics = None
+        messages = None
+
+        # Check both module.history and module._predictor.history
+        history = None
+        if hasattr(module, 'history') and module.history:
+            history = module.history
+        elif hasattr(module, '_predictor') and hasattr(module._predictor, 'history') and module._predictor.history:
+            history = module._predictor.history
+
+        if history:
+            last_history = history[-1]
+            if isinstance(last_history, dict):
+                # Extract usage information
+                usage = last_history.get('usage', {})
+                model = last_history.get('model') or last_history.get('response_model')
+                # Use the cost directly from DSPy history
+                cost = last_history.get('cost')
+                token_metrics = TokenMetrics.from_usage_dict(usage, model, cost)
+
+                # Extract messages if available
+                if 'messages' in last_history:
+                    messages = last_history.get('messages')
+
+        return result, duration, token_metrics, messages
 
     async def _async_execute_module(self, module, *args, **kwargs):
         start_time = datetime.now()
         result = await module.aforward(*args, **kwargs)
         duration = (datetime.now() - start_time).total_seconds()
-        return result, duration
+
+        # Extract token metrics from module history if available
+        token_metrics = None
+        messages = None
+
+        # Check both module.history and module._predictor.history
+        history = None
+        if hasattr(module, 'history') and module.history:
+            history = module.history
+        elif hasattr(module, '_predictor') and hasattr(module._predictor, 'history') and module._predictor.history:
+            history = module._predictor.history
+
+        if history:
+            last_history = history[-1]
+            if isinstance(last_history, dict):
+                # Extract usage information
+                usage = last_history.get('usage', {})
+                model = last_history.get('model') or last_history.get('response_model')
+                # Use the cost directly from DSPy history
+                cost = last_history.get('cost')
+                token_metrics = TokenMetrics.from_usage_dict(usage, model, cost)
+
+                # Extract messages if available
+                if 'messages' in last_history:
+                    messages = last_history.get('messages')
+
+        return result, duration, token_metrics, messages
 
     def _record_module_result(
         self,
@@ -294,6 +366,8 @@ class ModuleRuntime:
         output_data,
         duration: float,
         metadata: Optional[dict] = None,
+        token_metrics: Optional[TokenMetrics] = None,
+        messages: Optional[list] = None,
     ) -> TaskNode:
         module_result = ModuleResult(
             module_name=module_name,
@@ -302,6 +376,8 @@ class ModuleRuntime:
             timestamp=datetime.now(),
             duration=duration,
             metadata=metadata or {},
+            token_metrics=token_metrics,
+            messages=messages,
         )
         return task.record_module_execution(module_name, module_result)
 
