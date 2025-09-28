@@ -290,15 +290,12 @@ class TestErrorPropagation:
     @patch('src.roma_dspy.core.engine.runtime.with_module_resilience')
     def test_resilience_decorators_applied(self, mock_resilience, mock_timing, runtime):
         """Test that resilience decorators are properly applied to module methods."""
-        # Verify decorators are applied to the protected methods
-        assert hasattr(runtime, '_execute_atomizer')
-        assert hasattr(runtime, '_async_execute_atomizer')
-        assert hasattr(runtime, '_execute_planner')
-        assert hasattr(runtime, '_async_execute_planner')
-        assert hasattr(runtime, '_execute_executor')
-        assert hasattr(runtime, '_async_execute_executor')
-        assert hasattr(runtime, '_execute_aggregator')
-        assert hasattr(runtime, '_async_execute_aggregator')
+        # Verify decorators are applied to the unified execution methods
+        assert hasattr(runtime, '_execute_module')
+        assert hasattr(runtime, '_async_execute_module')
+
+        # Verify error context enhancement is available
+        assert hasattr(runtime, '_enhance_error_context')
 
     # ==================== Edge Case Error Tests ====================
 
