@@ -123,6 +123,8 @@ class RecursiveSolver:
         # Execute based on current state
         task = self._execute_state_machine(task, dag)
 
+        # Logging is now handled by TreeVisualizer when called by user
+
         logger.debug(f"Completed solve with status: {task.status}")
         return task
 
@@ -171,6 +173,7 @@ class RecursiveSolver:
             # Execute based on current state
             task = await self._async_execute_state_machine(task, dag, checkpoint_id)
 
+            # Logging is now handled by TreeVisualizer when called by user
             logger.debug(f"Completed async_solve with status: {task.status}")
             return task
         except Exception as e:
@@ -218,6 +221,8 @@ class RecursiveSolver:
         await controller.run(max_concurrency=concurrency)
 
         updated_task = dag.get_node(task.task_id)
+
+        # Logging is now handled by TreeVisualizer when called by user
 
         logger.debug("Completed async_event_solve with status: %s", updated_task.status)
         return updated_task

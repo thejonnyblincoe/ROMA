@@ -6,11 +6,11 @@ import asyncio
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Iterable, List, Optional
 
-from src.roma_dspy.core.engine.dag import TaskDAG
-from src.roma_dspy.core.modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from src.roma_dspy.core.signatures import SubTask, TaskNode
-from src.roma_dspy.types import ModuleResult, NodeType, TaskStatus, AgentType
-from src.roma_dspy.resilience import with_module_resilience, measure_execution_time
+from .dag import TaskDAG
+from ..modules import Aggregator, Atomizer, Executor, Planner, Verifier
+from ..signatures import SubTask, TaskNode
+from ...types import ModuleResult, NodeType, TaskStatus, AgentType, TokenMetrics
+from ...resilience import with_module_resilience, measure_execution_time
 
 
 SolveFn = Callable[[TaskNode, TaskDAG, int], TaskNode]
@@ -40,37 +40,29 @@ class ModuleRuntime:
 
     def atomize(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
         task = task.transition_to(TaskStatus.ATOMIZING)
-        try:
-            result, duration = self._execute_atomizer(task.goal)
-            task = self._record_module_result(
-                task,
-                "atomizer",
-                task.goal,
-                {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
-                duration,
-            )
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.ATOMIZER, task)
-            raise
+        result, duration = self._execute_module(self.atomizer, task.goal)
+        task = self._record_module_result(
+            task,
+            "atomizer",
+            task.goal,
+            {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
+            duration,
+        )
         task = task.set_node_type(result.node_type)
         dag.update_node(task)
         return task
 
     async def atomize_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
         task = task.transition_to(TaskStatus.ATOMIZING)
-        try:
-            result, duration = await self._async_execute_atomizer(task.goal)
-            task = self._record_module_result(
-                task,
-                "atomizer",
-                task.goal,
-                {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
-                duration,
-            )
-            task = task.set_node_type(result.node_type)
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.ATOMIZER, task)
-            raise
+        result, duration = await self._async_execute_module(self.atomizer, task.goal)
+        task = self._record_module_result(
+            task,
+            "atomizer",
+            task.goal,
+            {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
+            duration,
+        )
+        task = task.set_node_type(result.node_type)
         dag.update_node(task)
         return task
 
@@ -83,79 +75,40 @@ class ModuleRuntime:
         return task
 
     def plan(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        try:
-            result, duration = self._execute_planner(task.goal)
-            task = self._record_module_result(
-                task,
-                "planner",
-                task.goal,
-                {"subtasks": len(result.subtasks), "dependencies": len(result.dependencies_graph)},
-                duration,
-            )
-            task = self._create_subtask_graph(task, dag, result)
-            task = task.transition_to(TaskStatus.PLAN_DONE)
-            dag.update_node(task)
-            return task
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.PLANNER, task)
-            raise
+        result, duration = self._execute_module(self.planner, task.goal)
+        task = self._record_module_result(
+            task,
+            "planner",
+            task.goal,
+            {
+                "subtasks": [s.model_dump() for s in result.subtasks],
+                "dependencies": result.dependencies_graph,
+            },
+            duration,
+        )
+        task = self._create_subtask_graph(task, dag, result)
+        task = task.transition_to(TaskStatus.PLAN_DONE)
+        dag.update_node(task)
+        return task
 
     async def plan_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        try:
-            result, duration = await self._async_execute_planner(task.goal)
-            task = self._record_module_result(
-                task,
-                "planner",
-                task.goal,
-                {"subtasks": len(result.subtasks), "dependencies": len(result.dependencies_graph)},
-                duration,
-            )
-            task = self._create_subtask_graph(task, dag, result)
-            task = task.transition_to(TaskStatus.PLAN_DONE)
-            dag.update_node(task)
-            return task
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.PLANNER, task)
-            raise
+        result, duration = await self._async_execute_module(self.planner, task.goal)
+        task = self._record_module_result(
+            task,
+            "planner",
+            task.goal,
+            {
+                "subtasks": [s.model_dump() for s in result.subtasks],
+                "dependencies": result.dependencies_graph,
+            },
+            duration,
+        )
+        task = self._create_subtask_graph(task, dag, result)
+        task = task.transition_to(TaskStatus.PLAN_DONE)
+        dag.update_node(task)
+        return task
 
     def execute(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        try:
-            result, duration = self._execute_executor(task.goal)
-            task = self._record_module_result(
-                task,
-                "executor",
-                task.goal,
-                {"output_length": len(str(result)) if result else 0},
-                duration,
-            )
-            task = task.with_result(result)
-            dag.update_node(task)
-            return task
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.EXECUTOR, task)
-            raise
-
-    async def execute_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        try:
-            result, duration = await self._async_execute_executor(task.goal)
-            task = self._record_module_result(
-                task,
-                "executor",
-                task.goal,
-                {"output_length": len(str(result)) if result else 0},
-                duration,
-            )
-            task = task.with_result(result)
-            dag.update_node(task)
-            return task
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.EXECUTOR, task)
-            raise
-
-    def force_execute(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        task = task.set_node_type(NodeType.EXECUTE)
-        task = task.transition_to(TaskStatus.EXECUTING)
-        dag.update_node(task)
         result, duration = self._execute_module(self.executor, task.goal)
         task = self._record_module_result(
             task,
@@ -163,7 +116,38 @@ class ModuleRuntime:
             task.goal,
             result.output,
             duration,
+        )
+        task = task.with_result(result.output)
+        dag.update_node(task)
+        return task
+
+    async def execute_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
+        result, duration = await self._async_execute_module(self.executor, task.goal)
+        task = self._record_module_result(
+            task,
+            "executor",
+            task.goal,
+            result.output,
+            duration,
+        )
+        task = task.with_result(result.output)
+        dag.update_node(task)
+        return task
+
+    def force_execute(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
+        task = task.set_node_type(NodeType.EXECUTE)
+        task = task.transition_to(TaskStatus.EXECUTING)
+        dag.update_node(task)
+        result, duration, token_metrics, messages = self._execute_module(self.executor, task.goal)
+        task = self._record_module_result(
+            task,
+            "executor",
+            task.goal,
+            result.output,
+            duration,
             metadata={"forced": True, "depth": task.depth},
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.with_result(result.output)
         dag.update_node(task)
@@ -173,7 +157,7 @@ class ModuleRuntime:
         task = task.set_node_type(NodeType.EXECUTE)
         task = task.transition_to(TaskStatus.EXECUTING)
         dag.update_node(task)
-        result, duration = await self._async_execute_module(self.executor, task.goal)
+        result, duration, token_metrics, messages = await self._async_execute_module(self.executor, task.goal)
         task = self._record_module_result(
             task,
             "executor",
@@ -181,6 +165,8 @@ class ModuleRuntime:
             result.output,
             duration,
             metadata={"forced": True, "depth": task.depth},
+            token_metrics=token_metrics,
+            messages=messages,
         )
         task = task.with_result(result.output)
         dag.update_node(task)
@@ -191,22 +177,19 @@ class ModuleRuntime:
             return task
         task = task.transition_to(TaskStatus.AGGREGATING)
         subtask_results = self._collect_subtask_results(subgraph)
-        try:
-            result, duration = self._execute_aggregator(
-                original_goal=task.goal,
-                subtasks_results=subtask_results,
-            )
-            task = self._record_module_result(
-                task,
-                "aggregator",
-                task.goal,
-                {"subtask_count": len(subtask_results), "result_length": len(str(result)) if result else 0},
-                duration,
-            )
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.AGGREGATOR, task)
-            raise
-        task = task.with_result(result)
+        result, duration = self._execute_module(
+            self.aggregator,
+            original_goal=task.goal,
+            subtasks_results=subtask_results,
+        )
+        task = self._record_module_result(
+            task,
+            "aggregator",
+            {"original_goal": task.goal, "subtask_count": len(subtask_results)},
+            result.synthesized_result,
+            duration,
+        )
+        task = task.with_result(result.synthesized_result)
         dag.update_node(task)
         return task
 
@@ -220,22 +203,19 @@ class ModuleRuntime:
             return task
         task = task.transition_to(TaskStatus.AGGREGATING)
         subtask_results = self._collect_subtask_results(subgraph)
-        try:
-            result, duration = await self._async_execute_aggregator(
-                original_goal=task.goal,
-                subtasks_results=subtask_results,
-            )
-            task = self._record_module_result(
-                task,
-                "aggregator",
-                task.goal,
-                {"subtask_count": len(subtask_results), "result_length": len(str(result)) if result else 0},
-                duration,
-            )
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.AGGREGATOR, task)
-            raise
-        task = task.with_result(result)
+        result, duration = await self._async_execute_module(
+            self.aggregator,
+            original_goal=task.goal,
+            subtasks_results=subtask_results,
+        )
+        task = self._record_module_result(
+            task,
+            "aggregator",
+            {"original_goal": task.goal, "subtask_count": len(subtask_results)},
+            result.synthesized_result,
+            duration,
+        )
+        task = task.with_result(result.synthesized_result)
         dag.update_node(task)
         return task
 
@@ -300,44 +280,14 @@ class ModuleRuntime:
     # ------------------------------------------------------------------
 
     @measure_execution_time
-    @with_module_resilience(module_name="atomizer")
-    def _execute_atomizer(self, *args, **kwargs):
-        return self.atomizer(*args, **kwargs)
+    @with_module_resilience(module_name="module_execution")
+    def _execute_module(self, module, *args, **kwargs):
+        return module(*args, **kwargs)
 
     @measure_execution_time
-    @with_module_resilience(module_name="atomizer")
-    async def _async_execute_atomizer(self, *args, **kwargs):
-        return await self.atomizer.aforward(*args, **kwargs)
-
-    @measure_execution_time
-    @with_module_resilience(module_name="planner")
-    def _execute_planner(self, *args, **kwargs):
-        return self.planner(*args, **kwargs)
-
-    @measure_execution_time
-    @with_module_resilience(module_name="planner")
-    async def _async_execute_planner(self, *args, **kwargs):
-        return await self.planner.aforward(*args, **kwargs)
-
-    @measure_execution_time
-    @with_module_resilience(module_name="executor")
-    def _execute_executor(self, *args, **kwargs):
-        return self.executor(*args, **kwargs)
-
-    @measure_execution_time
-    @with_module_resilience(module_name="executor")
-    async def _async_execute_executor(self, *args, **kwargs):
-        return await self.executor.aforward(*args, **kwargs)
-
-    @measure_execution_time
-    @with_module_resilience(module_name="aggregator")
-    def _execute_aggregator(self, *args, **kwargs):
-        return self.aggregator(*args, **kwargs)
-
-    @measure_execution_time
-    @with_module_resilience(module_name="aggregator")
-    async def _async_execute_aggregator(self, *args, **kwargs):
-        return await self.aggregator.aforward(*args, **kwargs)
+    @with_module_resilience(module_name="module_execution")
+    async def _async_execute_module(self, module, *args, **kwargs):
+        return await module.aforward(*args, **kwargs)
 
     def _record_module_result(
         self,
@@ -347,6 +297,8 @@ class ModuleRuntime:
         output_data,
         duration: float,
         metadata: Optional[dict] = None,
+        token_metrics: Optional[TokenMetrics] = None,
+        messages: Optional[list] = None,
     ) -> TaskNode:
         module_result = ModuleResult(
             module_name=module_name,
@@ -355,6 +307,8 @@ class ModuleRuntime:
             timestamp=datetime.now(),
             duration=duration,
             metadata=metadata or {},
+            token_metrics=token_metrics,
+            messages=messages,
         )
         return task.record_module_execution(module_name, module_result)
 

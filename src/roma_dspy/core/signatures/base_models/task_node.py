@@ -7,6 +7,7 @@ from ....types import (
     ModuleResult,
     StateTransition,
     NodeMetrics,
+    TokenMetrics,
 )
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -433,6 +434,124 @@ class TaskNode(BaseModel):
             "subgraph_id": subgraph_id,
             "version": self.version + 1
         })
+
+    def get_node_metrics(self) -> TokenMetrics:
+        """
+        Get token metrics for ONLY this node (not including subtasks).
+
+        Returns:
+            TokenMetrics object with aggregated metrics for this node
+        """
+        total_metrics = TokenMetrics()
+
+        for module_result in self.execution_history.values():
+            if module_result.token_metrics:
+                total_metrics = total_metrics + module_result.token_metrics
+
+        return total_metrics
+
+    def get_tree_metrics(self, dag: Optional['TaskDAG'] = None) -> TokenMetrics:
+        """
+        Get token metrics for this node and ALL its subtasks recursively.
+
+        Args:
+            dag: The DAG containing the task relationships
+
+        Returns:
+            TokenMetrics object with aggregated metrics for entire tree
+        """
+        # Start with this node's metrics
+        total_metrics = self.get_node_metrics()
+
+        # If we have a DAG and subgraph, add metrics from all subtasks
+        if dag and self.subgraph_id:
+            subgraph = dag.get_subgraph(self.subgraph_id)
+            if subgraph:
+                for child_task in subgraph.get_all_tasks(include_subgraphs=True):
+                    child_metrics = child_task.get_tree_metrics(subgraph)
+                    total_metrics = total_metrics + child_metrics
+
+        return total_metrics
+
+    def get_node_summary(self) -> Dict[str, Any]:
+        """
+        Get summary of this node's execution with token metrics.
+
+        Returns:
+            Dictionary containing node execution details
+        """
+        node_metrics = self.get_node_metrics()
+
+        return {
+            "task_id": self.task_id[:8],
+            "goal": self.goal,
+            "depth": self.depth,
+            "status": self.status.value,
+            "node_type": self.node_type.value if self.node_type else None,
+            "modules_executed": list(self.execution_history.keys()),
+            "token_metrics": {
+                "prompt_tokens": node_metrics.prompt_tokens,
+                "completion_tokens": node_metrics.completion_tokens,
+                "total_tokens": node_metrics.total_tokens,
+                "cost": f"${node_metrics.cost:.6f}"
+            },
+            "duration": self.execution_duration,
+            "children_count": len(self.children)
+        }
+
+    def log_node_completion(self) -> str:
+        """
+        Generate a formatted log string for node completion.
+
+        Returns:
+            Formatted string showing node execution details
+        """
+        lines = []
+        lines.append(f"\n{'='*80}")
+        lines.append(f"📋 Node Completed: {self.goal}")
+        lines.append(f"{'='*80}")
+
+        # Module breakdown
+        if self.execution_history:
+            lines.append("\nModule Execution Details:")
+            lines.append("-" * 80)
+            lines.append(f"{'Module':<12} | {'Tokens (P/C/T)':<20} | {'Cost':<10} | {'Duration':<8} | {'Input/Output Preview'}")
+            lines.append("-" * 80)
+
+            total_metrics = TokenMetrics()
+
+            for module_name, result in self.execution_history.items():
+                # Get token metrics
+                metrics = result.token_metrics or TokenMetrics()
+                total_metrics = total_metrics + metrics
+
+                # Format tokens
+                token_str = f"{metrics.prompt_tokens}/{metrics.completion_tokens}/{metrics.total_tokens}"
+
+                # Format cost
+                cost_str = f"${metrics.cost:.6f}"
+
+                # Format duration
+                duration_str = f"{result.duration:.2f}s"
+
+                # Get input/output preview
+                input_str = str(result.input)[:30] if result.input else ""
+                output_str = str(result.output)[:30] if result.output else ""
+
+                lines.append(
+                    f"{module_name:<12} | {token_str:<20} | {cost_str:<10} | {duration_str:<8} | "
+                    f"IN: {input_str}... OUT: {output_str}..."
+                )
+
+            lines.append("-" * 80)
+            lines.append(
+                f"{'Node Total':<12} | "
+                f"{total_metrics.prompt_tokens}/{total_metrics.completion_tokens}/{total_metrics.total_tokens:<20} | "
+                f"${total_metrics.cost:.6f}"
+            )
+
+        lines.append(f"{'='*80}\n")
+        return "\n".join(lines)
 
     def get_execution_summary(self) -> Dict[str, Any]:
         """
