@@ -261,6 +261,11 @@ class RecursiveSolver:
             priority_fn=priority_fn,
             checkpoint_manager=self.checkpoint_manager
         )
+
+        # Apply any pending state restorations from previous recovery operations
+        if self.checkpoint_manager:
+            await controller.apply_pending_restorations()
+
         await controller.run(max_concurrency=concurrency)
 
         updated_task = dag.get_node(task.task_id)
@@ -400,6 +405,263 @@ class RecursiveSolver:
             task = await self.runtime.process_subgraph_async(task, dag, self.async_solve)
 
         return task
+
+    # ==================== Unified Checkpoint Coordination ====================
+
+    async def create_unified_checkpoint(
+        self,
+        trigger: CheckpointTrigger,
+        dag: Optional[TaskDAG] = None,
+        task_context: Optional[TaskNode] = None
+    ) -> Optional[str]:
+        """Create a unified checkpoint capturing all system components."""
+        if not self.checkpoint_manager:
+            logger.debug("Checkpoint manager not available, skipping unified checkpoint")
+            return None
+
+        try:
+            logger.info(f"Creating unified system checkpoint for trigger: {trigger}")
+
+            # Use provided DAG or create a minimal one
+            target_dag = dag or TaskDAG("unified_checkpoint")
+            if task_context and dag is None:
+                target_dag.add_node(task_context)
+
+            # Collect comprehensive system state
+            solver_config = {
+                "max_depth": self.max_depth,
+                "enable_logging": self.enable_logging,
+                "modules_enabled": {
+                    "atomizer": self.atomizer is not None,
+                    "planner": self.planner is not None,
+                    "executor": self.executor is not None,
+                    "aggregator": self.aggregator is not None,
+                    "verifier": self.verifier is not None
+                }
+            }
+
+            # Collect runtime state if available
+            module_states = {}
+            if hasattr(self, 'runtime') and self.runtime:
+                module_states["runtime"] = {
+                    "total_operations": getattr(self.runtime, '_operation_count', 0),
+                    "last_activity": "unified_checkpoint_creation"
+                }
+
+            # Create the unified checkpoint
+            checkpoint_id = await self.checkpoint_manager.create_checkpoint(
+                checkpoint_id=None,  # Let manager generate ID
+                dag=target_dag,
+                trigger=trigger,
+                current_depth=task_context.depth if task_context else 0,
+                max_depth=self.max_depth,
+                solver_config=solver_config,
+                module_states=module_states
+            )
+
+            logger.info(f"Created unified checkpoint: {checkpoint_id}")
+            return checkpoint_id
+
+        except Exception as e:
+            logger.error(f"Failed to create unified checkpoint: {e}")
+            return None
+
+    async def restore_from_unified_checkpoint(
+        self,
+        checkpoint_id: str,
+        strategy: Optional[str] = None
+    ) -> bool:
+        """Restore system state from a unified checkpoint."""
+        if not self.checkpoint_manager:
+            logger.error("Checkpoint manager not available for restoration")
+            return False
+
+        try:
+            logger.info(f"Restoring system from unified checkpoint: {checkpoint_id}")
+
+            # Load checkpoint
+            checkpoint_data = await self.checkpoint_manager.load_checkpoint(checkpoint_id)
+
+            # Create recovery plan
+            from src.roma_dspy.types.checkpoint_types import RecoveryStrategy
+            recovery_strategy = RecoveryStrategy.PARTIAL
+            if strategy == "full":
+                recovery_strategy = RecoveryStrategy.FULL
+            elif strategy == "selective":
+                recovery_strategy = RecoveryStrategy.SELECTIVE
+
+            recovery_plan = await self.checkpoint_manager.create_recovery_plan(
+                checkpoint_data,
+                strategy=recovery_strategy
+            )
+
+            # Enable module state restoration
+            recovery_plan.restore_module_states = True
+
+            # Create a temporary DAG for restoration
+            temp_dag = TaskDAG("restoration_target")
+
+            # Apply recovery plan
+            restored_dag = await self.checkpoint_manager.apply_recovery_plan(recovery_plan, temp_dag)
+
+            # Restore solver configuration if available
+            if checkpoint_data.solver_config:
+                solver_config = checkpoint_data.solver_config
+                self.max_depth = solver_config.get("max_depth", self.max_depth)
+                self.enable_logging = solver_config.get("enable_logging", self.enable_logging)
+
+            logger.info(f"Successfully restored from unified checkpoint: {checkpoint_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to restore from unified checkpoint {checkpoint_id}: {e}")
+            return False
+
+    async def list_unified_checkpoints_async(self) -> list:
+        """List all available unified checkpoints (async version)."""
+        if not self.checkpoint_manager:
+            return []
+
+        try:
+            return await self.checkpoint_manager.list_checkpoints()
+        except Exception as e:
+            logger.error(f"Failed to list checkpoints: {e}")
+            return []
+
+    def list_unified_checkpoints(self) -> list:
+        """List all available unified checkpoints (sync version)."""
+        try:
+            import asyncio
+            # Try to use existing event loop or create new one
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, can't use run_until_complete
+                logger.warning("list_unified_checkpoints called from async context. Use list_unified_checkpoints_async instead.")
+                return []
+            except RuntimeError:
+                # No running loop, safe to create one
+                return asyncio.run(self.list_unified_checkpoints_async())
+        except Exception as e:
+            logger.error(f"Failed to list checkpoints: {e}")
+            return []
+
+    async def auto_recover(self, max_attempts: int = 3) -> bool:
+        """Simple recovery mechanism that attempts to restore from the latest checkpoint."""
+        if not self.checkpoint_manager:
+            logger.error("Cannot auto-recover: checkpoint manager not available")
+            return False
+
+        try:
+            logger.info("Starting auto-recovery process...")
+
+            # Get list of available checkpoints
+            checkpoints = await self.checkpoint_manager.list_checkpoints()
+            if not checkpoints:
+                logger.warning("No checkpoints available for recovery")
+                return False
+
+            # Sort by creation time (most recent first)
+            checkpoints.sort(key=lambda x: x["created_at"], reverse=True)
+
+            # Try to recover from checkpoints, starting with the most recent
+            for attempt, checkpoint in enumerate(checkpoints[:max_attempts], 1):
+                checkpoint_id = checkpoint["checkpoint_id"]
+                logger.info(f"Recovery attempt {attempt}/{max_attempts}: trying checkpoint {checkpoint_id}")
+
+                try:
+                    # Validate checkpoint first
+                    is_valid = await self.checkpoint_manager.validate_checkpoint(checkpoint_id)
+                    if not is_valid:
+                        logger.warning(f"Checkpoint {checkpoint_id} is invalid, skipping")
+                        continue
+
+                    # Attempt restoration
+                    success = await self.restore_from_unified_checkpoint(checkpoint_id, strategy="partial")
+
+                    if success:
+                        logger.info(f"Successfully recovered from checkpoint {checkpoint_id}")
+                        return True
+                    else:
+                        logger.warning(f"Failed to restore from checkpoint {checkpoint_id}")
+
+                except Exception as e:
+                    logger.warning(f"Error during recovery attempt {attempt}: {e}")
+                    continue
+
+            logger.error(f"Auto-recovery failed after {max_attempts} attempts")
+            return False
+
+        except Exception as e:
+            logger.error(f"Auto-recovery process failed: {e}")
+            return False
+
+    def get_system_health(self) -> dict:
+        """Get overall system health status for recovery decisions."""
+        health_status = {
+            "checkpoint_system": {
+                "enabled": self.checkpoint_manager is not None,
+                "available": self.checkpoint_manager.config.enabled if self.checkpoint_manager else False
+            },
+            "modules": {
+                "atomizer": self.atomizer is not None,
+                "planner": self.planner is not None,
+                "executor": self.executor is not None,
+                "aggregator": self.aggregator is not None,
+                "verifier": self.verifier is not None
+            },
+            "configuration": {
+                "max_depth": self.max_depth,
+                "logging_enabled": self.enable_logging
+            }
+        }
+
+        # Add checkpoint storage stats if available (without async issues)
+        if self.checkpoint_manager:
+            try:
+                import asyncio
+                # Try to use existing event loop or create new one
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in an async context, skip storage stats to avoid issues
+                    health_status["checkpoint_storage"] = {"note": "Stats unavailable from async context. Use get_system_health_async()"}
+                except RuntimeError:
+                    # No running loop, safe to create one
+                    storage_stats = asyncio.run(self.checkpoint_manager.get_storage_stats())
+                    health_status["checkpoint_storage"] = storage_stats
+            except Exception as e:
+                health_status["checkpoint_storage"] = {"error": str(e)}
+
+        return health_status
+
+    async def get_system_health_async(self) -> dict:
+        """Get overall system health status for recovery decisions (async version)."""
+        health_status = {
+            "checkpoint_system": {
+                "enabled": self.checkpoint_manager is not None,
+                "available": self.checkpoint_manager.config.enabled if self.checkpoint_manager else False
+            },
+            "modules": {
+                "atomizer": self.atomizer is not None,
+                "planner": self.planner is not None,
+                "executor": self.executor is not None,
+                "aggregator": self.aggregator is not None,
+                "verifier": self.verifier is not None
+            },
+            "configuration": {
+                "max_depth": self.max_depth,
+                "logging_enabled": self.enable_logging
+            }
+        }
+
+        # Add checkpoint storage stats if available
+        if self.checkpoint_manager:
+            try:
+                storage_stats = await self.checkpoint_manager.get_storage_stats()
+                health_status["checkpoint_storage"] = storage_stats
+            except Exception as e:
+                health_status["checkpoint_storage"] = {"error": str(e)}
+
+        return health_status
 
 # ==================== Convenience Functions ====================
 

@@ -13,7 +13,7 @@ from src.roma_dspy.core.engine.scheduler import EventScheduler
 from src.roma_dspy.core.signatures import TaskNode
 from src.roma_dspy.types import TaskStatus, FailureContext
 from src.roma_dspy.types.checkpoint_types import CheckpointTrigger, RecoveryStrategy
-from src.roma_dspy.resilience import create_default_retry_policy
+from src.roma_dspy.resilience import create_default_retry_policy, with_module_resilience
 from src.roma_dspy.resilience.checkpoint_manager import CheckpointManager
 from src.roma_dspy.types.checkpoint_models import CheckpointConfig
 
@@ -29,21 +29,144 @@ class EventLoopController:
         runtime: ModuleRuntime,
         priority_fn: Optional[Callable[[TaskNode], int]] = None,
         checkpoint_manager: Optional[CheckpointManager] = None,
+        max_queue_size: int = 1000,
     ) -> None:
         self.dag = dag
         self.runtime = runtime
-        self.scheduler = EventScheduler(dag, priority_fn=priority_fn)
+        self.max_queue_size = max_queue_size
+        self.scheduler = EventScheduler(dag, priority_fn=priority_fn, max_queue_size=max_queue_size)
         self.scheduler.register_processor(EventType.READY, self._handle_ready)
         self.scheduler.register_processor(EventType.COMPLETED, self._handle_completed)
         self.scheduler.register_processor(EventType.SUBGRAPH_COMPLETE, self._handle_subgraph_complete)
         self.scheduler.register_processor(EventType.FAILED, self._handle_failed)
         self._queued: Set[Tuple[str, str]] = set()  # (dag_id, task_id)
 
-        # Initialize checkpoint manager for recovery - pass explicit config
-        self.checkpoint_manager = checkpoint_manager or CheckpointManager(CheckpointConfig())
+        # Initialize checkpoint manager for recovery - respect disabled state
+        self.checkpoint_manager = checkpoint_manager  # Don't create if None (disabled)
         self._failure_count = 0
         self._max_recovery_attempts = 3
-        self._max_queued_tasks = 1000  # Prevent unbounded queue growth
+        self._max_queued_tasks = max_queue_size  # Use same limit for event loop queue
+
+        # Event loop health tracking
+        self._event_stats = {
+            "events_processed": 0,
+            "events_failed": 0,
+            "last_failure_time": None,
+            "handler_failures": {
+                "ready": 0,
+                "completed": 0,
+                "subgraph": 0,
+                "failed": 0
+            }
+        }
+
+        # Event checkpointing state
+        self._last_checkpoint_time = None
+        self._events_since_checkpoint = 0
+        self._checkpoint_interval = 50  # Checkpoint every N events
+
+    async def _maybe_checkpoint(self, trigger: CheckpointTrigger, event: Optional[TaskEvent] = None) -> None:
+        """Conditionally create checkpoint based on configuration and trigger."""
+        if not self.checkpoint_manager or not self.checkpoint_manager.config.enabled:
+            return
+
+        should_checkpoint = False
+
+        # Check if this trigger is enabled
+        if trigger in self.checkpoint_manager.config.auto_checkpoint_triggers:
+            should_checkpoint = True
+
+        # Check periodic checkpoint interval
+        if trigger == CheckpointTrigger.PERIODIC and self._events_since_checkpoint >= self._checkpoint_interval:
+            should_checkpoint = True
+
+        # Always checkpoint on failures
+        if trigger == CheckpointTrigger.ON_FAILURE:
+            should_checkpoint = True
+
+        if should_checkpoint:
+            await self._create_event_checkpoint(trigger, event)
+
+    async def apply_pending_restorations(self) -> bool:
+        """Apply any pending state restorations from checkpoint manager."""
+        if not self.checkpoint_manager:
+            return True  # No restoration needed if checkpoints disabled
+
+        try:
+            success = True
+
+            # Restore scheduler state if pending
+            scheduler_state = self.checkpoint_manager.get_pending_scheduler_state()
+            if scheduler_state:
+                self.scheduler.restore_scheduler_state(scheduler_state)
+                logger.info("Applied scheduler state restoration")
+
+            # Restore event loop state if pending
+            event_loop_state = self.checkpoint_manager.get_pending_event_loop_state()
+            if event_loop_state:
+                self._events_since_checkpoint = event_loop_state.get("events_processed", 0)
+                self._failure_count = event_loop_state.get("failure_count", 0)
+                self._last_checkpoint_time = event_loop_state.get("last_checkpoint_time")
+
+                # Restore queued tasks set
+                queued_tasks = event_loop_state.get("queued_tasks", [])
+                self._queued = set(tuple(task) for task in queued_tasks)
+
+                logger.info("Applied event loop state restoration")
+
+            # Clear pending states after successful restoration
+            if scheduler_state or event_loop_state:
+                self.checkpoint_manager.clear_pending_states()
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Failed to apply pending restorations: {e}")
+            return False
+
+    async def _create_event_checkpoint(self, trigger: CheckpointTrigger, event: Optional[TaskEvent] = None) -> Optional[str]:
+        """Create a checkpoint using the CheckpointManager."""
+        if not self.checkpoint_manager:
+            return None
+
+        try:
+            import time
+
+            # Create checkpoint using the existing CheckpointManager
+            checkpoint_id = await self.checkpoint_manager.create_checkpoint(
+                checkpoint_id=None,  # Let manager generate ID
+                dag=self.dag,
+                trigger=trigger,
+                current_depth=0,  # Event loop doesn't track depth
+                solver_config={
+                    "max_queue_size": self.max_queue_size,
+                    "checkpoint_interval": self._checkpoint_interval,
+                    "events_processed": self._event_stats["events_processed"],
+                    "failure_count": self._failure_count
+                },
+                failed_task_ids=set(),  # Track failed tasks if needed
+                # Pass scheduler state in module_states for proper restoration
+                module_states={
+                    "scheduler": self.scheduler.get_scheduler_state(),
+                    "event_loop": {
+                        "queued_tasks": list(self._queued),
+                        "events_processed": self._event_stats["events_processed"],
+                        "failure_count": self._failure_count,
+                        "last_checkpoint_time": self._last_checkpoint_time
+                    }
+                }
+            )
+
+            # Update tracking
+            self._last_checkpoint_time = time.time()
+            self._events_since_checkpoint = 0
+
+            logger.info(f"Created event checkpoint {checkpoint_id} for trigger {trigger}")
+            return checkpoint_id
+
+        except Exception as e:
+            logger.error(f"Failed to create event checkpoint: {e}")
+            return None
 
     async def run(self, max_concurrency: int = 1) -> None:
         """Seed initial tasks and process events until completion."""
@@ -90,7 +213,19 @@ class EventLoopController:
             dag_id=dag.dag_id,
         )
 
+    @with_module_resilience(module_name="event_loop_ready")
     async def _handle_ready(self, event: TaskEvent) -> Optional[TaskEvent]:
+        # Track event processing and maybe checkpoint (atomic operation)
+        events_count = self._events_since_checkpoint + 1
+        self._events_since_checkpoint = events_count
+
+        # Check for periodic checkpoint with current count
+        if (self.checkpoint_manager and
+            self.checkpoint_manager.config.enabled and
+            CheckpointTrigger.PERIODIC in self.checkpoint_manager.config.auto_checkpoint_triggers and
+            events_count >= self._checkpoint_interval):
+            await self._create_event_checkpoint(CheckpointTrigger.PERIODIC, event)
+
         if not event.task_id or not event.dag_id:
             return None
 
@@ -119,6 +254,8 @@ class EventLoopController:
             return self._make_ready_event(task, owning_dag)
 
         if task.status == TaskStatus.PLANNING:
+            # Checkpoint before planning as it's a critical operation
+            await self._maybe_checkpoint(CheckpointTrigger.BEFORE_PLANNING, event)
             task = await self.runtime.plan_async(task, owning_dag)
             subgraph = owning_dag.get_subgraph(task.subgraph_id) if task.subgraph_id else None
 
@@ -134,12 +271,15 @@ class EventLoopController:
             return self._make_completed_event(task, owning_dag)
 
         if task.status == TaskStatus.AGGREGATING:
+            # Checkpoint before aggregation as it's a critical operation
+            await self._maybe_checkpoint(CheckpointTrigger.BEFORE_AGGREGATION, event)
             subgraph = owning_dag.get_subgraph(task.subgraph_id) if task.subgraph_id else None
             task = await self.runtime.aggregate_async(task, subgraph, owning_dag)
             return self._make_completed_event(task, owning_dag)
 
         return None
 
+    @with_module_resilience(module_name="event_loop_completed")
     async def _handle_completed(self, event: TaskEvent) -> Optional[TaskEvent]:
         if not event.task_id or not event.dag_id:
             return None
@@ -162,6 +302,7 @@ class EventLoopController:
 
         return None
 
+    @with_module_resilience(module_name="event_loop_subgraph")
     async def _handle_subgraph_complete(self, event: TaskEvent) -> Optional[TaskEvent]:
         if not event.task_id or not event.dag_id:
             return None
@@ -188,7 +329,11 @@ class EventLoopController:
         await self.enqueue_ready_tasks()
         return self._make_completed_event(task, owning_dag)
 
+    @with_module_resilience(module_name="event_loop_failed")
     async def _handle_failed(self, event: TaskEvent) -> Optional[TaskEvent]:
+        # Checkpoint on failure for recovery purposes
+        await self._maybe_checkpoint(CheckpointTrigger.ON_FAILURE, event)
+
         if not event.task_id or not event.dag_id:
             return None
 
@@ -239,10 +384,11 @@ class EventLoopController:
             if delay > 0:
                 await asyncio.sleep(delay)
 
-            # Update task and transition to READY
+            # Update task and transition to READY if needed
             try:
                 updated_task = task.increment_retry()
-                updated_task = updated_task.transition_to(TaskStatus.READY)
+                if updated_task.status != TaskStatus.READY:
+                    updated_task = updated_task.transition_to(TaskStatus.READY)
                 await owning_dag.update_node(updated_task)
 
                 # Remove from queued set and re-add with new state
@@ -275,3 +421,46 @@ class EventLoopController:
         if not dag_id:
             return None
         return self.dag.find_dag(dag_id)
+
+    # ------------------------------------------------------------------
+    # Event Loop Health and Monitoring
+    # ------------------------------------------------------------------
+
+    def get_event_loop_health(self) -> Dict[str, Any]:
+        """Get comprehensive health status of the event loop."""
+        import time
+
+        scheduler_status = self.scheduler.get_queue_status()
+
+        return {
+            "event_stats": self._event_stats.copy(),
+            "scheduler_health": {
+                "queue_size": scheduler_status["current_size"],
+                "queue_full": scheduler_status["is_full"],
+                "overflow_count": scheduler_status["overflow_count"],
+                "time_since_last_overflow": scheduler_status["time_since_last_overflow"]
+            },
+            "queued_tasks_count": len(self._queued),
+            "max_queued_tasks": self._max_queued_tasks,
+            "queue_utilization": len(self._queued) / self._max_queued_tasks if self._max_queued_tasks > 0 else 0,
+            "failure_rate": (
+                self._event_stats["events_failed"] / max(1, self._event_stats["events_processed"])
+            ),
+            "checkpoint_enabled": self.checkpoint_manager.config.enabled if self.checkpoint_manager else False,
+            "recovery_attempts": self._failure_count,
+            "max_recovery_attempts": self._max_recovery_attempts
+        }
+
+    def reset_event_stats(self) -> None:
+        """Reset event statistics for fresh monitoring."""
+        self._event_stats = {
+            "events_processed": 0,
+            "events_failed": 0,
+            "last_failure_time": None,
+            "handler_failures": {
+                "ready": 0,
+                "completed": 0,
+                "subgraph": 0,
+                "failed": 0
+            }
+        }

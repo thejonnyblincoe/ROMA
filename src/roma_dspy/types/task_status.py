@@ -87,7 +87,7 @@ class TaskStatus(str, Enum):
             TaskStatus.ATOMIZING: {TaskStatus.PLANNING, TaskStatus.EXECUTING, TaskStatus.FAILED},
             TaskStatus.PLANNING: {TaskStatus.PLAN_DONE, TaskStatus.FAILED},
             TaskStatus.PLAN_DONE: {TaskStatus.AGGREGATING, TaskStatus.READY},
-            TaskStatus.READY: {TaskStatus.EXECUTING},
+            TaskStatus.READY: {TaskStatus.EXECUTING, TaskStatus.FAILED},
             TaskStatus.EXECUTING: {
                 TaskStatus.COMPLETED,
                 TaskStatus.FAILED,

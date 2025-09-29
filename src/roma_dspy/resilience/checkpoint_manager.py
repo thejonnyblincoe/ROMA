@@ -60,7 +60,8 @@ class CheckpointManager:
         current_depth: int = 0,
         max_depth: int = 5,
         solver_config: Optional[Dict[str, Any]] = None,
-        failed_task_ids: Optional[Set[str]] = None
+        failed_task_ids: Optional[Set[str]] = None,
+        module_states: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> str:
         """Create a new checkpoint with current system state."""
         if not self.config.enabled:
@@ -86,7 +87,8 @@ class CheckpointManager:
                 max_depth=max_depth,
                 failed_task_ids=failed_task_ids or set(),
                 preserved_results=preserved_results,
-                solver_config=solver_config or {}
+                solver_config=solver_config or {},
+                module_states=module_states or {}
             )
 
             # Save to storage
@@ -209,6 +211,10 @@ class CheckpointManager:
 
             # Mark tasks for retry
             await self._prepare_tasks_for_retry(target_dag, recovery_plan.tasks_to_retry)
+
+            # Restore module states if requested
+            if recovery_plan.restore_module_states and checkpoint_data.module_states:
+                await self._restore_module_states(checkpoint_data.module_states)
 
             logger.info(f"Recovery plan applied successfully")
             return target_dag
@@ -385,7 +391,7 @@ class CheckpointManager:
                 result=task.result,
                 error=str(task.error) if task.error else None,
                 subgraph_id=task.subgraph_id,
-                dependencies=[dep.task_id for dep in task.dependencies],
+                dependencies=list(task.dependencies),
                 metadata=task.metadata or {}
             )
             tasks[task_id] = task_snapshot
@@ -406,7 +412,7 @@ class CheckpointManager:
             completed_tasks=completed_tasks,
             failed_tasks=failed_tasks,
             dependencies={
-                task_id: [dep.task_id for dep in task.dependencies]
+                task_id: list(task.dependencies)
                 for task_id, task in dag.get_all_tasks().items()
             },
             subgraphs=subgraphs
@@ -466,9 +472,9 @@ class CheckpointManager:
             if not hasattr(checkpoint_data, field) or getattr(checkpoint_data, field) is None:
                 raise CheckpointCorruptedError(f"Missing required field: {field}")
 
-        # Verify DAG structure
-        if not checkpoint_data.root_dag.tasks:
-            raise CheckpointCorruptedError("Checkpoint contains empty DAG")
+        # Verify DAG structure exists (empty DAGs are valid)
+        if not hasattr(checkpoint_data.root_dag, 'tasks'):
+            raise CheckpointCorruptedError("Checkpoint DAG missing tasks attribute")
 
     async def _is_checkpoint_expired(self, checkpoint_data: CheckpointData) -> bool:
         """Check if checkpoint has expired."""
@@ -549,3 +555,57 @@ class CheckpointManager:
 
         if removed_count > 0:
             logger.info(f"Cleaned up {removed_count} expired checkpoints")
+
+    async def _restore_module_states(self, module_states: Dict[str, Dict[str, Any]]) -> None:
+        """Restore module states from checkpoint data."""
+        try:
+            logger.info(f"Restoring module states: {list(module_states.keys())}")
+
+            for module_name, state_data in module_states.items():
+                try:
+                    if module_name == "scheduler":
+                        await self._restore_scheduler_state(state_data)
+                    elif module_name == "event_loop":
+                        await self._restore_event_loop_state(state_data)
+                    else:
+                        logger.debug(f"No restoration handler for module {module_name}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to restore {module_name} state: {e}")
+
+        except Exception as e:
+            logger.error(f"Failed to restore module states: {e}")
+            raise
+
+    async def _restore_scheduler_state(self, state_data: Dict[str, Any]) -> None:
+        """Restore scheduler state from checkpoint data."""
+        try:
+            # Store scheduler state for later restoration by EventLoopController
+            self._pending_scheduler_state = state_data
+            logger.info("Scheduler state prepared for restoration")
+        except Exception as e:
+            logger.error(f"Failed to prepare scheduler state restoration: {e}")
+            raise
+
+    async def _restore_event_loop_state(self, state_data: Dict[str, Any]) -> None:
+        """Restore event loop state from checkpoint data."""
+        try:
+            # Store event loop state for later restoration
+            self._pending_event_loop_state = state_data
+            logger.info("Event loop state prepared for restoration")
+        except Exception as e:
+            logger.error(f"Failed to prepare event loop state restoration: {e}")
+            raise
+
+    def get_pending_scheduler_state(self) -> Optional[Dict[str, Any]]:
+        """Get pending scheduler state for restoration."""
+        return getattr(self, '_pending_scheduler_state', None)
+
+    def get_pending_event_loop_state(self) -> Optional[Dict[str, Any]]:
+        """Get pending event loop state for restoration."""
+        return getattr(self, '_pending_event_loop_state', None)
+
+    def clear_pending_states(self) -> None:
+        """Clear pending restoration states after successful restoration."""
+        self._pending_scheduler_state = None
+        self._pending_event_loop_state = None

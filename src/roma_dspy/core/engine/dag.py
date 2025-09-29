@@ -6,9 +6,12 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 import networkx as nx
 from datetime import datetime
 from uuid import uuid4
+import logging
 
 from ..signatures.base_models.task_node import TaskNode
 from ...types import TaskStatus, NodeType
+
+logger = logging.getLogger(__name__)
 
 
 class TaskDAG:
@@ -47,7 +50,7 @@ class TaskDAG:
         parent_id: Optional[str] = None
     ) -> TaskNode:
         """
-        Add a task node to the DAG.
+        Add a task node to the DAG with integrity validation.
 
         Args:
             task: TaskNode to add
@@ -55,7 +58,13 @@ class TaskDAG:
 
         Returns:
             Updated TaskNode with depth calculated
+
+        Raises:
+            ValueError: If adding the node would violate DAG integrity
         """
+        # Pre-validation
+        self._validate_node_addition(task, parent_id)
+
         # Calculate depth if parent exists
         if parent_id and parent_id in self.graph:
             parent_task = self.get_node(parent_id)
@@ -73,12 +82,65 @@ class TaskDAG:
             added_at=datetime.now()
         )
 
-        # Add edge from parent if specified
+        # Add edge from parent if specified (this will validate cycles)
         if parent_id:
             self.add_edge(parent_id, task.task_id)
 
+        # Post-validation
+        self._validate_dag_integrity()
+
         self.metadata['updated_at'] = datetime.now()
         return task
+
+    def _validate_node_addition(self, task: TaskNode, parent_id: Optional[str]) -> None:
+        """Validate that adding a node won't break DAG integrity."""
+
+        # Check for duplicate task IDs
+        if task.task_id in self.graph:
+            raise ValueError(f"Task {task.task_id} already exists in DAG")
+
+        # Validate parent exists if specified
+        if parent_id and parent_id not in self.graph:
+            raise ValueError(f"Parent task {parent_id} not found in DAG")
+
+        # Validate task node integrity
+        if not task.task_id:
+            raise ValueError("Task must have a valid task_id")
+
+        if not task.goal:
+            raise ValueError("Task must have a valid goal")
+
+    def _validate_dag_integrity(self) -> None:
+        """Comprehensive DAG integrity validation."""
+        try:
+            # 1. Check for cycles (should already be caught by add_edge)
+            if not nx.is_directed_acyclic_graph(self.graph):
+                raise ValueError("DAG contains cycles")
+
+            # 2. Check connectivity (disconnected components are valid for parallel tasks)
+            if self.graph.number_of_nodes() > 1:
+                weakly_connected = nx.is_weakly_connected(self.graph)
+                if not weakly_connected:
+                    logger.debug("DAG contains disconnected components (parallel tasks)")
+
+            # 3. Validate task node data integrity
+            for node_id in self.graph.nodes():
+                node_data = self.graph.nodes[node_id]
+                if 'task' not in node_data:
+                    raise ValueError(f"Node {node_id} missing task data")
+
+                task = node_data['task']
+                if task.task_id != node_id:
+                    raise ValueError(f"Task ID mismatch: {task.task_id} != {node_id}")
+
+            # 4. Check for excessive depth (potential infinite recursion)
+            max_depth = max((self.get_node(node_id).depth for node_id in self.graph.nodes()), default=0)
+            if max_depth > 20:  # Configurable threshold
+                logger.warning(f"DAG has excessive depth: {max_depth}")
+
+        except Exception as e:
+            logger.error(f"DAG integrity validation failed: {e}")
+            raise
 
     def add_edge(
         self,
@@ -574,3 +636,134 @@ class TaskDAG:
 
         self.update_node(updated_task)
         return updated_task
+
+    # ------------------------------------------------------------------
+    # DAG Integrity and Validation Methods
+    # ------------------------------------------------------------------
+
+    def validate_dag(self) -> bool:
+        """
+        Validate the entire DAG integrity.
+
+        Returns:
+            True if DAG is valid, False otherwise
+        """
+        try:
+            self._validate_dag_integrity()
+            return True
+        except ValueError as e:
+            logger.error(f"DAG validation failed: {e}")
+            return False
+
+    def get_dag_health_report(self) -> Dict[str, Any]:
+        """
+        Generate a comprehensive health report for the DAG.
+
+        Returns:
+            Dictionary containing DAG health metrics
+        """
+        try:
+            health = {
+                "is_valid": True,
+                "node_count": self.graph.number_of_nodes(),
+                "edge_count": self.graph.number_of_edges(),
+                "is_acyclic": nx.is_directed_acyclic_graph(self.graph),
+                "is_connected": nx.is_weakly_connected(self.graph) if self.graph.number_of_nodes() > 1 else True,
+                "max_depth": 0,
+                "orphaned_nodes": [],
+                "duplicate_edges": [],
+                "corrupted_nodes": [],
+                "status_distribution": {}
+            }
+
+            # Calculate max depth and find orphaned nodes
+            if self.graph.number_of_nodes() > 0:
+                depths = []
+                status_counts = {}
+
+                for node_id in self.graph.nodes():
+                    try:
+                        task = self.get_node(node_id)
+                        depths.append(task.depth)
+
+                        # Count status distribution
+                        status = task.status.value
+                        status_counts[status] = status_counts.get(status, 0) + 1
+
+                        # Check for nodes without predecessors (except root)
+                        if not list(self.graph.predecessors(node_id)) and self.graph.number_of_nodes() > 1:
+                            # Could be root or orphaned
+                            if not list(self.graph.successors(node_id)):
+                                health["orphaned_nodes"].append(node_id)
+
+                    except Exception:
+                        health["corrupted_nodes"].append(node_id)
+
+                health["max_depth"] = max(depths) if depths else 0
+                health["status_distribution"] = status_counts
+
+            # Validate overall integrity
+            try:
+                self._validate_dag_integrity()
+            except ValueError as e:
+                health["is_valid"] = False
+                health["validation_error"] = str(e)
+
+            return health
+
+        except Exception as e:
+            return {
+                "is_valid": False,
+                "error": f"Failed to generate health report: {e}",
+                "node_count": 0,
+                "edge_count": 0
+            }
+
+    def repair_dag(self) -> Dict[str, Any]:
+        """
+        Attempt to repair common DAG integrity issues.
+
+        Returns:
+            Dictionary containing repair results
+        """
+        repair_results = {
+            "repairs_attempted": [],
+            "repairs_successful": [],
+            "repairs_failed": [],
+            "dag_valid_after_repair": False
+        }
+
+        try:
+            health = self.get_dag_health_report()
+
+            # Remove corrupted nodes
+            if health["corrupted_nodes"]:
+                repair_results["repairs_attempted"].append("remove_corrupted_nodes")
+                try:
+                    for node_id in health["corrupted_nodes"]:
+                        self.graph.remove_node(node_id)
+                        logger.info(f"Removed corrupted node: {node_id}")
+                    repair_results["repairs_successful"].append("remove_corrupted_nodes")
+                except Exception as e:
+                    repair_results["repairs_failed"].append(f"remove_corrupted_nodes: {e}")
+
+            # Remove orphaned nodes (those with no connections)
+            if health["orphaned_nodes"]:
+                repair_results["repairs_attempted"].append("remove_orphaned_nodes")
+                try:
+                    for node_id in health["orphaned_nodes"]:
+                        if (not list(self.graph.predecessors(node_id)) and
+                            not list(self.graph.successors(node_id))):
+                            self.graph.remove_node(node_id)
+                            logger.info(f"Removed orphaned node: {node_id}")
+                    repair_results["repairs_successful"].append("remove_orphaned_nodes")
+                except Exception as e:
+                    repair_results["repairs_failed"].append(f"remove_orphaned_nodes: {e}")
+
+            # Final validation
+            repair_results["dag_valid_after_repair"] = self.validate_dag()
+
+        except Exception as e:
+            repair_results["repairs_failed"].append(f"repair_failed: {e}")
+
+        return repair_results
