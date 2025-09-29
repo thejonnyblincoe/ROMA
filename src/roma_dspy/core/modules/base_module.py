@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import dspy
 import inspect
-from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping, List
+from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping, List, TYPE_CHECKING
 
 from src.roma_dspy.types.prediction_strategy import PredictionStrategy
 from src.roma_dspy.resilience import with_module_resilience
 from src.roma_dspy.settings import settings
+
+if TYPE_CHECKING:
+    from src.roma_dspy.config.schemas.agents import AgentConfig
 
 
 class BaseModule(dspy.Module):
@@ -28,6 +31,7 @@ class BaseModule(dspy.Module):
         self,
         *,
         signature: Any,
+        config: Optional["AgentConfig"] = None,
         prediction_strategy: Union[PredictionStrategy, str] = PredictionStrategy.CHAIN_OF_THOUGHT,
         lm: Optional[dspy.LM] = None,
         model: Optional[str] = None,
@@ -40,6 +44,64 @@ class BaseModule(dspy.Module):
 
         self.signature = signature
 
+        # If config is provided, use it to set up the module
+        if config is not None:
+            self._init_from_config(config, strategy_kwargs)
+        else:
+            self._init_from_parameters(
+                prediction_strategy, lm, model, model_config, tools, context_defaults, strategy_kwargs
+            )
+
+    def _init_from_config(self, config: "AgentConfig", strategy_kwargs: Dict[str, Any]) -> None:
+        """Initialize module from AgentConfig."""
+        # Use config values
+        prediction_strategy = PredictionStrategy.from_string(config.prediction_strategy)
+
+        # Resolve tool names to actual tool objects
+        self._tools: List[Any] = self._resolve_tool_names(config.tools)
+
+        # Build LM from config
+        llm_config = config.llm
+        lm_kwargs = {
+            "temperature": llm_config.temperature,
+            "max_tokens": llm_config.max_tokens,
+            "timeout": llm_config.timeout,
+        }
+        if llm_config.api_key:
+            lm_kwargs["api_key"] = llm_config.api_key
+        if llm_config.base_url:
+            lm_kwargs["base_url"] = llm_config.base_url
+
+        self._lm = dspy.LM(llm_config.model, **lm_kwargs)
+
+        # Build predictor
+        build_kwargs = dict(strategy_kwargs)
+
+        # Only pass strategy-specific parameters to the prediction strategy
+        build_kwargs.update(config.strategy_config)
+
+        if prediction_strategy in (PredictionStrategy.REACT, PredictionStrategy.CODE_ACT) and self._tools:
+            build_kwargs.setdefault("tools", self._tools)
+
+        self._predictor = prediction_strategy.build(self.signature, **build_kwargs)
+
+        # Store agent-specific configuration for use by agent logic
+        self._agent_config = config.agent_config
+
+        # Context defaults
+        self._context_defaults: Dict[str, Any] = {}
+
+    def _init_from_parameters(
+        self,
+        prediction_strategy: Union[PredictionStrategy, str],
+        lm: Optional[dspy.LM],
+        model: Optional[str],
+        model_config: Optional[Mapping[str, Any]],
+        tools: Optional[Union[Sequence[Any], TMapping[str, Any]]],
+        context_defaults: Optional[Dict[str, Any]],
+        strategy_kwargs: Dict[str, Any]
+    ) -> None:
+        """Initialize module from individual parameters (legacy mode)."""
         if isinstance(prediction_strategy, str):
             prediction_strategy = PredictionStrategy.from_string(prediction_strategy)
 
@@ -64,6 +126,7 @@ class BaseModule(dspy.Module):
 
         self._lm: dspy.LM = lm
         self._context_defaults: Dict[str, Any] = dict(context_defaults or {})
+        self._agent_config: Dict[str, Any] = {}  # No agent config in legacy mode
 
     # ---------- Public API ----------
 
@@ -193,6 +256,11 @@ class BaseModule(dspy.Module):
     def tools(self) -> List[Any]:
         return list(self._tools)
 
+    @property
+    def agent_config(self) -> Dict[str, Any]:
+        """Get agent-specific configuration parameters."""
+        return getattr(self, '_agent_config', {})
+
     def set_tools(self, tools: Optional[Union[Sequence[Any], TMapping[str, Any]]]) -> "BaseModule":
         self._tools = self._normalize_tools(tools)
         return self
@@ -208,6 +276,12 @@ class BaseModule(dspy.Module):
         return self
 
     # ---------- Internals ----------
+
+    @staticmethod
+    def _resolve_tool_names(tool_names: Optional[List[str]]) -> List[Any]:
+        """Resolve tool names to actual tool objects."""
+        # For now, return empty list until tools are implemented
+        return []
 
     @staticmethod
     def _normalize_tools(tools: Optional[Union[Sequence[Any], TMapping[str, Any]]]) -> List[Any]:

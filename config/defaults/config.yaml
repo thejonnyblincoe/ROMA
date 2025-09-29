@@ -1,0 +1,21 @@
+# Optional base configuration for ROMA-DSPy
+# This file overrides Pydantic defaults where needed
+
+project: roma-dspy
+version: "0.1.0"
+environment: ${oc.env:ROMA_ENV,development}
+
+# Override agent defaults where needed
+agents:
+  planner:
+    agent_config:
+      max_subtasks: 15  # Override default 10
+
+# Runtime configuration overrides
+runtime:
+  verbose: ${oc.env:ROMA_VERBOSE,false}
+  cache_dir: ${oc.env:ROMA_CACHE_DIR,.cache/dspy}
+
+# Resilience configuration overrides
+resilience:
+  max_retries: ${oc.env:ROMA_MAX_RETRIES,3}

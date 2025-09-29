@@ -1,0 +1,28 @@
+# High quality profile - Maximum accuracy and determinism
+# Use low temperatures for consistent outputs
+
+agents:
+  atomizer:
+    llm:
+      temperature: 0.0  # Maximum determinism
+
+  planner:
+    llm:
+      temperature: 0.1
+      max_tokens: 5000  # More space for detailed planning
+
+  executor:
+    llm:
+      temperature: 0.2
+
+  aggregator:
+    llm:
+      temperature: 0.0  # Deterministic aggregation
+      max_tokens: 5000
+
+  verifier:
+    llm:
+      temperature: 0.0  # Deterministic verification
+
+resilience:
+  max_retries: 5  # More retries for higher reliability

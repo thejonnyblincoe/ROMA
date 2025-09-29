@@ -5,7 +5,7 @@ Recursive solver for hierarchical task decomposition with depth constraints.
 import asyncio
 import logging
 import warnings
-from typing import Callable, Optional, Union, Tuple
+from typing import Callable, Optional, Union, Tuple, TYPE_CHECKING
 
 import dspy
 
@@ -18,6 +18,9 @@ from src.roma_dspy.types import TaskStatus, AgentType
 from src.roma_dspy.types.checkpoint_types import CheckpointTrigger
 from src.roma_dspy.types.checkpoint_models import CheckpointConfig
 from src.roma_dspy.resilience.checkpoint_manager import CheckpointManager
+
+if TYPE_CHECKING:
+    from src.roma_dspy.config.schemas.root import ROMAConfig
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -41,6 +44,7 @@ class RecursiveSolver:
 
     def __init__(
         self,
+        config: Optional["ROMAConfig"] = None,
         atomizer: Optional[Atomizer] = None,
         planner: Optional[Planner] = None,
         executor: Optional[Executor] = None,
@@ -56,31 +60,29 @@ class RecursiveSolver:
         Initialize the recursive solver.
 
         Args:
-            atomizer: Module for determining task atomicity
-            planner: Module for task decomposition
-            executor: Module for atomic task execution
-            aggregator: Module for result synthesis
-            verifier: Module for result validation (not yet implemented)
-            max_depth: Maximum recursion depth
-            lm: Language model to use
+            config: ROMAConfig instance with complete configuration
+            atomizer: Module for determining task atomicity (overrides config)
+            planner: Module for task decomposition (overrides config)
+            executor: Module for atomic task execution (overrides config)
+            aggregator: Module for result synthesis (overrides config)
+            verifier: Module for result validation (overrides config)
+            max_depth: Maximum recursion depth (overrides config)
+            lm: Language model to use (legacy parameter)
             enable_logging: Whether to enable debug logging
-            visualizer: Optional visualizer for execution tracking
+            checkpoint_config: Checkpoint configuration (overrides config)
         """
-        # Initialize modules with defaults if not provided
-        self.atomizer = atomizer or Atomizer(lm=lm)
-        self.planner = planner or Planner(lm=lm)
-        self.executor = executor or Executor(lm=lm)
-        self.aggregator = aggregator or Aggregator(lm=lm)
-        self.verifier = verifier  # Optional, not yet implemented
+        # Initialize modules based on config or defaults
+        if config is not None:
+            self._init_from_config(config, atomizer, planner, executor, aggregator, verifier, max_depth)
+        else:
+            self._init_from_parameters(atomizer, planner, executor, aggregator, verifier, max_depth, lm)
 
-        self.max_depth = max_depth
-        self.last_dag = None  # Store last DAG for visualization
-
-        # Initialize checkpoint system - pass explicit config, no settings dependency
+        # Initialize checkpoint system
         self.checkpoint_enabled = enable_checkpoints
         checkpoint_cfg = checkpoint_config or CheckpointConfig()
         self.checkpoint_manager = CheckpointManager(checkpoint_cfg) if enable_checkpoints else None
 
+        # Initialize runtime
         self.runtime = ModuleRuntime(
             atomizer=self.atomizer,
             planner=self.planner,
@@ -93,8 +95,49 @@ class RecursiveSolver:
         if enable_logging:
             logging.basicConfig(level=logging.DEBUG)
             logger.setLevel(logging.DEBUG)
-        else:
-            logger.setLevel(logging.INFO)
+
+        self.last_dag = None  # Store last DAG for visualization
+
+    def _init_from_config(
+        self,
+        config: "ROMAConfig",
+        atomizer: Optional[Atomizer],
+        planner: Optional[Planner],
+        executor: Optional[Executor],
+        aggregator: Optional[Aggregator],
+        verifier: Optional[Verifier],
+        max_depth: Optional[int]
+    ) -> None:
+        """Initialize solver from ROMAConfig."""
+        # Use provided modules or create from config
+        self.atomizer = atomizer or Atomizer(config=config.agents.atomizer)
+        self.planner = planner or Planner(config=config.agents.planner)
+        self.executor = executor or Executor(config=config.agents.executor)
+        self.aggregator = aggregator or Aggregator(config=config.agents.aggregator)
+        self.verifier = verifier or (Verifier(config=config.agents.verifier) if config.agents.verifier.enabled else None)
+
+        # Use runtime config
+        self.max_depth = max_depth or config.runtime.max_concurrency
+
+    def _init_from_parameters(
+        self,
+        atomizer: Optional[Atomizer],
+        planner: Optional[Planner],
+        executor: Optional[Executor],
+        aggregator: Optional[Aggregator],
+        verifier: Optional[Verifier],
+        max_depth: int,
+        lm: Optional[dspy.LM]
+    ) -> None:
+        """Initialize solver from individual parameters (legacy mode)."""
+        # Initialize modules with defaults if not provided
+        self.atomizer = atomizer or Atomizer(lm=lm)
+        self.planner = planner or Planner(lm=lm)
+        self.executor = executor or Executor(lm=lm)
+        self.aggregator = aggregator or Aggregator(lm=lm)
+        self.verifier = verifier  # Optional, not yet implemented
+
+        self.max_depth = max_depth
 
     # ==================== Main Entry Points ====================
 

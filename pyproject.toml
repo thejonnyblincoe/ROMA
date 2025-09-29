@@ -16,6 +16,7 @@ dependencies = [
     "matplotlib>=3.6.0",
     "ipdb>=0.13.13",
     "pydantic-settings>=2.11.0",
+    "omegaconf>=2.3.0",
 ]
 
 [project.scripts]
