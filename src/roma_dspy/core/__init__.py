@@ -31,6 +31,9 @@ from .signatures import (
     AggregatorResultModel,
 )
 
+# Import the wrapper lazily after engine to avoid circular import
+from .modules.recursive_solver import RecursiveSolverModule
+
 __all__ = [
     "TaskDAG",
     "RecursiveSolver",
@@ -56,4 +59,5 @@ __all__ = [
     "ExecutorResult",
     "AggregatorResult",
     "AggregatorResultModel",
+    "RecursiveSolverModule",
 ]

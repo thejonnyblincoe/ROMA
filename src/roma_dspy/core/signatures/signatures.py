@@ -6,7 +6,8 @@ from .base_models.results import (
     PlannerResult,
     ExecutorResult,
 )
-from ...types import NodeType
+from .base_models.task_node import TaskNode
+from ...types import NodeType, TaskStatus
 
 
 class AtomizerSignature(dspy.Signature):
