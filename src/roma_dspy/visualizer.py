@@ -33,7 +33,11 @@ def _resolve_visualization_inputs(
     elif isinstance(source, TaskNode):
         root_task = source
     elif source is not None:
-        resolved_dag = dag or getattr(source, "last_dag", None)
+        # Check if it's a RecursiveSolverModule wrapper
+        if hasattr(source, '_solver') and hasattr(source._solver, 'last_dag'):
+            resolved_dag = dag or source._solver.last_dag
+        else:
+            resolved_dag = dag or getattr(source, "last_dag", None)
 
     if resolved_dag and root_task is None and hasattr(resolved_dag, "graph"):
         try:
@@ -969,6 +973,409 @@ class ContextFlowVisualizer:
         return f"Subtask {subtask_index} not found."
 
 
+class LLMTraceVisualizer:
+    """
+    LLM-friendly execution trace visualizer for prompt optimization.
+
+    Generates a chronological, detailed trace of the entire execution flow
+    that is optimized for LLM consumption and analysis. Useful for:
+    - Prompt optimization and debugging
+    - Understanding module behavior
+    - Cost and performance analysis
+    - Reproducing execution flows
+    """
+
+    def __init__(self, show_metrics: bool = True, show_summary: bool = True, verbose: bool = True):
+        """
+        Initialize LLM trace visualizer.
+
+        Args:
+            show_metrics: Whether to display duration/tokens/cost for each module
+            show_summary: Whether to display execution summary at the end
+            verbose: Whether to show full inputs/outputs (True) or compact versions (False)
+        """
+        self.show_metrics = show_metrics
+        self.show_summary = show_summary
+        self.verbose = verbose
+
+    def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> str:
+        """
+        Generate LLM-friendly execution trace.
+
+        Args:
+            source: RecursiveSolver, TaskDAG, or TaskNode to visualize
+            dag: Optional DAG to visualize (defaults to solver.last_dag if available)
+
+        Returns:
+            String representation of the execution trace
+        """
+        dag, root_task = _resolve_visualization_inputs(source, dag)
+
+        if not dag and root_task is None:
+            return "No execution data available. Run solve() first."
+
+        # Find root task if not provided
+        if root_task is None and dag:
+            for node_id in dag.graph.nodes():
+                task = dag.get_node(node_id)
+                if task.is_root:
+                    root_task = task
+                    break
+
+        if not root_task:
+            return "No root task found in DAG."
+
+        lines = []
+        lines.append("=== EXECUTION TRACE ===")
+        lines.append(f"Root Goal: {root_task.goal}")
+        lines.append(f"Max Depth: {root_task.max_depth}")
+
+        # Format timestamp properly
+        start_time = self._normalize_timestamp(root_task.created_at)
+        lines.append(f"Start Time: {start_time.isoformat()}")
+        lines.append("")
+
+        # Collect all execution events chronologically
+        events = self._collect_execution_events(dag, root_task)
+
+        # Format trace
+        self._format_trace(lines, events, dag)
+
+        # Add summary if enabled
+        if self.show_summary:
+            lines.append("")
+            lines.append("=== EXECUTION SUMMARY ===")
+            self._add_summary(lines, events, root_task)
+
+        return "\n".join(lines)
+
+    def _collect_execution_events(self, dag: TaskDAG, root_task: TaskNode) -> List[Dict[str, Any]]:
+        """Collect all execution events in chronological order."""
+        events = []
+        all_tasks = dag.get_all_tasks(include_subgraphs=True)
+
+        for task in all_tasks:
+            # Create task entry event
+            task_event = {
+                'type': 'task_start',
+                'timestamp': self._normalize_timestamp(task.created_at),
+                'task': task,
+                'depth': task.depth
+            }
+            events.append(task_event)
+
+            # Add module execution events
+            for module_name, module_result in task.execution_history.items():
+                module_event = {
+                    'type': 'module_execution',
+                    'timestamp': self._normalize_timestamp(module_result.timestamp),
+                    'task': task,
+                    'module_name': module_name,
+                    'module_result': module_result,
+                    'depth': task.depth
+                }
+                events.append(module_event)
+
+            # Add task completion event
+            if task.completed_at:
+                completion_event = {
+                    'type': 'task_complete',
+                    'timestamp': self._normalize_timestamp(task.completed_at),
+                    'task': task,
+                    'depth': task.depth
+                }
+                events.append(completion_event)
+
+        # Sort by timestamp
+        events.sort(key=lambda e: e['timestamp'])
+        return events
+
+    def _normalize_timestamp(self, ts: datetime) -> datetime:
+        """Normalize timestamp to timezone-naive for consistent comparison."""
+        if ts.tzinfo is not None:
+            # Convert to UTC and remove timezone info
+            return ts.replace(tzinfo=None)
+        return ts
+
+    def _format_trace(self, lines: List[str], events: List[Dict[str, Any]], dag: TaskDAG):
+        """Format execution trace from events."""
+        # Group events by task to ensure proper ordering
+        task_events = {}
+        for event in events:
+            task_id = event['task'].task_id
+            if task_id not in task_events:
+                task_events[task_id] = []
+            task_events[task_id].append(event)
+
+        # Process tasks in chronological order by their first event
+        task_order = []
+        for task_id, tevents in task_events.items():
+            first_timestamp = min(e['timestamp'] for e in tevents)
+            task_order.append((first_timestamp, task_id, tevents))
+
+        task_order.sort(key=lambda x: x[0])
+
+        # Now format each task's execution in order
+        for _, task_id, tevents in task_order:
+            # Sort this task's events
+            tevents.sort(key=lambda e: e['timestamp'])
+
+            task = tevents[0]['task']
+            depth = tevents[0]['depth']
+            indent = "  " * depth
+
+            # Print task header
+            lines.append(f"{indent}[DEPTH {depth}] Task: {task.goal}")
+            lines.append(f"{indent}  ID: {task.task_id[:8]}...")
+            if task.parent_id:
+                lines.append(f"{indent}  Parent: {task.parent_id[:8]}...")
+            if task.dependencies:
+                dep_list = [dep_id[:8] + "..." for dep_id in task.dependencies]
+                lines.append(f"{indent}  Dependencies: {dep_list}")
+
+            # Print module executions for this task
+            for event in tevents:
+                if event['type'] == 'module_execution':
+                    module_name = event['module_name']
+                    module_result = event['module_result']
+
+                    lines.append("")
+                    lines.append(f"{indent}  MODULE: {module_name.capitalize()}")
+
+                    # Format inputs
+                    lines.append(f"{indent}    Input:")
+                    self._format_io(lines, module_result.input, indent + "      ")
+
+                    # Format outputs
+                    lines.append(f"{indent}    Output:")
+                    self._format_io(lines, module_result.output, indent + "      ")
+
+                    # Add metrics if enabled
+                    if self.show_metrics:
+                        metrics_parts = [f"Duration: {module_result.duration:.2f}s"]
+                        if module_result.token_metrics:
+                            tm = module_result.token_metrics
+                            if tm.total_tokens > 0:
+                                metrics_parts.append(f"Tokens: {tm.prompt_tokens}/{tm.completion_tokens}")
+                            if tm.cost > 0:
+                                metrics_parts.append(f"Cost: ${tm.cost:.6f}")
+                        lines.append(f"{indent}    {' | '.join(metrics_parts)}")
+
+            # Print completion status
+            lines.append("")
+            lines.append(f"{indent}  Status: -> {task.status.value}")
+            if task.result and self.verbose:
+                result_str = str(task.result)
+                if len(result_str) > 200:
+                    result_str = result_str[:200] + "..."
+                lines.append(f"{indent}  Result: {result_str}")
+
+            lines.append("")
+
+    def _format_io(self, lines: List[str], data: Any, indent: str):
+        """Format input/output data."""
+        if data is None:
+            lines.append(f"{indent}(none)")
+            return
+
+        # Handle dspy.Prediction objects
+        if hasattr(data, '__dict__') and hasattr(data, '_store'):
+            # DSPy prediction object
+            for key, value in data.__dict__.items():
+                if key.startswith('_'):
+                    continue
+                formatted_value = self._format_value(value)
+                lines.append(f"{indent}{key}: {formatted_value}")
+        elif isinstance(data, dict):
+            for key, value in data.items():
+                formatted_value = self._format_value(value)
+                lines.append(f"{indent}{key}: {formatted_value}")
+        elif isinstance(data, str):
+            if self.verbose or len(data) <= 200:
+                lines.append(f"{indent}{data}")
+            else:
+                lines.append(f"{indent}{data[:200]}...")
+        else:
+            formatted_value = self._format_value(data)
+            lines.append(f"{indent}{formatted_value}")
+
+    def _format_value(self, value: Any) -> str:
+        """Format a single value for display."""
+        if value is None:
+            return "null"
+        elif isinstance(value, str):
+            if self.verbose or len(value) <= 100:
+                return f'"{value}"'
+            else:
+                return f'"{value[:100]}..."'
+        elif isinstance(value, (list, tuple)):
+            if not value:
+                return "[]"
+            elif len(value) <= 3 or self.verbose:
+                formatted_items = [self._format_value(item) for item in value]
+                return f"[{', '.join(formatted_items)}]"
+            else:
+                formatted_items = [self._format_value(item) for item in value[:3]]
+                return f"[{', '.join(formatted_items)}, ... ({len(value)} total)]"
+        elif isinstance(value, dict):
+            if not value:
+                return "{}"
+            items = list(value.items())
+            if len(items) <= 3 or self.verbose:
+                formatted = ", ".join(f"{k}: {self._format_value(v)}" for k, v in items)
+                return f"{{{formatted}}}"
+            else:
+                formatted = ", ".join(f"{k}: {self._format_value(v)}" for k, v in items[:3])
+                return f"{{{formatted}, ... ({len(items)} total)}}"
+        elif hasattr(value, '__dict__'):
+            # Pydantic model or object
+            if hasattr(value, 'model_dump'):
+                return self._format_value(value.model_dump())
+            elif hasattr(value, 'dict'):
+                return self._format_value(value.dict())
+            else:
+                return str(value)
+        else:
+            return str(value)
+
+    def _add_summary(self, lines: List[str], events: List[Dict[str, Any]], root_task: TaskNode):
+        """Add execution summary."""
+        # Calculate metrics
+        total_duration = 0.0
+        total_tokens = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_cost = 0.0
+        task_count = 0
+        completed_count = 0
+        failed_count = 0
+        max_depth = 0
+
+        seen_tasks = set()
+
+        for event in events:
+            task = event['task']
+
+            # Track unique tasks
+            if task.task_id not in seen_tasks:
+                seen_tasks.add(task.task_id)
+                task_count += 1
+                if task.status == TaskStatus.COMPLETED:
+                    completed_count += 1
+                elif task.status == TaskStatus.FAILED:
+                    failed_count += 1
+                max_depth = max(max_depth, task.depth)
+
+            # Aggregate module metrics
+            if event['type'] == 'module_execution':
+                module_result = event['module_result']
+                total_duration += module_result.duration
+
+                if module_result.token_metrics:
+                    tm = module_result.token_metrics
+                    total_prompt_tokens += tm.prompt_tokens
+                    total_completion_tokens += tm.completion_tokens
+                    total_tokens += tm.total_tokens
+                    total_cost += tm.cost
+
+        # Format summary
+        if root_task.completed_at and root_task.created_at:
+            wall_time = (root_task.completed_at - root_task.created_at).total_seconds()
+            lines.append(f"Wall Time: {wall_time:.2f}s")
+
+        lines.append(f"Total Module Time: {total_duration:.2f}s")
+
+        if self.show_metrics and total_tokens > 0:
+            lines.append(f"Total Tokens: {total_prompt_tokens}/{total_completion_tokens} ({total_tokens} total)")
+
+        if self.show_metrics and total_cost > 0:
+            lines.append(f"Total Cost: ${total_cost:.6f}")
+
+        lines.append(f"Tasks: {task_count} total ({completed_count} completed, {failed_count} failed)")
+        lines.append(f"Max Depth Reached: {max_depth}")
+
+    def export_trace_json(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> Dict[str, Any]:
+        """
+        Export execution trace as JSON for programmatic analysis.
+
+        Args:
+            source: RecursiveSolver, TaskDAG, or TaskNode to export
+            dag: Optional DAG to export
+
+        Returns:
+            Dictionary with complete execution trace data
+        """
+        dag, root_task = _resolve_visualization_inputs(source, dag)
+
+        if not dag or not root_task:
+            return {"error": "No execution data available"}
+
+        events = self._collect_execution_events(dag, root_task)
+
+        # Convert events to JSON-serializable format
+        trace_data = {
+            "root_goal": root_task.goal,
+            "max_depth": root_task.max_depth,
+            "start_time": self._normalize_timestamp(root_task.created_at).isoformat(),
+            "events": []
+        }
+
+        for event in events:
+            event_data = {
+                "type": event['type'],
+                "timestamp": self._normalize_timestamp(event['timestamp']).isoformat(),
+                "depth": event['depth'],
+                "task_id": event['task'].task_id,
+                "task_goal": event['task'].goal,
+            }
+
+            if event['type'] == 'module_execution':
+                module_result = event['module_result']
+                event_data['module_name'] = event['module_name']
+                event_data['duration'] = module_result.duration
+
+                # Serialize input/output
+                event_data['input'] = self._serialize_for_json(module_result.input)
+                event_data['output'] = self._serialize_for_json(module_result.output)
+
+                if module_result.token_metrics:
+                    tm = module_result.token_metrics
+                    event_data['token_metrics'] = {
+                        'prompt_tokens': tm.prompt_tokens,
+                        'completion_tokens': tm.completion_tokens,
+                        'total_tokens': tm.total_tokens,
+                        'cost': tm.cost,
+                        'model': tm.model
+                    }
+
+            elif event['type'] == 'task_complete':
+                event_data['status'] = event['task'].status.value
+                event_data['result'] = self._serialize_for_json(event['task'].result)
+
+            trace_data['events'].append(event_data)
+
+        return trace_data
+
+    def _serialize_for_json(self, obj: Any) -> Any:
+        """Serialize object for JSON export."""
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            return [self._serialize_for_json(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: self._serialize_for_json(v) for k, v in obj.items()}
+        elif hasattr(obj, 'model_dump'):
+            return self._serialize_for_json(obj.model_dump())
+        elif hasattr(obj, 'dict'):
+            return self._serialize_for_json(obj.dict())
+        elif hasattr(obj, '__dict__'):
+            return {k: self._serialize_for_json(v) for k, v in obj.__dict__.items() if not k.startswith('_')}
+        else:
+            return str(obj)
+
+
 class HierarchicalVisualizer:
     """
     Main visualizer class that combines all visualization modes.
@@ -980,7 +1387,7 @@ class HierarchicalVisualizer:
         Initialize hierarchical visualizer.
 
         Args:
-            mode: Visualization mode ("realtime", "tree", "timeline", "stats", "context", "all")
+            mode: Visualization mode ("realtime", "tree", "timeline", "stats", "context", "llm_trace", "all")
             use_colors: Whether to use colored output
             verbose: Whether to show detailed information
         """
@@ -990,6 +1397,7 @@ class HierarchicalVisualizer:
         self.timeline = TimelineVisualizer()
         self.stats = StatisticsVisualizer()
         self.context = ContextFlowVisualizer(use_colors=use_colors)
+        self.llm_trace = LLMTraceVisualizer(show_metrics=True, show_summary=True, verbose=verbose)
 
     def visualize_execution(self, solver) -> str:
         """
@@ -1013,6 +1421,10 @@ class HierarchicalVisualizer:
 
         if self.mode in ["stats", "all"]:
             output.append(self.stats.visualize(solver))
+            output.append("")
+
+        if self.mode in ["llm_trace"]:
+            output.append(self.llm_trace.visualize(solver))
             output.append("")
 
         return "\n".join(output)

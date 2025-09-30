@@ -711,9 +711,9 @@ class ModuleRuntime:
         # Create the subgraph with converted dependencies
         dag.create_subgraph(task.task_id, subtask_nodes, task_id_dependencies)
 
-        # Get the subgraph_id to register index mappings
-        task = dag.get_node(task.task_id)
-        subgraph_id = task.subgraph_id
+        # Get the updated task with subgraph_id from DAG
+        updated_task = dag.get_node(task.task_id)
+        subgraph_id = updated_task.subgraph_id
 
         # Register index -> task_id mappings in the context store
         if subgraph_id:
@@ -724,9 +724,14 @@ class ModuleRuntime:
                     subtask_node.task_id
                 )
 
+        # Update metrics while preserving all other fields (including execution_history)
+        # Use the original task parameter which has execution_history, but get subgraph_id from DAG
         updated_metrics = task.metrics.model_copy()
         updated_metrics.subtasks_created = len(subtask_nodes)
-        return task.model_copy(update={"metrics": updated_metrics})
+        return task.model_copy(update={
+            "metrics": updated_metrics,
+            "subgraph_id": subgraph_id
+        })
 
     def _collect_subtask_results(self, subgraph: Optional[TaskDAG]) -> List[SubTask]:
         collected: List[SubTask] = []
