@@ -756,6 +756,219 @@ class StatisticsVisualizer:
         self.stats['performance']['total_time'] = total_time
 
 
+class ContextFlowVisualizer:
+    """
+    Visualizer for context flow between subtasks showing index-based dependencies.
+    Shows the actual XML-formatted context passed to LLMs.
+    """
+
+    def __init__(self, use_colors: bool = True):
+        """
+        Initialize context flow visualizer.
+
+        Args:
+            use_colors: Whether to use ANSI colors
+        """
+        self.use_colors = use_colors
+        self.rt_viz = RealTimeVisualizer(use_colors=use_colors)
+
+    def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None,
+                  show_full_context: bool = False) -> str:
+        """
+        Visualize context flow with index-based dependencies.
+
+        Args:
+            source: RecursiveSolver, TaskDAG, or TaskNode to visualize
+            dag: Optional DAG to visualize
+            show_full_context: If True, shows full context; if False, shows preview
+
+        Returns:
+            Formatted string showing context flow
+        """
+        # Access runtime and dag from source
+        runtime = None
+        resolved_dag = dag
+
+        # Try to get runtime and dag from various source types
+        if hasattr(source, '_solver'):
+            # DSPy module wrapper
+            runtime = source._solver.runtime
+            if resolved_dag is None:
+                resolved_dag = source._solver.last_dag
+        elif hasattr(source, 'runtime'):
+            # Direct runtime access
+            runtime = source.runtime
+            if resolved_dag is None and hasattr(source, 'last_dag'):
+                resolved_dag = source.last_dag
+
+        # Fallback to standard resolution if needed
+        if resolved_dag is None:
+            resolved_dag, _ = _resolve_visualization_inputs(source, dag)
+
+        if not resolved_dag:
+            return "No execution data available. Make sure you've run the task first."
+
+        if not runtime:
+            return "No runtime context store available."
+
+        lines = []
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+        lines.append(self.rt_viz.color("🔗 CONTEXT FLOW VISUALIZATION (Index-Based)", ColorCode.BOLD))
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+        lines.append("")
+
+        all_tasks = resolved_dag.get_all_tasks(include_subgraphs=True)
+
+        # Group tasks by their parent (subgraph)
+        subgraph_tasks = {}
+        for task in all_tasks:
+            if task.parent_id and task.node_type and task.node_type.value == "EXECUTE":
+                if task.parent_id not in subgraph_tasks:
+                    subgraph_tasks[task.parent_id] = []
+                subgraph_tasks[task.parent_id].append(task)
+
+        # Process each subgraph
+        for parent_id, tasks in subgraph_tasks.items():
+            parent_task = resolved_dag.get_node(parent_id) if parent_id in resolved_dag.graph else None
+            if parent_task and parent_task.subgraph_id:
+                lines.append(self.rt_viz.color("─" * 80, ColorCode.CYAN))
+                lines.append(f"📦 Subgraph: {self.rt_viz.color(parent_task.goal[:60] + '...', ColorCode.BRIGHT_BLUE)}")
+                lines.append(self.rt_viz.color("─" * 80, ColorCode.CYAN))
+
+                # Get tasks with their indices
+                indexed_tasks = []
+                for task in tasks:
+                    idx = runtime.context_store.get_task_index(parent_task.subgraph_id, task.task_id)
+                    if idx is not None:
+                        indexed_tasks.append((idx, task))
+
+                # Sort by index
+                indexed_tasks.sort(key=lambda x: x[0])
+
+                # Display each task
+                for idx, task in indexed_tasks:
+                    lines.append("")
+                    lines.append(self.rt_viz.color(f"[Subtask {idx}] {task.goal[:70]}", ColorCode.BRIGHT_GREEN))
+
+                    if task.dependencies:
+                        # Get dependency indices
+                        dep_indices = []
+                        for dep_id in task.dependencies:
+                            dep_idx = runtime.context_store.get_task_index(parent_task.subgraph_id, dep_id)
+                            if dep_idx is not None:
+                                dep_indices.append(dep_idx)
+
+                        if dep_indices:
+                            lines.append(f"  ⬅️  Dependencies: {self.rt_viz.color(str(sorted(dep_indices)), ColorCode.YELLOW)}")
+
+                            # Reconstruct the actual XML context
+                            context_parts = []
+                            for dep_id in task.dependencies:
+                                result_str = runtime.context_store.get_result(dep_id)
+                                if result_str:
+                                    dep_task = None
+                                    try:
+                                        dep_task, _ = resolved_dag.find_node(dep_id)
+                                    except ValueError:
+                                        pass
+
+                                    dep_idx = runtime.context_store.get_task_index(parent_task.subgraph_id, dep_id)
+                                    if dep_idx is not None:
+                                        context_entry = f'<subtask id="{dep_idx}">'
+                                        if dep_task:
+                                            context_entry += f"\n    <goal>{dep_task.goal}</goal>"
+                                        # Truncate output for display
+                                        if show_full_context:
+                                            context_entry += f"\n    <output>{result_str}</output>\n  </subtask>"
+                                        else:
+                                            output_preview = result_str[:150] + "..." if len(result_str) > 150 else result_str
+                                            context_entry += f"\n    <output>{output_preview}</output>\n  </subtask>"
+                                        context_parts.append(context_entry)
+
+                            if context_parts:
+                                full_context = "  <context>\n  " + "\n\n  ".join(context_parts) + "\n  </context>"
+                                lines.append(self.rt_viz.color("  📥 Context passed to LLM (XML format):", ColorCode.MAGENTA))
+                                for line in full_context.split('\n'):
+                                    lines.append(self.rt_viz.color(f"    {line}", ColorCode.DIM))
+                    else:
+                        lines.append(self.rt_viz.color("  ℹ️  No dependencies (independent task)", ColorCode.DIM))
+
+                    result_str = str(task.result) if task.result else "(no result)"
+                    if len(result_str) > 150:
+                        result_str = result_str[:150] + "..."
+                    lines.append(f"  ✅ Result: {self.rt_viz.color(result_str, ColorCode.GREEN)}")
+                    lines.append(self.rt_viz.color("  " + "-" * 76, ColorCode.DIM))
+
+        lines.append("")
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+        return "\n".join(lines)
+
+    def get_task_context_details(self, source: Any, subtask_index: int) -> str:
+        """
+        Get detailed context information for a specific task by index.
+
+        Args:
+            source: RecursiveSolver or module with runtime
+            subtask_index: The index of the task in its subgraph
+
+        Returns:
+            Formatted string with context details
+        """
+        # Access runtime and dag
+        runtime = None
+        dag = None
+
+        if hasattr(source, '_solver'):
+            runtime = source._solver.runtime
+            dag = source._solver.last_dag
+        elif hasattr(source, 'runtime'):
+            runtime = source.runtime
+            dag = getattr(source, 'last_dag', None)
+
+        if not runtime or not dag:
+            return "No runtime or DAG available."
+
+        # Find the task
+        for subgraph_id, index_map in runtime.context_store._index_maps.items():
+            if subtask_index in index_map:
+                task_id = index_map[subtask_index]
+                subgraph = dag.get_subgraph(subgraph_id)
+                if subgraph:
+                    try:
+                        task = subgraph.get_node(task_id)
+
+                        lines = []
+                        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+                        lines.append(self.rt_viz.color(f"📋 CONTEXT DETAILS FOR SUBTASK {subtask_index}", ColorCode.BOLD))
+                        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+                        lines.append(f"Goal: {self.rt_viz.color(task.goal, ColorCode.BRIGHT_BLUE)}")
+                        lines.append(self.rt_viz.color("-" * 80, ColorCode.DIM))
+
+                        # Get the context from execution history metadata
+                        executor_result = task.execution_history.get("executor")
+                        if executor_result and executor_result.metadata:
+                            context_received = executor_result.metadata.get("context_received")
+                            if context_received:
+                                lines.append(self.rt_viz.color("Context (from execution metadata):", ColorCode.MAGENTA))
+                                lines.append(self.rt_viz.color(context_received, ColorCode.DIM))
+                            else:
+                                lines.append(self.rt_viz.color("No context was passed to this task.", ColorCode.YELLOW))
+                        else:
+                            lines.append(self.rt_viz.color("No execution history available.", ColorCode.YELLOW))
+
+                        lines.append(self.rt_viz.color("-" * 80, ColorCode.DIM))
+                        result_preview = str(task.result)[:200] + "..." if len(str(task.result)) > 200 else str(task.result)
+                        lines.append(f"Result: {self.rt_viz.color(result_preview, ColorCode.GREEN)}")
+                        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+
+                        return "\n".join(lines)
+
+                    except ValueError:
+                        pass
+
+        return f"Subtask {subtask_index} not found."
+
+
 class HierarchicalVisualizer:
     """
     Main visualizer class that combines all visualization modes.
@@ -767,7 +980,7 @@ class HierarchicalVisualizer:
         Initialize hierarchical visualizer.
 
         Args:
-            mode: Visualization mode ("realtime", "tree", "timeline", "stats", "all")
+            mode: Visualization mode ("realtime", "tree", "timeline", "stats", "context", "all")
             use_colors: Whether to use colored output
             verbose: Whether to show detailed information
         """
@@ -776,6 +989,7 @@ class HierarchicalVisualizer:
         self.tree = TreeVisualizer(use_colors=use_colors)
         self.timeline = TimelineVisualizer()
         self.stats = StatisticsVisualizer()
+        self.context = ContextFlowVisualizer(use_colors=use_colors)
 
     def visualize_execution(self, solver) -> str:
         """
