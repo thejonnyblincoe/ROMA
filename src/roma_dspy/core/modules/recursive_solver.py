@@ -9,6 +9,7 @@ import dspy
 from ..engine.solve import RecursiveSolver
 from ..engine.dag import TaskDAG
 from ..signatures import TaskNode
+from ...visualizer import LLMTraceVisualizer
 
 
 class RecursiveSolverModule(dspy.Module):
@@ -49,11 +50,15 @@ class RecursiveSolverModule(dspy.Module):
             concurrency=concurrency,
         )
 
+        viz = LLMTraceVisualizer(show_metrics=False, show_summary=False, verbose=True)
+        trace = viz.visualize(self._solver)
+
         return dspy.Prediction(
             goal=goal,
             completed_task=completed_task,
             status=completed_task.status,
             result_text=str(completed_task.result) if completed_task.result is not None else None,
+            output_trace=trace,
         )
 
     async def aforward(
@@ -73,9 +78,13 @@ class RecursiveSolverModule(dspy.Module):
             concurrency=concurrency,
         )
 
+        viz = LLMTraceVisualizer(show_metrics=False, show_summary=False, verbose=True)
+        trace = viz.visualize(self._solver)
+
         return dspy.Prediction(
             goal=goal,
             completed_task=completed_task,
             status=completed_task.status,
             result_text=str(completed_task.result) if completed_task.result is not None else None,
+            output_trace=trace,
         )
