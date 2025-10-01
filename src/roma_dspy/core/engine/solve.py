@@ -312,15 +312,22 @@ class RecursiveSolver:
         depth: int
     ) -> Tuple[TaskNode, TaskDAG]:
         """Initialize task node and DAG for execution."""
-        # Convert string to TaskNode if needed
-        if isinstance(task, str):
-            task = TaskNode(goal=task, depth=depth, max_depth=self.max_depth)
-
         # Create DAG if not provided
         if dag is None:
             dag = TaskDAG()
-            dag.add_node(task)
             self.last_dag = dag  # Store for visualization
+
+        # Convert string to TaskNode if needed
+        if isinstance(task, str):
+            task = TaskNode(goal=task, depth=depth, max_depth=self.max_depth, execution_id=dag.execution_id)
+
+        # If task already exists but doesn't have execution_id, set it
+        if task.execution_id is None:
+            task = task.model_copy(update={'execution_id': dag.execution_id})
+
+        # Add to DAG if not already present
+        if task.task_id not in dag.graph:
+            dag.add_node(task)
 
         return task, dag
 

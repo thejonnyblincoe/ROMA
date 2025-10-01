@@ -25,15 +25,17 @@ class TaskDAG:
     - Comprehensive state management
     """
 
-    def __init__(self, dag_id: Optional[str] = None, parent_dag: Optional['TaskDAG'] = None):
+    def __init__(self, dag_id: Optional[str] = None, parent_dag: Optional['TaskDAG'] = None, execution_id: Optional[str] = None):
         """
         Initialize a new TaskDAG.
 
         Args:
             dag_id: Unique identifier for this DAG
             parent_dag: Parent DAG if this is a subgraph
+            execution_id: Unique identifier for this execution run
         """
         self.dag_id = dag_id or str(uuid4())
+        self.execution_id = execution_id or str(uuid4())
         self.graph = nx.DiGraph()
         self.parent_dag = parent_dag
         self.subgraphs: Dict[str, 'TaskDAG'] = {}
@@ -41,7 +43,8 @@ class TaskDAG:
             'created_at': datetime.now(),
             'updated_at': datetime.now(),
             'execution_started_at': None,
-            'execution_completed_at': None
+            'execution_completed_at': None,
+            'execution_id': self.execution_id
         }
 
     def add_node(
@@ -320,7 +323,7 @@ class TaskDAG:
             New TaskDAG instance for the subgraph
         """
         subgraph_id = f"{self.dag_id}_sub_{parent_task_id}"
-        subgraph = TaskDAG(dag_id=subgraph_id, parent_dag=self)
+        subgraph = TaskDAG(dag_id=subgraph_id, parent_dag=self, execution_id=self.execution_id)
 
         # Get parent task for depth calculation
         parent_task = self.get_node(parent_task_id)
@@ -767,3 +770,12 @@ class TaskDAG:
             repair_results["repairs_failed"].append(f"repair_failed: {e}")
 
         return repair_results
+
+    def get_execution_id(self) -> str:
+        """
+        Get the execution ID for this DAG.
+
+        Returns:
+            Execution ID string
+        """
+        return self.execution_id

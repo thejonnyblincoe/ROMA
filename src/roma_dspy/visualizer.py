@@ -33,7 +33,11 @@ def _resolve_visualization_inputs(
     elif isinstance(source, TaskNode):
         root_task = source
     elif source is not None:
-        resolved_dag = dag or getattr(source, "last_dag", None)
+        # Check if it's a RecursiveSolverModule wrapper
+        if hasattr(source, '_solver') and hasattr(source._solver, 'last_dag'):
+            resolved_dag = dag or source._solver.last_dag
+        else:
+            resolved_dag = dag or getattr(source, "last_dag", None)
 
     if resolved_dag and root_task is None and hasattr(resolved_dag, "graph"):
         try:
@@ -756,6 +760,622 @@ class StatisticsVisualizer:
         self.stats['performance']['total_time'] = total_time
 
 
+class ContextFlowVisualizer:
+    """
+    Visualizer for context flow between subtasks showing index-based dependencies.
+    Shows the actual XML-formatted context passed to LLMs.
+    """
+
+    def __init__(self, use_colors: bool = True):
+        """
+        Initialize context flow visualizer.
+
+        Args:
+            use_colors: Whether to use ANSI colors
+        """
+        self.use_colors = use_colors
+        self.rt_viz = RealTimeVisualizer(use_colors=use_colors)
+
+    def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None,
+                  show_full_context: bool = False) -> str:
+        """
+        Visualize context flow with index-based dependencies.
+
+        Args:
+            source: RecursiveSolver, TaskDAG, or TaskNode to visualize
+            dag: Optional DAG to visualize
+            show_full_context: If True, shows full context; if False, shows preview
+
+        Returns:
+            Formatted string showing context flow
+        """
+        # Access runtime and dag from source
+        runtime = None
+        resolved_dag = dag
+
+        # Try to get runtime and dag from various source types
+        if hasattr(source, '_solver'):
+            # DSPy module wrapper
+            runtime = source._solver.runtime
+            if resolved_dag is None:
+                resolved_dag = source._solver.last_dag
+        elif hasattr(source, 'runtime'):
+            # Direct runtime access
+            runtime = source.runtime
+            if resolved_dag is None and hasattr(source, 'last_dag'):
+                resolved_dag = source.last_dag
+
+        # Fallback to standard resolution if needed
+        if resolved_dag is None:
+            resolved_dag, _ = _resolve_visualization_inputs(source, dag)
+
+        if not resolved_dag:
+            return "No execution data available. Make sure you've run the task first."
+
+        if not runtime:
+            return "No runtime context store available."
+
+        lines = []
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+        lines.append(self.rt_viz.color("🔗 CONTEXT FLOW VISUALIZATION (Index-Based)", ColorCode.BOLD))
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+        lines.append("")
+
+        all_tasks = resolved_dag.get_all_tasks(include_subgraphs=True)
+
+        # Group tasks by their parent (subgraph)
+        subgraph_tasks = {}
+        for task in all_tasks:
+            if task.parent_id and task.node_type and task.node_type.value == "EXECUTE":
+                if task.parent_id not in subgraph_tasks:
+                    subgraph_tasks[task.parent_id] = []
+                subgraph_tasks[task.parent_id].append(task)
+
+        # Process each subgraph
+        for parent_id, tasks in subgraph_tasks.items():
+            parent_task = resolved_dag.get_node(parent_id) if parent_id in resolved_dag.graph else None
+            if parent_task and parent_task.subgraph_id:
+                lines.append(self.rt_viz.color("─" * 80, ColorCode.CYAN))
+                lines.append(f"📦 Subgraph: {self.rt_viz.color(parent_task.goal[:60] + '...', ColorCode.BRIGHT_BLUE)}")
+                lines.append(self.rt_viz.color("─" * 80, ColorCode.CYAN))
+
+                # Get tasks with their indices
+                indexed_tasks = []
+                for task in tasks:
+                    idx = runtime.context_store.get_task_index(parent_task.subgraph_id, task.task_id)
+                    if idx is not None:
+                        indexed_tasks.append((idx, task))
+
+                # Sort by index
+                indexed_tasks.sort(key=lambda x: x[0])
+
+                # Display each task
+                for idx, task in indexed_tasks:
+                    lines.append("")
+                    lines.append(self.rt_viz.color(f"[Subtask {idx}] {task.goal[:70]}", ColorCode.BRIGHT_GREEN))
+
+                    if task.dependencies:
+                        # Get dependency indices
+                        dep_indices = []
+                        for dep_id in task.dependencies:
+                            dep_idx = runtime.context_store.get_task_index(parent_task.subgraph_id, dep_id)
+                            if dep_idx is not None:
+                                dep_indices.append(dep_idx)
+
+                        if dep_indices:
+                            lines.append(f"  ⬅️  Dependencies: {self.rt_viz.color(str(sorted(dep_indices)), ColorCode.YELLOW)}")
+
+                            # Reconstruct the actual XML context
+                            context_parts = []
+                            for dep_id in task.dependencies:
+                                result_str = runtime.context_store.get_result(dep_id)
+                                if result_str:
+                                    dep_task = None
+                                    try:
+                                        dep_task, _ = resolved_dag.find_node(dep_id)
+                                    except ValueError:
+                                        pass
+
+                                    dep_idx = runtime.context_store.get_task_index(parent_task.subgraph_id, dep_id)
+                                    if dep_idx is not None:
+                                        context_entry = f'<subtask id="{dep_idx}">'
+                                        if dep_task:
+                                            context_entry += f"\n    <goal>{dep_task.goal}</goal>"
+                                        # Truncate output for display
+                                        if show_full_context:
+                                            context_entry += f"\n    <output>{result_str}</output>\n  </subtask>"
+                                        else:
+                                            output_preview = result_str[:150] + "..." if len(result_str) > 150 else result_str
+                                            context_entry += f"\n    <output>{output_preview}</output>\n  </subtask>"
+                                        context_parts.append(context_entry)
+
+                            if context_parts:
+                                full_context = "  <context>\n  " + "\n\n  ".join(context_parts) + "\n  </context>"
+                                lines.append(self.rt_viz.color("  📥 Context passed to LLM (XML format):", ColorCode.MAGENTA))
+                                for line in full_context.split('\n'):
+                                    lines.append(self.rt_viz.color(f"    {line}", ColorCode.DIM))
+                    else:
+                        lines.append(self.rt_viz.color("  ℹ️  No dependencies (independent task)", ColorCode.DIM))
+
+                    result_str = str(task.result) if task.result else "(no result)"
+                    if len(result_str) > 150:
+                        result_str = result_str[:150] + "..."
+                    lines.append(f"  ✅ Result: {self.rt_viz.color(result_str, ColorCode.GREEN)}")
+                    lines.append(self.rt_viz.color("  " + "-" * 76, ColorCode.DIM))
+
+        lines.append("")
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+        return "\n".join(lines)
+
+    def get_task_context_details(self, source: Any, subtask_index: int) -> str:
+        """
+        Get detailed context information for a specific task by index.
+
+        Args:
+            source: RecursiveSolver or module with runtime
+            subtask_index: The index of the task in its subgraph
+
+        Returns:
+            Formatted string with context details
+        """
+        # Access runtime and dag
+        runtime = None
+        dag = None
+
+        if hasattr(source, '_solver'):
+            runtime = source._solver.runtime
+            dag = source._solver.last_dag
+        elif hasattr(source, 'runtime'):
+            runtime = source.runtime
+            dag = getattr(source, 'last_dag', None)
+
+        if not runtime or not dag:
+            return "No runtime or DAG available."
+
+        # Find the task
+        for subgraph_id, index_map in runtime.context_store._index_maps.items():
+            if subtask_index in index_map:
+                task_id = index_map[subtask_index]
+                subgraph = dag.get_subgraph(subgraph_id)
+                if subgraph:
+                    try:
+                        task = subgraph.get_node(task_id)
+
+                        lines = []
+                        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+                        lines.append(self.rt_viz.color(f"📋 CONTEXT DETAILS FOR SUBTASK {subtask_index}", ColorCode.BOLD))
+                        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+                        lines.append(f"Goal: {self.rt_viz.color(task.goal, ColorCode.BRIGHT_BLUE)}")
+                        lines.append(self.rt_viz.color("-" * 80, ColorCode.DIM))
+
+                        # Get the context from execution history metadata
+                        executor_result = task.execution_history.get("executor")
+                        if executor_result and executor_result.metadata:
+                            context_received = executor_result.metadata.get("context_received")
+                            if context_received:
+                                lines.append(self.rt_viz.color("Context (from execution metadata):", ColorCode.MAGENTA))
+                                lines.append(self.rt_viz.color(context_received, ColorCode.DIM))
+                            else:
+                                lines.append(self.rt_viz.color("No context was passed to this task.", ColorCode.YELLOW))
+                        else:
+                            lines.append(self.rt_viz.color("No execution history available.", ColorCode.YELLOW))
+
+                        lines.append(self.rt_viz.color("-" * 80, ColorCode.DIM))
+                        result_preview = str(task.result)[:200] + "..." if len(str(task.result)) > 200 else str(task.result)
+                        lines.append(f"Result: {self.rt_viz.color(result_preview, ColorCode.GREEN)}")
+                        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+
+                        return "\n".join(lines)
+
+                    except ValueError:
+                        pass
+
+        return f"Subtask {subtask_index} not found."
+
+
+class LLMTraceVisualizer:
+    """
+    LLM-friendly execution trace visualizer for prompt optimization.
+
+    Generates a chronological, detailed trace of the entire execution flow
+    that is optimized for LLM consumption and analysis. Useful for:
+    - Prompt optimization and debugging
+    - Understanding module behavior
+    - Cost and performance analysis
+    - Reproducing execution flows
+    """
+
+    def __init__(self, show_metrics: bool = True, show_summary: bool = True, verbose: bool = True):
+        """
+        Initialize LLM trace visualizer.
+
+        Args:
+            show_metrics: Whether to display duration/tokens/cost for each module
+            show_summary: Whether to display execution summary at the end
+            verbose: Whether to show full inputs/outputs (True) or compact versions (False)
+        """
+        self.show_metrics = show_metrics
+        self.show_summary = show_summary
+        self.verbose = verbose
+
+    def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> str:
+        """
+        Generate LLM-friendly execution trace.
+
+        Args:
+            source: RecursiveSolver, TaskDAG, or TaskNode to visualize
+            dag: Optional DAG to visualize (defaults to solver.last_dag if available)
+
+        Returns:
+            String representation of the execution trace
+        """
+        dag, root_task = _resolve_visualization_inputs(source, dag)
+
+        if not dag and root_task is None:
+            return "No execution data available. Run solve() first."
+
+        # Find root task if not provided
+        if root_task is None and dag:
+            for node_id in dag.graph.nodes():
+                task = dag.get_node(node_id)
+                if task.is_root:
+                    root_task = task
+                    break
+
+        if not root_task:
+            return "No root task found in DAG."
+
+        lines = []
+        lines.append("=== EXECUTION TRACE ===")
+        lines.append(f"Root Goal: {root_task.goal}")
+        lines.append(f"Max Depth: {root_task.max_depth}")
+
+        # Format timestamp properly
+        start_time = self._normalize_timestamp(root_task.created_at)
+        lines.append(f"Start Time: {start_time.isoformat()}")
+        lines.append("")
+
+        # Collect all execution events chronologically
+        events = self._collect_execution_events(dag, root_task)
+
+        # Format trace
+        self._format_trace(lines, events, dag)
+
+        # Add summary if enabled
+        if self.show_summary:
+            lines.append("")
+            lines.append("=== EXECUTION SUMMARY ===")
+            self._add_summary(lines, events, root_task)
+
+        return "\n".join(lines)
+
+    def _collect_execution_events(self, dag: TaskDAG, root_task: TaskNode) -> List[Dict[str, Any]]:
+        """Collect all execution events in chronological order."""
+        events = []
+        all_tasks = dag.get_all_tasks(include_subgraphs=True)
+
+        for task in all_tasks:
+            # Create task entry event
+            task_event = {
+                'type': 'task_start',
+                'timestamp': self._normalize_timestamp(task.created_at),
+                'task': task,
+                'depth': task.depth
+            }
+            events.append(task_event)
+
+            # Add module execution events
+            for module_name, module_result in task.execution_history.items():
+                module_event = {
+                    'type': 'module_execution',
+                    'timestamp': self._normalize_timestamp(module_result.timestamp),
+                    'task': task,
+                    'module_name': module_name,
+                    'module_result': module_result,
+                    'depth': task.depth
+                }
+                events.append(module_event)
+
+            # Add task completion event
+            if task.completed_at:
+                completion_event = {
+                    'type': 'task_complete',
+                    'timestamp': self._normalize_timestamp(task.completed_at),
+                    'task': task,
+                    'depth': task.depth
+                }
+                events.append(completion_event)
+
+        # Sort by timestamp
+        events.sort(key=lambda e: e['timestamp'])
+        return events
+
+    def _normalize_timestamp(self, ts: datetime) -> datetime:
+        """Normalize timestamp to timezone-naive for consistent comparison."""
+        if ts.tzinfo is not None:
+            # Convert to UTC and remove timezone info
+            return ts.replace(tzinfo=None)
+        return ts
+
+    def _format_trace(self, lines: List[str], events: List[Dict[str, Any]], dag: TaskDAG):
+        """Format execution trace from events."""
+        # Group events by task to ensure proper ordering
+        task_events = {}
+        for event in events:
+            task_id = event['task'].task_id
+            if task_id not in task_events:
+                task_events[task_id] = []
+            task_events[task_id].append(event)
+
+        # Process tasks in chronological order by their first event
+        task_order = []
+        for task_id, tevents in task_events.items():
+            first_timestamp = min(e['timestamp'] for e in tevents)
+            task_order.append((first_timestamp, task_id, tevents))
+
+        task_order.sort(key=lambda x: x[0])
+
+        # Now format each task's execution in order
+        for _, task_id, tevents in task_order:
+            # Sort this task's events
+            tevents.sort(key=lambda e: e['timestamp'])
+
+            task = tevents[0]['task']
+            depth = tevents[0]['depth']
+            indent = "  " * depth
+
+            # Print task header
+            lines.append(f"{indent}[DEPTH {depth}] Task: {task.goal}")
+            lines.append(f"{indent}  ID: {task.task_id[:8]}...")
+            if task.parent_id:
+                lines.append(f"{indent}  Parent: {task.parent_id[:8]}...")
+            if task.dependencies:
+                dep_list = [dep_id[:8] + "..." for dep_id in task.dependencies]
+                lines.append(f"{indent}  Dependencies: {dep_list}")
+
+            # Print module executions for this task
+            for event in tevents:
+                if event['type'] == 'module_execution':
+                    module_name = event['module_name']
+                    module_result = event['module_result']
+
+                    lines.append("")
+                    lines.append(f"{indent}  MODULE: {module_name.capitalize()}")
+
+                    # Format inputs
+                    lines.append(f"{indent}    Input:")
+                    self._format_io(lines, module_result.input, indent + "      ")
+
+                    # Format outputs
+                    lines.append(f"{indent}    Output:")
+                    self._format_io(lines, module_result.output, indent + "      ")
+
+                    # Add metrics if enabled
+                    if self.show_metrics:
+                        metrics_parts = [f"Duration: {module_result.duration:.2f}s"]
+                        if module_result.token_metrics:
+                            tm = module_result.token_metrics
+                            if tm.total_tokens > 0:
+                                metrics_parts.append(f"Tokens: {tm.prompt_tokens}/{tm.completion_tokens}")
+                            if tm.cost > 0:
+                                metrics_parts.append(f"Cost: ${tm.cost:.6f}")
+                        lines.append(f"{indent}    {' | '.join(metrics_parts)}")
+
+            # Print completion status
+            lines.append("")
+            lines.append(f"{indent}  Status: -> {task.status.value}")
+            if task.result and self.verbose:
+                result_str = str(task.result)
+                if len(result_str) > 200:
+                    result_str = result_str[:200] + "..."
+                lines.append(f"{indent}  Result: {result_str}")
+
+            lines.append("")
+
+    def _format_io(self, lines: List[str], data: Any, indent: str):
+        """Format input/output data."""
+        if data is None:
+            lines.append(f"{indent}(none)")
+            return
+
+        # Handle dspy.Prediction objects
+        if hasattr(data, '__dict__') and hasattr(data, '_store'):
+            # DSPy prediction object
+            for key, value in data.__dict__.items():
+                if key.startswith('_'):
+                    continue
+                formatted_value = self._format_value(value)
+                lines.append(f"{indent}{key}: {formatted_value}")
+        elif isinstance(data, dict):
+            for key, value in data.items():
+                formatted_value = self._format_value(value)
+                lines.append(f"{indent}{key}: {formatted_value}")
+        elif isinstance(data, str):
+            if self.verbose or len(data) <= 200:
+                lines.append(f"{indent}{data}")
+            else:
+                lines.append(f"{indent}{data[:200]}...")
+        else:
+            formatted_value = self._format_value(data)
+            lines.append(f"{indent}{formatted_value}")
+
+    def _format_value(self, value: Any) -> str:
+        """Format a single value for display."""
+        if value is None:
+            return "null"
+        elif isinstance(value, str):
+            if self.verbose or len(value) <= 100:
+                return f'"{value}"'
+            else:
+                return f'"{value[:100]}..."'
+        elif isinstance(value, (list, tuple)):
+            if not value:
+                return "[]"
+            elif len(value) <= 3 or self.verbose:
+                formatted_items = [self._format_value(item) for item in value]
+                return f"[{', '.join(formatted_items)}]"
+            else:
+                formatted_items = [self._format_value(item) for item in value[:3]]
+                return f"[{', '.join(formatted_items)}, ... ({len(value)} total)]"
+        elif isinstance(value, dict):
+            if not value:
+                return "{}"
+            items = list(value.items())
+            if len(items) <= 3 or self.verbose:
+                formatted = ", ".join(f"{k}: {self._format_value(v)}" for k, v in items)
+                return f"{{{formatted}}}"
+            else:
+                formatted = ", ".join(f"{k}: {self._format_value(v)}" for k, v in items[:3])
+                return f"{{{formatted}, ... ({len(items)} total)}}"
+        elif hasattr(value, '__dict__'):
+            # Pydantic model or object
+            if hasattr(value, 'model_dump'):
+                return self._format_value(value.model_dump())
+            elif hasattr(value, 'dict'):
+                return self._format_value(value.dict())
+            else:
+                return str(value)
+        else:
+            return str(value)
+
+    def _add_summary(self, lines: List[str], events: List[Dict[str, Any]], root_task: TaskNode):
+        """Add execution summary."""
+        # Calculate metrics
+        total_duration = 0.0
+        total_tokens = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_cost = 0.0
+        task_count = 0
+        completed_count = 0
+        failed_count = 0
+        max_depth = 0
+
+        seen_tasks = set()
+
+        for event in events:
+            task = event['task']
+
+            # Track unique tasks
+            if task.task_id not in seen_tasks:
+                seen_tasks.add(task.task_id)
+                task_count += 1
+                if task.status == TaskStatus.COMPLETED:
+                    completed_count += 1
+                elif task.status == TaskStatus.FAILED:
+                    failed_count += 1
+                max_depth = max(max_depth, task.depth)
+
+            # Aggregate module metrics
+            if event['type'] == 'module_execution':
+                module_result = event['module_result']
+                total_duration += module_result.duration
+
+                if module_result.token_metrics:
+                    tm = module_result.token_metrics
+                    total_prompt_tokens += tm.prompt_tokens
+                    total_completion_tokens += tm.completion_tokens
+                    total_tokens += tm.total_tokens
+                    total_cost += tm.cost
+
+        # Format summary
+        if root_task.completed_at and root_task.created_at:
+            wall_time = (root_task.completed_at - root_task.created_at).total_seconds()
+            lines.append(f"Wall Time: {wall_time:.2f}s")
+
+        lines.append(f"Total Module Time: {total_duration:.2f}s")
+
+        if self.show_metrics and total_tokens > 0:
+            lines.append(f"Total Tokens: {total_prompt_tokens}/{total_completion_tokens} ({total_tokens} total)")
+
+        if self.show_metrics and total_cost > 0:
+            lines.append(f"Total Cost: ${total_cost:.6f}")
+
+        lines.append(f"Tasks: {task_count} total ({completed_count} completed, {failed_count} failed)")
+        lines.append(f"Max Depth Reached: {max_depth}")
+
+    def export_trace_json(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> Dict[str, Any]:
+        """
+        Export execution trace as JSON for programmatic analysis.
+
+        Args:
+            source: RecursiveSolver, TaskDAG, or TaskNode to export
+            dag: Optional DAG to export
+
+        Returns:
+            Dictionary with complete execution trace data
+        """
+        dag, root_task = _resolve_visualization_inputs(source, dag)
+
+        if not dag or not root_task:
+            return {"error": "No execution data available"}
+
+        events = self._collect_execution_events(dag, root_task)
+
+        # Convert events to JSON-serializable format
+        trace_data = {
+            "root_goal": root_task.goal,
+            "max_depth": root_task.max_depth,
+            "start_time": self._normalize_timestamp(root_task.created_at).isoformat(),
+            "events": []
+        }
+
+        for event in events:
+            event_data = {
+                "type": event['type'],
+                "timestamp": self._normalize_timestamp(event['timestamp']).isoformat(),
+                "depth": event['depth'],
+                "task_id": event['task'].task_id,
+                "task_goal": event['task'].goal,
+            }
+
+            if event['type'] == 'module_execution':
+                module_result = event['module_result']
+                event_data['module_name'] = event['module_name']
+                event_data['duration'] = module_result.duration
+
+                # Serialize input/output
+                event_data['input'] = self._serialize_for_json(module_result.input)
+                event_data['output'] = self._serialize_for_json(module_result.output)
+
+                if module_result.token_metrics:
+                    tm = module_result.token_metrics
+                    event_data['token_metrics'] = {
+                        'prompt_tokens': tm.prompt_tokens,
+                        'completion_tokens': tm.completion_tokens,
+                        'total_tokens': tm.total_tokens,
+                        'cost': tm.cost,
+                        'model': tm.model
+                    }
+
+            elif event['type'] == 'task_complete':
+                event_data['status'] = event['task'].status.value
+                event_data['result'] = self._serialize_for_json(event['task'].result)
+
+            trace_data['events'].append(event_data)
+
+        return trace_data
+
+    def _serialize_for_json(self, obj: Any) -> Any:
+        """Serialize object for JSON export."""
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, (list, tuple)):
+            return [self._serialize_for_json(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: self._serialize_for_json(v) for k, v in obj.items()}
+        elif hasattr(obj, 'model_dump'):
+            return self._serialize_for_json(obj.model_dump())
+        elif hasattr(obj, 'dict'):
+            return self._serialize_for_json(obj.dict())
+        elif hasattr(obj, '__dict__'):
+            return {k: self._serialize_for_json(v) for k, v in obj.__dict__.items() if not k.startswith('_')}
+        else:
+            return str(obj)
+
+
 class HierarchicalVisualizer:
     """
     Main visualizer class that combines all visualization modes.
@@ -767,7 +1387,7 @@ class HierarchicalVisualizer:
         Initialize hierarchical visualizer.
 
         Args:
-            mode: Visualization mode ("realtime", "tree", "timeline", "stats", "all")
+            mode: Visualization mode ("realtime", "tree", "timeline", "stats", "context", "llm_trace", "all")
             use_colors: Whether to use colored output
             verbose: Whether to show detailed information
         """
@@ -776,6 +1396,8 @@ class HierarchicalVisualizer:
         self.tree = TreeVisualizer(use_colors=use_colors)
         self.timeline = TimelineVisualizer()
         self.stats = StatisticsVisualizer()
+        self.context = ContextFlowVisualizer(use_colors=use_colors)
+        self.llm_trace = LLMTraceVisualizer(show_metrics=True, show_summary=True, verbose=verbose)
 
     def visualize_execution(self, solver) -> str:
         """
@@ -799,6 +1421,10 @@ class HierarchicalVisualizer:
 
         if self.mode in ["stats", "all"]:
             output.append(self.stats.visualize(solver))
+            output.append("")
+
+        if self.mode in ["llm_trace"]:
+            output.append(self.llm_trace.visualize(solver))
             output.append("")
 
         return "\n".join(output)

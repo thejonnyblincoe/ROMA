@@ -6,7 +6,8 @@ from .base_models.results import (
     PlannerResult,
     ExecutorResult,
 )
-from ...types import NodeType
+from .base_models.task_node import TaskNode
+from ...types import NodeType, TaskStatus
 
 
 class AtomizerSignature(dspy.Signature):
@@ -25,7 +26,7 @@ class PlannerSignature(dspy.Signature):
     goal: str = dspy.InputField(description="Task that needs to be decomposed into subtasks through planner")
     subtasks: List[SubTask] = dspy.OutputField(description="List of generated subtasks from planner")
     #TODO: This should be revised, it shouldn't go from str to List[str], perhaps it should be int to List[int]
-    dependencies_graph: Optional[Dict[str, List[str]]] = dspy.OutputField(default=None, description="Task dependency mapping")
+    dependencies_graph: Optional[Dict[str, List[str]]] = dspy.OutputField(default=None, description="Task dependency mapping, should map subtask ids by int only")
 
 class ExecutorSignature(dspy.Signature):
     """
@@ -34,6 +35,7 @@ class ExecutorSignature(dspy.Signature):
     Contains the output of atomic task execution.
     """
     goal: str = dspy.InputField(description="Task that needs to be executed")
+    context: Optional[str] = dspy.InputField(default=None, description="Context from dependent tasks (left-to-right flow)")
     output: str = dspy.OutputField(description="Execution result")
     sources: Optional[List[str]] = dspy.OutputField(default_factory=list, description="Information sources used")
 

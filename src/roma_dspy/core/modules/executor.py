@@ -33,6 +33,76 @@ class Executor(BaseModule):
             **strategy_kwargs,
         )
 
+    def forward(
+        self,
+        goal: str,
+        context: Optional[str] = None,
+        *,
+        tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        call_context: Optional[Dict[str, Any]] = None,
+        call_params: Optional[Dict[str, Any]] = None,
+        **call_kwargs: Any,
+    ):
+        runtime_tools = self._merge_tools(self._tools, tools)
+
+        ctx = dict(self._context_defaults)
+        if call_context:
+            ctx.update(call_context)
+        ctx.setdefault("lm", self._lm)
+
+        extra = dict(call_params or {})
+        if call_kwargs:
+            extra.update(call_kwargs)
+        if config is not None:
+            extra["config"] = config
+        if runtime_tools:
+            extra["tools"] = runtime_tools
+
+        target_method = getattr(self._predictor, "forward", None)
+        filtered = self._filter_kwargs(target_method, extra)
+
+        with dspy.context(**ctx):
+            return self._predictor(goal=goal, context=context, **filtered)
+
+    async def aforward(
+        self,
+        goal: str,
+        context: Optional[str] = None,
+        *,
+        tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        call_context: Optional[Dict[str, Any]] = None,
+        call_params: Optional[Dict[str, Any]] = None,
+        **call_kwargs: Any,
+    ):
+        runtime_tools = self._merge_tools(self._tools, tools)
+
+        ctx = dict(self._context_defaults)
+        if call_context:
+            ctx.update(call_context)
+        ctx.setdefault("lm", self._lm)
+
+        extra = dict(call_params or {})
+        if call_kwargs:
+            extra.update(call_kwargs)
+        if config is not None:
+            extra["config"] = config
+        if runtime_tools:
+            extra["tools"] = runtime_tools
+
+        method_for_filter = getattr(self._predictor, "aforward", None) or getattr(self._predictor, "forward", None)
+        filtered = self._filter_kwargs(method_for_filter, extra)
+
+        with dspy.context(**ctx):
+            acall = getattr(self._predictor, "acall", None)
+            payload = dict(goal=goal, context=context)
+            if acall is not None and hasattr(self._predictor, "aforward"):
+                return await acall(**payload, **filtered)
+            if acall is not None:
+                return await acall(**payload, **filtered)
+            return self._predictor(**payload, **filtered)
+
     @classmethod
     def from_provider(
         cls,
