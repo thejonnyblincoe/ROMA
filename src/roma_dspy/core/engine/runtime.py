@@ -664,6 +664,7 @@ class ModuleRuntime:
                 parent_id=task.task_id,
                 depth=task.depth + 1,
                 max_depth=task.max_depth,
+                execution_id=task.execution_id or dag.execution_id,
             )
             subtask_nodes.append(subtask_node)
 

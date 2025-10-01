@@ -32,6 +32,7 @@ class TaskNode(BaseModel):
     task_id: str = Field(default_factory=lambda: str(uuid4()), description="Unique task identifier")
     parent_id: Optional[str] = Field(default=None, description="Parent task ID")
     goal: str = Field(default="", min_length=1, description="Task objective")
+    execution_id: Optional[str] = Field(default=None, description="Unique identifier for this execution run")
 
     # Recursion depth tracking
     depth: int = Field(default=0, description="Current recursion depth")
@@ -713,3 +714,12 @@ class TaskNode(BaseModel):
                         lines.append(child_lines)
 
         return "\n".join(lines)
+
+    def get_execution_id(self) -> Optional[str]:
+        """
+        Get the execution ID for this task.
+
+        Returns:
+            Execution ID string or None if not set
+        """
+        return self.execution_id
