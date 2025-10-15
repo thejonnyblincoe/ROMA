@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional, Dict, Any, FrozenSet, List
-from ....types import (
+from roma_dspy.types import (
     TaskType,
     NodeType,
     TaskStatus,
@@ -15,24 +15,61 @@ from uuid import uuid4
 class TaskNode(BaseModel):
     """
     Immutable task node representing a unit of work in ROMA's execution graph.
-    
+
     Key principles:
     - Completely immutable (frozen=True) for thread safety
     - State transitions return new instances
     - Typed relationships using frozensets
-    
+
     Lifecycle:
     1. Created with PENDING status
     2. Atomizer determines PLAN or EXECUTE node_type
     3. State transitions through READY → EXECUTING → COMPLETED/FAILED
     4. Parent nodes AGGREGATE results from children
     """
-    
+
+    # Enforce true immutability at Pydantic level
+    model_config = ConfigDict(
+        frozen=True,  # Prevents all direct attribute assignment
+        validate_assignment=False,  # Not needed with frozen
+        arbitrary_types_allowed=True,  # Allow custom types
+        extra='forbid'  # Reject unknown fields to catch errors early
+    )
+
     # Identity and structure
     task_id: str = Field(default_factory=lambda: str(uuid4()), description="Unique task identifier")
+
+    def model_copy(self, *, update: Optional[Dict[str, Any]] = None, deep: bool = False) -> "TaskNode":
+        """
+        Override model_copy to preserve task_id (which has default_factory that would regenerate it).
+
+        CRITICAL BUG FIX: task_id has default_factory=uuid4, so Pydantic regenerates it
+        unless explicitly included in the update dict. This caused "Task X not in DAG" errors
+        when subtasks were created with model_copy calls.
+
+        Args:
+            update: Dict of fields to update
+            deep: Whether to perform deep copy (passed to parent)
+
+        Returns:
+            New TaskNode instance with task_id preserved
+        """
+        from loguru import logger
+
+        if update is None:
+            update = {}
+
+        # Always preserve task_id unless explicitly overridden
+        if 'task_id' not in update:
+            logger.debug(f"[TaskNode.model_copy] Preserving task_id: {self.task_id[:8]}...")
+            update['task_id'] = self.task_id
+        else:
+            logger.debug(f"[TaskNode.model_copy] task_id explicitly set in update: {update['task_id'][:8]}...")
+
+        return super().model_copy(update=update, deep=deep)
     parent_id: Optional[str] = Field(default=None, description="Parent task ID")
     goal: str = Field(default="", min_length=1, description="Task objective")
-    execution_id: Optional[str] = Field(default=None, description="Unique identifier for this execution run")
+    execution_id: str = Field(..., description="Required unique identifier for execution run isolation")
 
     # Recursion depth tracking
     depth: int = Field(default=0, description="Current recursion depth")
@@ -167,6 +204,25 @@ class TaskNode(BaseModel):
             'version': self.version + 1,
             **updates
         }
+
+        # Set timestamps based on restored status
+        if status is not None:
+            if status == TaskStatus.COMPLETED and not self.completed_at:
+                restore_updates['completed_at'] = datetime.now(timezone.utc)
+            if status == TaskStatus.EXECUTING and not self.started_at:
+                restore_updates['started_at'] = datetime.now(timezone.utc)
+
+            # Add transition entry for auditability
+            from roma_dspy.types.module_result import StateTransition
+            transition = StateTransition(
+                from_state=self.status.value,
+                to_state=status.value,
+                timestamp=datetime.now(timezone.utc),
+                metadata={'restored': True, 'checkpoint_recovery': True}
+            )
+            new_transitions = list(self.state_transitions)
+            new_transitions.append(transition)
+            restore_updates['state_transitions'] = new_transitions
 
         if result is not None:
             restore_updates['result'] = result

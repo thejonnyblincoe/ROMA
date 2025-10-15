@@ -9,11 +9,11 @@ import time
 import asyncio
 from typing import Callable, Dict, Any, Optional
 
-from src.roma_dspy.types.resilience_types import (
+from roma_dspy.types.resilience_types import (
     CircuitState,
     CircuitOpenError
 )
-from src.roma_dspy.types.resilience_models import (
+from roma_dspy.types.resilience_models import (
     CircuitBreakerConfig,
     CircuitMetrics,
     FailureContext

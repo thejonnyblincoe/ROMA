@@ -3,12 +3,13 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from src.roma_dspy.core.engine.runtime import ModuleRuntime
-from src.roma_dspy.resilience import module_circuit_breaker
-from src.roma_dspy.core.engine.dag import TaskDAG
-from src.roma_dspy.core.modules import Atomizer, Planner, Executor, Aggregator
-from src.roma_dspy.core.signatures import TaskNode
-from src.roma_dspy.types import TaskType, TaskStatus, AgentType
+from roma_dspy.core.engine.runtime import ModuleRuntime
+from roma_dspy.core.registry import AgentRegistry
+from roma_dspy.resilience import module_circuit_breaker
+from roma_dspy.core.engine.dag import TaskDAG
+from roma_dspy.core.modules import Atomizer, Planner, Executor, Aggregator
+from roma_dspy.core.signatures import TaskNode
+from roma_dspy.types import TaskType, TaskStatus, AgentType
 
 
 class TestErrorPropagation:
@@ -33,13 +34,17 @@ class TestErrorPropagation:
 
     @pytest.fixture
     def runtime(self, mock_modules):
-        """Create ModuleRuntime with mocked modules."""
-        return ModuleRuntime(
-            atomizer=mock_modules['atomizer'],
-            planner=mock_modules['planner'],
-            executor=mock_modules['executor'],
-            aggregator=mock_modules['aggregator']
-        )
+        """Create ModuleRuntime with mocked registry."""
+        # Create a mock registry that returns our mock modules
+        mock_registry = Mock(spec=AgentRegistry)
+        mock_registry.get_agent.side_effect = lambda agent_type, task_type=None: mock_modules[{
+            AgentType.ATOMIZER: 'atomizer',
+            AgentType.PLANNER: 'planner',
+            AgentType.EXECUTOR: 'executor',
+            AgentType.AGGREGATOR: 'aggregator'
+        }[agent_type]]
+
+        return ModuleRuntime(registry=mock_registry)
 
     @pytest.fixture
     def sample_task(self):
@@ -48,7 +53,8 @@ class TestErrorPropagation:
             task_id="error_test_task",
             goal="Task that will fail for testing",
             task_type=TaskType.THINK,
-            status=TaskStatus.PENDING
+            status=TaskStatus.PENDING,
+            execution_id="test_execution"
         )
 
     @pytest.fixture
@@ -116,21 +122,6 @@ class TestErrorPropagation:
 
     # ==================== Module Error Handling Tests ====================
 
-    def test_atomize_error_handling(self, runtime, mock_modules, sample_task, test_dag):
-        """Test atomizer error handling and context enhancement."""
-        # Setup mock to raise exception - need to mock both __call__ and forward
-        error = RuntimeError("Atomization failed")
-        mock_modules['atomizer'].side_effect = error  # For __call__
-        mock_modules['atomizer'].forward.side_effect = error  # For forward
-
-        with pytest.raises(RuntimeError) as exc_info:
-            runtime.atomize(sample_task, test_dag)
-
-        # Verify error was enhanced
-        error_msg = str(exc_info.value)
-        assert "[ATOMIZER]" in error_msg
-        assert sample_task.task_id in error_msg
-
     @pytest.mark.asyncio
     async def test_atomize_async_error_handling(self, runtime, mock_modules, sample_task, test_dag):
         """Test async atomizer error handling."""
@@ -143,21 +134,6 @@ class TestErrorPropagation:
         # Verify error was enhanced
         error_msg = str(exc_info.value)
         assert "[ATOMIZER]" in error_msg
-        assert sample_task.task_id in error_msg
-
-    def test_plan_error_handling(self, runtime, mock_modules, sample_task, test_dag):
-        """Test planner error handling and context enhancement."""
-        # Setup mock to raise exception - need to mock both __call__ and forward
-        error = TimeoutError("LLM timeout")
-        mock_modules['planner'].side_effect = error  # For __call__
-        mock_modules['planner'].forward.side_effect = error  # For forward
-
-        with pytest.raises(TimeoutError) as exc_info:
-            runtime.plan(sample_task, test_dag)
-
-        # Verify error was enhanced
-        error_msg = str(exc_info.value)
-        assert "[PLANNER]" in error_msg
         assert sample_task.task_id in error_msg
 
     @pytest.mark.asyncio
@@ -174,21 +150,6 @@ class TestErrorPropagation:
         assert "[PLANNER]" in error_msg
         assert sample_task.task_id in error_msg
 
-    def test_execute_error_handling(self, runtime, mock_modules, sample_task, test_dag):
-        """Test executor error handling and context enhancement."""
-        # Setup mock to raise exception - need to mock both __call__ and forward
-        error = PermissionError("Access denied")
-        mock_modules['executor'].side_effect = error  # For __call__
-        mock_modules['executor'].forward.side_effect = error  # For forward
-
-        with pytest.raises(PermissionError) as exc_info:
-            runtime.execute(sample_task, test_dag)
-
-        # Verify error was enhanced
-        error_msg = str(exc_info.value)
-        assert "[EXECUTOR]" in error_msg
-        assert sample_task.task_id in error_msg
-
     @pytest.mark.asyncio
     async def test_execute_async_error_handling(self, runtime, mock_modules, sample_task, test_dag):
         """Test async executor error handling."""
@@ -201,24 +162,6 @@ class TestErrorPropagation:
         # Verify error was enhanced
         error_msg = str(exc_info.value)
         assert "[EXECUTOR]" in error_msg
-        assert sample_task.task_id in error_msg
-
-    def test_aggregate_error_handling(self, runtime, mock_modules, sample_task, test_dag):
-        """Test aggregator error handling and context enhancement."""
-        # Set task to PLAN_DONE status so aggregation runs - use restore_state to bypass transition validation
-        sample_task = sample_task.restore_state(status=TaskStatus.PLAN_DONE)
-
-        # Setup mock to raise exception - need to mock both __call__ and forward
-        error = KeyError("Missing result key")
-        mock_modules['aggregator'].side_effect = error  # For __call__
-        mock_modules['aggregator'].forward.side_effect = error  # For forward
-
-        with pytest.raises(KeyError) as exc_info:
-            runtime.aggregate(sample_task, None, test_dag)
-
-        # Verify error was enhanced
-        error_msg = str(exc_info.value)
-        assert "[AGGREGATOR]" in error_msg
         assert sample_task.task_id in error_msg
 
     @pytest.mark.asyncio
@@ -286,12 +229,11 @@ class TestErrorPropagation:
 
     # ==================== Module Decorator Integration Tests ====================
 
-    @patch('src.roma_dspy.core.engine.runtime.measure_execution_time')
-    @patch('src.roma_dspy.core.engine.runtime.with_module_resilience')
+    @patch('roma_dspy.core.engine.runtime.measure_execution_time')
+    @patch('roma_dspy.core.engine.runtime.with_module_resilience')
     def test_resilience_decorators_applied(self, mock_resilience, mock_timing, runtime):
         """Test that resilience decorators are properly applied to module methods."""
-        # Verify decorators are applied to the unified execution methods
-        assert hasattr(runtime, '_execute_module')
+        # Verify decorators are applied to the async execution method
         assert hasattr(runtime, '_async_execute_module')
 
         # Verify error context enhancement is available
@@ -340,7 +282,8 @@ class TestErrorPropagation:
             goal="Complex task with detailed information for testing error context",
             task_type=TaskType.CODE_INTERPRET,
             status=TaskStatus.EXECUTING,
-            depth=3
+            depth=3,
+            execution_id="test_execution"
         )
 
         error = RuntimeError("Detailed task failed")
@@ -366,7 +309,8 @@ class TestErrorPropagation:
                 task_id=f"task_{task_type.value}",
                 goal=f"Test {task_type.value} task",
                 task_type=task_type,
-                status=TaskStatus.EXECUTING
+                status=TaskStatus.EXECUTING,
+                execution_id="test_execution"
             )
 
             error = ValueError(f"Failed {task_type.value} task")

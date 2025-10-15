@@ -3,27 +3,31 @@ Recursive solver for hierarchical task decomposition with depth constraints.
 """
 
 import asyncio
-import logging
 import warnings
-from typing import Callable, Optional, Union, Tuple, TYPE_CHECKING
+from datetime import datetime, UTC
+from typing import Callable, Optional, Union, Tuple, Dict, List, TYPE_CHECKING
 
 import dspy
+from loguru import logger
 
-from src.roma_dspy.core.engine import TaskDAG
-from src.roma_dspy.core.engine.event_loop import EventLoopController
-from src.roma_dspy.core.engine.runtime import ModuleRuntime
-from src.roma_dspy.core.modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from src.roma_dspy.core.signatures import TaskNode
-from src.roma_dspy.types import TaskStatus, AgentType
-from src.roma_dspy.types.checkpoint_types import CheckpointTrigger
-from src.roma_dspy.types.checkpoint_models import CheckpointConfig
-from src.roma_dspy.resilience.checkpoint_manager import CheckpointManager
+from roma_dspy.core.engine import TaskDAG
+from roma_dspy.core.engine.event_loop import EventLoopController
+from roma_dspy.core.engine.runtime import ModuleRuntime
+from roma_dspy.core.registry import AgentRegistry
+from roma_dspy.core.factory.agent_factory import AgentFactory
+from roma_dspy.core.signatures import TaskNode
+from roma_dspy.core.storage import FileStorage, PostgresStorage
+from roma_dspy.core.context import ContextManager, ExecutionContext
+from roma_dspy.types import TaskStatus, AgentType, ExecutionEventType
+from roma_dspy.types.checkpoint_types import CheckpointTrigger
+from roma_dspy.types.checkpoint_models import CheckpointConfig
+from roma_dspy.resilience.checkpoint_manager import CheckpointManager
+from roma_dspy.config.schemas.root import ROMAConfig
+from roma_dspy.core.observability import MLflowManager
+from roma_dspy.tools.base.manager import ToolkitManager
 
 if TYPE_CHECKING:
-    from src.roma_dspy.config.schemas.root import ROMAConfig
-
-# Configure logging
-logger = logging.getLogger(__name__)
+    pass
 
 # Suppress DSPy warnings about forward() usage
 warnings.filterwarnings("ignore", message="Calling module.forward.*is discouraged")
@@ -45,13 +49,8 @@ class RecursiveSolver:
     def __init__(
         self,
         config: Optional["ROMAConfig"] = None,
-        atomizer: Optional[Atomizer] = None,
-        planner: Optional[Planner] = None,
-        executor: Optional[Executor] = None,
-        aggregator: Optional[Aggregator] = None,
-        verifier: Optional[Verifier] = None,
-        max_depth: int = 2,
-        lm: Optional[dspy.LM] = None,
+        registry: Optional[AgentRegistry] = None,
+        max_depth: Optional[int] = None,
         enable_logging: bool = False,
         enable_checkpoints: bool = True,
         checkpoint_config: Optional[CheckpointConfig] = None
@@ -61,83 +60,170 @@ class RecursiveSolver:
 
         Args:
             config: ROMAConfig instance with complete configuration
-            atomizer: Module for determining task atomicity (overrides config)
-            planner: Module for task decomposition (overrides config)
-            executor: Module for atomic task execution (overrides config)
-            aggregator: Module for result synthesis (overrides config)
-            verifier: Module for result validation (overrides config)
+            registry: Pre-configured AgentRegistry (overrides config)
             max_depth: Maximum recursion depth (overrides config)
-            lm: Language model to use (legacy parameter)
             enable_logging: Whether to enable debug logging
+            enable_checkpoints: Whether to enable checkpointing
             checkpoint_config: Checkpoint configuration (overrides config)
         """
-        # Initialize modules based on config or defaults
-        if config is not None:
-            self._init_from_config(config, atomizer, planner, executor, aggregator, verifier, max_depth)
+        # Store config for later use (needed for FileStorage creation)
+        self.config = config
+
+        # Initialize registry from config or use provided
+        if registry is not None:
+            self.registry = registry
+            self.max_depth = max_depth or 2
+        elif config is not None:
+            factory = AgentFactory()
+            self.registry = AgentRegistry()
+            self.registry.initialize_from_config(config, factory)
+            self.max_depth = max_depth or config.runtime.max_depth
         else:
-            self._init_from_parameters(atomizer, planner, executor, aggregator, verifier, max_depth, lm)
+            raise ValueError("Either 'config' or 'registry' must be provided")
+
+        # Initialize Postgres storage if enabled
+        self.postgres_storage = None
+        if config and config.storage and config.storage.postgres and config.storage.postgres.enabled:
+            self.postgres_storage = PostgresStorage(config.storage.postgres)
 
         # Initialize checkpoint system
         self.checkpoint_enabled = enable_checkpoints
-        checkpoint_cfg = checkpoint_config or CheckpointConfig()
-        self.checkpoint_manager = CheckpointManager(checkpoint_cfg) if enable_checkpoints else None
-
-        # Initialize runtime
-        self.runtime = ModuleRuntime(
-            atomizer=self.atomizer,
-            planner=self.planner,
-            executor=self.executor,
-            aggregator=self.aggregator,
-            verifier=self.verifier,
+        checkpoint_cfg = checkpoint_config or (config.resilience.checkpoint if config else CheckpointConfig())
+        self.checkpoint_manager = (
+            CheckpointManager(checkpoint_cfg, postgres_storage=self.postgres_storage)
+            if enable_checkpoints else None
         )
 
-        # Configure logging
-        if enable_logging:
-            logging.basicConfig(level=logging.DEBUG)
-            logger.setLevel(logging.DEBUG)
+        # Initialize MLflow tracing
+        self.mlflow_manager = None
+        if config and config.observability and config.observability.mlflow and config.observability.mlflow.enabled:
+            self.mlflow_manager = MLflowManager(config.observability.mlflow)
+            self.mlflow_manager.initialize()
+
+        # Initialize runtime with registry
+        self.runtime = ModuleRuntime(registry=self.registry)
+
+        # Initialize observability manager
+        from roma_dspy.core.observability import ObservabilityManager
+        self.observability = ObservabilityManager(
+            postgres_storage=self.postgres_storage,
+            mlflow_manager=self.mlflow_manager,
+            runtime=self.runtime
+        )
+
+        # Initialize toolkit manager
+        self.toolkit_manager = ToolkitManager.get_instance()
+
+        # Configure logging (managed by loguru now)
+        # enable_logging controls whether debug logs are shown
+        self.enable_logging = enable_logging
+
+        # Note: Loguru configuration is handled in logging_config.py
+        # The enable_logging flag is used for checkpoint metadata
+
+        # Configure DSPy cache system
+        if config and config.runtime.cache.enabled:
+            self._configure_dspy_cache(config.runtime.cache)
+        elif not config:
+            # Registry mode: use default cache config
+            from roma_dspy.config.schemas.base import CacheConfig
+            self._configure_dspy_cache(CacheConfig())
 
         self.last_dag = None  # Store last DAG for visualization
 
-    def _init_from_config(
+    def _configure_dspy_cache(self, cache_config: "CacheConfig") -> None:
+        """
+        Configure DSPy cache system from ROMA config.
+
+        Args:
+            cache_config: CacheConfig instance with cache settings
+        """
+        import os
+
+        # Expand cache directory (handle ~, env vars)
+        cache_dir = os.path.expanduser(cache_config.disk_cache_dir)
+
+        # Ensure directory exists
+        os.makedirs(cache_dir, exist_ok=True)
+
+        try:
+            dspy.configure_cache(
+                enable_disk_cache=cache_config.enable_disk_cache,
+                enable_memory_cache=cache_config.enable_memory_cache,
+                disk_cache_dir=cache_dir,
+                disk_size_limit_bytes=cache_config.disk_size_limit_bytes,
+                memory_max_entries=cache_config.memory_max_entries
+            )
+            logger.info(
+                f"DSPy cache configured: disk={cache_config.enable_disk_cache}, "
+                f"memory={cache_config.enable_memory_cache}, dir={cache_dir}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to configure DSPy cache: {e}")
+            # Non-fatal: cache will use defaults
+
+    def _emit_execution_event(
         self,
-        config: "ROMAConfig",
-        atomizer: Optional[Atomizer],
-        planner: Optional[Planner],
-        executor: Optional[Executor],
-        aggregator: Optional[Aggregator],
-        verifier: Optional[Verifier],
-        max_depth: Optional[int]
+        event_type: Union[str, ExecutionEventType],
+        task_id: Optional[str] = None,
+        dag_id: Optional[str] = None,
+        event_data: Optional[Dict] = None
     ) -> None:
-        """Initialize solver from ROMAConfig."""
-        # Use provided modules or create from config
-        self.atomizer = atomizer or Atomizer(config=config.agents.atomizer)
-        self.planner = planner or Planner(config=config.agents.planner)
-        self.executor = executor or Executor(config=config.agents.executor)
-        self.aggregator = aggregator or Aggregator(config=config.agents.aggregator)
-        self.verifier = verifier or (Verifier(config=config.agents.verifier) if config.agents.verifier.enabled else None)
+        """
+        Emit an execution event if event traces are enabled.
 
-        # Use runtime config
-        self.max_depth = max_depth or config.runtime.max_concurrency
+        This method checks EventTracesConfig settings before emitting events.
+        Events are buffered in ExecutionContext and persisted at execution end.
 
-    def _init_from_parameters(
-        self,
-        atomizer: Optional[Atomizer],
-        planner: Optional[Planner],
-        executor: Optional[Executor],
-        aggregator: Optional[Aggregator],
-        verifier: Optional[Verifier],
-        max_depth: int,
-        lm: Optional[dspy.LM]
-    ) -> None:
-        """Initialize solver from individual parameters (legacy mode)."""
-        # Initialize modules with defaults if not provided
-        self.atomizer = atomizer or Atomizer(lm=lm)
-        self.planner = planner or Planner(lm=lm)
-        self.executor = executor or Executor(lm=lm)
-        self.aggregator = aggregator or Aggregator(lm=lm)
-        self.verifier = verifier  # Optional, not yet implemented
+        Args:
+            event_type: Event type (ExecutionEventType enum or string)
+            task_id: Optional task identifier
+            dag_id: Optional DAG/execution identifier
+            event_data: Optional event payload
+        """
+        # Check if event traces are enabled
+        if not self.config or not self.config.observability or not self.config.observability.event_traces:
+            return
 
-        self.max_depth = max_depth
+        event_config = self.config.observability.event_traces
+
+        if not event_config.enabled:
+            return
+
+        # Convert enum to string for filtering
+        event_type_str = event_type.value if isinstance(event_type, ExecutionEventType) else event_type
+
+        # Apply event type filtering
+        if event_type_str in (ExecutionEventType.EXECUTION_START.value, ExecutionEventType.EXECUTION_COMPLETE.value) and not event_config.track_execution_events:
+            return
+        if event_type_str in (
+            ExecutionEventType.ATOMIZE_COMPLETE.value,
+            ExecutionEventType.PLAN_COMPLETE.value,
+            ExecutionEventType.EXECUTE_COMPLETE.value,
+            ExecutionEventType.AGGREGATE_COMPLETE.value
+        ) and not event_config.track_module_events:
+            return
+        if event_type_str == ExecutionEventType.EXECUTION_FAILED.value and not event_config.track_failures:
+            return
+
+        # Apply sampling
+        import random
+        if event_config.sample_rate < 1.0 and random.random() > event_config.sample_rate:
+            return
+
+        # Get execution context
+        ctx = ExecutionContext.get()
+        if not ctx:
+            return
+
+        # Emit event to context buffer
+        ctx.emit_execution_event(
+            event_type=event_type_str,
+            task_id=task_id,
+            dag_id=dag_id,
+            event_data=event_data or {},
+            priority=0
+        )
 
     # ==================== Main Entry Points ====================
 
@@ -150,6 +236,9 @@ class RecursiveSolver:
         """
         Synchronously solve a task using recursive decomposition.
 
+        This is a thin synchronous wrapper around async_solve().
+        If you're already in an async context, use async_solve() directly.
+
         Args:
             task: Task goal string or TaskNode
             dag: Optional DAG to track execution
@@ -158,18 +247,7 @@ class RecursiveSolver:
         Returns:
             Completed TaskNode with results
         """
-        logger.debug(f"Starting solve for task: {task if isinstance(task, str) else task.goal}")
-
-        # Initialize task and DAG
-        task, dag = self._initialize_task_and_dag(task, dag, depth)
-
-        # Execute based on current state
-        task = self._execute_state_machine(task, dag)
-
-        # Logging is now handled by TreeVisualizer when called by user
-
-        logger.debug(f"Completed solve with status: {task.status}")
-        return task
+        return asyncio.run(self.async_solve(task, dag, depth))
 
     async def async_solve(
         self,
@@ -193,22 +271,125 @@ class RecursiveSolver:
         # Initialize task and DAG
         task, dag = self._initialize_task_and_dag(task, dag, depth)
 
-        # Create initial checkpoint before execution
+        # Setup observability using ObservabilityManager
+        await self.observability.setup_execution(task, dag, self.config, depth, execution_mode="recursive")
+
+        # Setup toolkits using ToolkitManager
+        await self.toolkit_manager.setup_for_execution(dag, self.config, self.registry)
+
+        try:
+            # Wrap execution with MLflow tracing
+            if self.mlflow_manager and self.mlflow_manager.config.enabled:
+                with self.mlflow_manager.trace_execution(
+                    execution_id=dag.execution_id,
+                    metadata={
+                        "max_depth": self.max_depth,
+                        "initial_goal": str(task.goal) if isinstance(task, TaskNode) else str(task),
+                        "depth": depth
+                    }
+                ):
+                    result = await self._async_solve_internal(task, dag, depth)
+
+                    # Log final metrics
+                    self.mlflow_manager.log_metrics({
+                        "total_tasks": len(dag.get_all_tasks()) if dag else 1,
+                        "max_depth_reached": result.depth,
+                        "success": 1.0 if result.status == TaskStatus.COMPLETED else 0.0
+                    })
+
+                    # Create final checkpoint before finalization (ensures visualization of completed runs)
+                    if self.checkpoint_manager:
+                        try:
+                            await self.checkpoint_manager.create_checkpoint(
+                                checkpoint_id=None,
+                                dag=dag,
+                                trigger=CheckpointTrigger.EXECUTION_COMPLETE,
+                                current_depth=result.depth,
+                                max_depth=self.max_depth
+                            )
+                            logger.debug("Created final EXECUTION_COMPLETE checkpoint")
+                        except Exception as e:
+                            logger.warning(f"Failed to create final checkpoint: {e}")
+
+                    # Finalize execution using ObservabilityManager
+                    await self.observability.finalize_execution(dag, result)
+
+                    return result
+            else:
+                result = await self._async_solve_internal(task, dag, depth)
+
+                # Create final checkpoint before finalization (ensures visualization of completed runs)
+                if self.checkpoint_manager:
+                    try:
+                        await self.checkpoint_manager.create_checkpoint(
+                            checkpoint_id=None,
+                            dag=dag,
+                            trigger=CheckpointTrigger.EXECUTION_COMPLETE,
+                            current_depth=result.depth,
+                            max_depth=self.max_depth
+                        )
+                        logger.debug("Created final EXECUTION_COMPLETE checkpoint")
+                    except Exception as e:
+                        logger.warning(f"Failed to create final checkpoint: {e}")
+
+                # Finalize execution using ObservabilityManager
+                await self.observability.finalize_execution(dag, result)
+
+                return result
+        finally:
+            # Stop periodic checkpoints if running
+            if self.checkpoint_manager:
+                await self.checkpoint_manager.stop_periodic_checkpoints()
+
+            # Cleanup toolkits BEFORE persisting metrics
+            # (cleanup generates toolkit lifecycle events that need to be persisted)
+            await self.toolkit_manager.cleanup_execution(dag.execution_id)
+
+            # Auto-persist metrics (including cleanup events) and reset context
+            if hasattr(dag, '_exec_context_token'):
+                await ExecutionContext.reset_async(dag._exec_context_token, self.postgres_storage)
+
+            logger.debug(f"Cleaned up execution for {dag.execution_id}")
+
+    async def _async_solve_internal(
+        self,
+        task: TaskNode,
+        dag: TaskDAG,
+        depth: int
+    ) -> TaskNode:
+        """Internal async solve implementation (separated for MLflow wrapping)."""
+        # Emit execution_start event
+        start_time = datetime.now(UTC)
+        self._emit_execution_event(
+            event_type=ExecutionEventType.EXECUTION_START,
+            task_id=task.task_id,
+            dag_id=dag.execution_id,
+            event_data={
+                "goal": task.goal[:200] if len(task.goal) > 200 else task.goal,
+                "depth": depth,
+                "max_depth": self.max_depth,
+            }
+        )
+
+        # Create initial checkpoint at execution start (ensures visualization even if interrupted)
         checkpoint_id = None
         if self.checkpoint_manager:
             try:
                 checkpoint_id = await self.checkpoint_manager.create_checkpoint(
                     checkpoint_id=None,
                     dag=dag,
-                    trigger=CheckpointTrigger.BEFORE_PLANNING,
+                    trigger=CheckpointTrigger.EXECUTION_START,
                     current_depth=depth,
                     max_depth=self.max_depth,
                     solver_config={
                         'max_depth': self.max_depth,
-                        'enable_logging': logger.level <= logging.DEBUG
+                        'enable_logging': self.enable_logging
                     }
                 )
                 logger.debug(f"Created initial checkpoint: {checkpoint_id}")
+
+                # Start periodic checkpoints for long-running executions
+                await self.checkpoint_manager.start_periodic_checkpoints(dag, self.max_depth)
             except Exception as e:
                 logger.warning(f"Failed to create initial checkpoint: {e}")
 
@@ -216,10 +397,39 @@ class RecursiveSolver:
             # Execute based on current state
             task = await self._async_execute_state_machine(task, dag, checkpoint_id)
 
+            # Emit execution_complete event
+            end_time = datetime.now(UTC)
+            duration_ms = (end_time - start_time).total_seconds() * 1000
+            self._emit_execution_event(
+                event_type=ExecutionEventType.EXECUTION_COMPLETE,
+                task_id=task.task_id,
+                dag_id=dag.execution_id,
+                event_data={
+                    "status": task.status.value,
+                    "duration_ms": duration_ms,
+                    "result_preview": task.result[:200] if task.result and len(task.result) > 200 else task.result,
+                }
+            )
+
             # Logging is now handled by TreeVisualizer when called by user
             logger.debug(f"Completed async_solve with status: {task.status}")
             return task
         except Exception as e:
+            # Emit execution_failed event
+            end_time = datetime.now(UTC)
+            duration_ms = (end_time - start_time).total_seconds() * 1000
+            self._emit_execution_event(
+                event_type=ExecutionEventType.EXECUTION_FAILED,
+                task_id=task.task_id,
+                dag_id=dag.execution_id,
+                event_data={
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "duration_ms": duration_ms,
+                    "depth": task.depth,
+                }
+            )
+
             # Enhance error with task hierarchy context
             error_msg = f"Task '{task.task_id}' failed at depth {task.depth}: {str(e)}"
             if task.goal:
@@ -228,12 +438,13 @@ class RecursiveSolver:
             # Add checkpoint recovery info
             if checkpoint_id and self.checkpoint_manager:
                 error_msg += f"\nCheckpoint {checkpoint_id} available for recovery"
-                logger.error(error_msg)
-            else:
-                logger.error(error_msg)
 
-            # Re-raise with enhanced context but preserve original exception type
-            enhanced_error = type(e)(error_msg)
+            logger.error(error_msg)
+
+            # Re-raise with enhanced context
+            # Use RuntimeError instead of trying to reconstruct original exception type
+            # (some exception types have custom constructors that don't accept simple string messages)
+            enhanced_error = RuntimeError(error_msg)
             enhanced_error.__cause__ = e
             raise enhanced_error from e
 
@@ -252,28 +463,110 @@ class RecursiveSolver:
             task if isinstance(task, str) else task.goal,
         )
 
+        # Initialize task and DAG
         task, dag = self._initialize_task_and_dag(task, dag, depth)
 
-        # Pass checkpoint manager to event controller if available
-        controller = EventLoopController(
-            dag,
-            self.runtime,
-            priority_fn=priority_fn,
-            checkpoint_manager=self.checkpoint_manager
-        )
+        # Setup observability using ObservabilityManager
+        await self.observability.setup_execution(task, dag, self.config, depth, execution_mode="event_driven")
 
-        # Apply any pending state restorations from previous recovery operations
-        if self.checkpoint_manager:
-            await controller.apply_pending_restorations()
+        # Setup toolkits using ToolkitManager
+        await self.toolkit_manager.setup_for_execution(dag, self.config, self.registry)
 
-        await controller.run(max_concurrency=concurrency)
+        try:
+            # Pass checkpoint manager and postgres_storage to event controller if available
+            controller = EventLoopController(
+                dag,
+                self.runtime,
+                priority_fn=priority_fn,
+                checkpoint_manager=self.checkpoint_manager,
+                postgres_storage=self.postgres_storage
+            )
 
-        updated_task = dag.get_node(task.task_id)
+            # Apply any pending state restorations from previous recovery operations
+            if self.checkpoint_manager:
+                await controller.apply_pending_restorations()
 
-        # Logging is now handled by TreeVisualizer when called by user
+            # Wrap execution with MLflow tracing
+            if self.mlflow_manager and self.mlflow_manager.config.enabled:
+                with self.mlflow_manager.trace_execution(
+                    execution_id=dag.execution_id,
+                    metadata={
+                        "max_depth": self.max_depth,
+                        "initial_goal": str(task.goal) if isinstance(task, TaskNode) else str(task),
+                        "depth": depth,
+                        "execution_mode": "event_driven",
+                        "concurrency": concurrency
+                    }
+                ):
+                    await controller.run(max_concurrency=concurrency)
 
-        logger.debug("Completed async_event_solve with status: %s", updated_task.status)
-        return updated_task
+                    updated_task = dag.get_node(task.task_id)
+
+                    # Log final metrics
+                    self.mlflow_manager.log_metrics({
+                        "total_tasks": len(dag.get_all_tasks()),
+                        "max_depth_reached": updated_task.depth,
+                        "success": 1.0 if updated_task.status == TaskStatus.COMPLETED else 0.0,
+                        "concurrency": concurrency
+                    })
+
+                    # Create final checkpoint before finalization (ensures visualization of completed runs)
+                    if self.checkpoint_manager:
+                        try:
+                            await self.checkpoint_manager.create_checkpoint(
+                                checkpoint_id=None,
+                                dag=dag,
+                                trigger=CheckpointTrigger.EXECUTION_COMPLETE,
+                                current_depth=updated_task.depth,
+                                max_depth=self.max_depth
+                            )
+                            logger.debug("Created final EXECUTION_COMPLETE checkpoint")
+                        except Exception as e:
+                            logger.warning(f"Failed to create final checkpoint: {e}")
+
+                    # Finalize execution using ObservabilityManager
+                    await self.observability.finalize_execution(dag, updated_task)
+
+                    logger.debug("Completed async_event_solve with status: %s", updated_task.status)
+                    return updated_task
+            else:
+                await controller.run(max_concurrency=concurrency)
+
+                updated_task = dag.get_node(task.task_id)
+
+                # Create final checkpoint before finalization (ensures visualization of completed runs)
+                if self.checkpoint_manager:
+                    try:
+                        await self.checkpoint_manager.create_checkpoint(
+                            checkpoint_id=None,
+                            dag=dag,
+                            trigger=CheckpointTrigger.EXECUTION_COMPLETE,
+                            current_depth=updated_task.depth,
+                            max_depth=self.max_depth
+                        )
+                        logger.debug("Created final EXECUTION_COMPLETE checkpoint")
+                    except Exception as e:
+                        logger.warning(f"Failed to create final checkpoint: {e}")
+
+                # Finalize execution using ObservabilityManager
+                await self.observability.finalize_execution(dag, updated_task)
+
+                logger.debug("Completed async_event_solve with status: %s", updated_task.status)
+                return updated_task
+        finally:
+            # Stop periodic checkpoints if running
+            if self.checkpoint_manager:
+                await self.checkpoint_manager.stop_periodic_checkpoints()
+
+            # Critical cleanup: prevents memory leaks and stale context
+            # Cleanup toolkits BEFORE persisting metrics (cleanup generates events)
+            await self.toolkit_manager.cleanup_execution(dag.execution_id)
+
+            # Auto-persist metrics and reset execution context
+            if hasattr(dag, '_exec_context_token'):
+                await ExecutionContext.reset_async(dag._exec_context_token, self.postgres_storage)
+
+            logger.debug(f"Cleaned up execution for {dag.execution_id}")
 
     def event_solve(
         self,
@@ -312,18 +605,49 @@ class RecursiveSolver:
         depth: int
     ) -> Tuple[TaskNode, TaskDAG]:
         """Initialize task node and DAG for execution."""
+        # Track whether we're creating a new DAG
+        newly_created_dag = dag is None
+
         # Create DAG if not provided
         if dag is None:
             dag = TaskDAG()
             self.last_dag = dag  # Store for visualization
 
+        # Create new ContextManager for each new DAG to ensure execution isolation
+        # Each DAG has unique execution_id and needs isolated FileStorage
+        if newly_created_dag or self.runtime.context_manager is None:
+            # Validate config availability
+            if self.config is None:
+                raise ValueError(
+                    "Config is required for FileStorage creation. "
+                    "Provide config when creating RecursiveSolver."
+                )
+
+            # Create FileStorage for this execution
+            file_storage = FileStorage(
+                config=self.config.storage,
+                execution_id=dag.execution_id
+            )
+
+            # Set ExecutionContext for toolkit lifecycle management
+            # Store token in DAG for later cleanup
+            dag._exec_context_token = ExecutionContext.set(
+                execution_id=dag.execution_id,
+                file_storage=file_storage
+            )
+
+            # Extract overall objective from task
+            overall_objective = task if isinstance(task, str) else task.goal
+
+            # Create and inject ContextManager into runtime
+            context_manager = ContextManager(file_storage, overall_objective)
+            self.runtime.context_manager = context_manager
+
+            logger.debug(f"Initialized context system with execution_id: {dag.execution_id}")
+
         # Convert string to TaskNode if needed
         if isinstance(task, str):
             task = TaskNode(goal=task, depth=depth, max_depth=self.max_depth, execution_id=dag.execution_id)
-
-        # If task already exists but doesn't have execution_id, set it
-        if task.execution_id is None:
-            task = task.model_copy(update={'execution_id': dag.execution_id})
 
         # Add to DAG if not already present
         if task.task_id not in dag.graph:
@@ -332,33 +656,6 @@ class RecursiveSolver:
         return task, dag
 
     # ==================== State Machine Execution ====================
-
-    def _execute_state_machine(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        """Execute synchronous state machine for task processing."""
-        # Check for forced execution at max depth
-        if task.should_force_execute():
-            logger.debug(f"Force executing task at max depth: {task.depth}")
-            return self.runtime.force_execute(task, dag)
-
-        # Process based on current state
-        if task.status == TaskStatus.PENDING:
-            logger.debug(f"Atomizing task: {task.goal[:50]}...")
-            task = self.runtime.atomize(task, dag)
-
-        if task.status == TaskStatus.ATOMIZING:
-            task = self.runtime.transition_from_atomizing(task, dag)
-
-        if task.status == TaskStatus.PLANNING:
-            logger.debug(f"Planning task: {task.goal[:50]}...")
-            task = self.runtime.plan(task, dag)
-
-        if task.status == TaskStatus.EXECUTING:
-            logger.debug(f"Executing task: {task.goal[:50]}...")
-            task = self.runtime.execute(task, dag)
-        elif task.status == TaskStatus.PLAN_DONE:
-            task = self.runtime.process_subgraph(task, dag, self.solve)
-
-        return task
 
     async def _async_execute_state_machine(self, task: TaskNode, dag: TaskDAG, checkpoint_id: Optional[str] = None) -> TaskNode:
         """Execute asynchronous state machine for task processing."""
@@ -409,7 +706,9 @@ class RecursiveSolver:
                 except Exception as e:
                     logger.warning(f"Failed to create pre-aggregation checkpoint: {e}")
 
-            task = await self.runtime.process_subgraph_async(task, dag, self.async_solve)
+            # Pass _async_solve_internal to avoid nested observability setup
+            # (observability is already set up at the top level)
+            task = await self.runtime.process_subgraph_async(task, dag, self._async_solve_internal)
 
         return task
 
@@ -438,13 +737,7 @@ class RecursiveSolver:
             solver_config = {
                 "max_depth": self.max_depth,
                 "enable_logging": self.enable_logging,
-                "modules_enabled": {
-                    "atomizer": self.atomizer is not None,
-                    "planner": self.planner is not None,
-                    "executor": self.executor is not None,
-                    "aggregator": self.aggregator is not None,
-                    "verifier": self.verifier is not None
-                }
+                "registry_stats": self.registry.get_stats()
             }
 
             # Collect runtime state if available
@@ -490,7 +783,7 @@ class RecursiveSolver:
             checkpoint_data = await self.checkpoint_manager.load_checkpoint(checkpoint_id)
 
             # Create recovery plan
-            from src.roma_dspy.types.checkpoint_types import RecoveryStrategy
+            from roma_dspy.types.checkpoint_types import RecoveryStrategy
             recovery_strategy = RecoveryStrategy.PARTIAL
             if strategy == "full":
                 recovery_strategy = RecoveryStrategy.FULL
@@ -511,11 +804,13 @@ class RecursiveSolver:
             # Apply recovery plan
             restored_dag = await self.checkpoint_manager.apply_recovery_plan(recovery_plan, temp_dag)
 
+            # Wire restored DAG back into solver for subsequent operations
+            self.last_dag = restored_dag
+
             # Restore solver configuration if available
             if checkpoint_data.solver_config:
                 solver_config = checkpoint_data.solver_config
                 self.max_depth = solver_config.get("max_depth", self.max_depth)
-                self.enable_logging = solver_config.get("enable_logging", self.enable_logging)
 
             logger.info(f"Successfully restored from unified checkpoint: {checkpoint_id}")
             return True
@@ -609,13 +904,7 @@ class RecursiveSolver:
                 "enabled": self.checkpoint_manager is not None,
                 "available": self.checkpoint_manager.config.enabled if self.checkpoint_manager else False
             },
-            "modules": {
-                "atomizer": self.atomizer is not None,
-                "planner": self.planner is not None,
-                "executor": self.executor is not None,
-                "aggregator": self.aggregator is not None,
-                "verifier": self.verifier is not None
-            },
+            "registry": self.registry.get_stats(),
             "configuration": {
                 "max_depth": self.max_depth,
                 "logging_enabled": self.enable_logging
@@ -647,13 +936,7 @@ class RecursiveSolver:
                 "enabled": self.checkpoint_manager is not None,
                 "available": self.checkpoint_manager.config.enabled if self.checkpoint_manager else False
             },
-            "modules": {
-                "atomizer": self.atomizer is not None,
-                "planner": self.planner is not None,
-                "executor": self.executor is not None,
-                "aggregator": self.aggregator is not None,
-                "verifier": self.verifier is not None
-            },
+            "registry": self.registry.get_stats(),
             "configuration": {
                 "max_depth": self.max_depth,
                 "logging_enabled": self.enable_logging
@@ -672,61 +955,73 @@ class RecursiveSolver:
 
 # ==================== Convenience Functions ====================
 
-def solve(task: Union[str, TaskNode], max_depth: int = 2, **kwargs) -> TaskNode:
+def solve(task: Union[str, TaskNode], max_depth: int = 2, config: Optional[ROMAConfig] = None, **kwargs) -> TaskNode:
     """
     Solve a task using recursive decomposition.
 
     Args:
         task: Task goal string or TaskNode
         max_depth: Maximum recursion depth
+        config: Optional ROMAConfig (creates default if None)
         **kwargs: Additional arguments for RecursiveSolver
 
     Returns:
         Completed TaskNode with results
     """
-    solver = RecursiveSolver(max_depth=max_depth, **kwargs)
+    if config is None:
+        config = ROMAConfig()  # Uses Pydantic defaults
+    solver = RecursiveSolver(config=config, max_depth=max_depth, **kwargs)
     return solver.solve(task)
 
 
-async def async_solve(task: Union[str, TaskNode], max_depth: int = 2, **kwargs) -> TaskNode:
+async def async_solve(task: Union[str, TaskNode], max_depth: int = 2, config: Optional[ROMAConfig] = None, **kwargs) -> TaskNode:
     """
     Asynchronously solve a task using recursive decomposition.
 
     Args:
         task: Task goal string or TaskNode
         max_depth: Maximum recursion depth
+        config: Optional ROMAConfig (creates default if None)
         **kwargs: Additional arguments for RecursiveSolver
 
     Returns:
         Completed TaskNode with results
     """
-    solver = RecursiveSolver(max_depth=max_depth, **kwargs)
+    if config is None:
+        config = ROMAConfig()  # Uses Pydantic defaults
+    solver = RecursiveSolver(config=config, max_depth=max_depth, **kwargs)
     return await solver.async_solve(task)
 
 
 def event_solve(
     task: Union[str, TaskNode],
     max_depth: int = 2,
+    config: Optional[ROMAConfig] = None,
     priority_fn: Optional[Callable[[TaskNode], int]] = None,
     concurrency: int = 1,
     **kwargs,
 ) -> TaskNode:
     """Synchronously solve using the event-driven scheduler."""
 
-    solver = RecursiveSolver(max_depth=max_depth, **kwargs)
+    if config is None:
+        config = ROMAConfig()  # Uses Pydantic defaults
+    solver = RecursiveSolver(config=config, max_depth=max_depth, **kwargs)
     return solver.event_solve(task, priority_fn=priority_fn, concurrency=concurrency)
 
 
 async def async_event_solve(
     task: Union[str, TaskNode],
     max_depth: int = 2,
+    config: Optional[ROMAConfig] = None,
     priority_fn: Optional[Callable[[TaskNode], int]] = None,
     concurrency: int = 1,
     **kwargs,
 ) -> TaskNode:
     """Asynchronously solve using the event-driven scheduler."""
 
-    solver = RecursiveSolver(max_depth=max_depth, **kwargs)
+    if config is None:
+        config = ROMAConfig()  # Uses Pydantic defaults
+    solver = RecursiveSolver(config=config, max_depth=max_depth, **kwargs)
     return await solver.async_event_solve(
         task,
         priority_fn=priority_fn,

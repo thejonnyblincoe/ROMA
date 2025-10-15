@@ -1,0 +1,72 @@
+# Simple Agent Mapping Profile
+# Demonstrates basic task-aware agent configuration
+
+agent_mapping:
+  # Task-specific executors (most important for differentiation)
+  executors:
+    RETRIEVE:
+      type: EXECUTOR
+      task_type: RETRIEVE
+      llm:
+        temperature: 0.5
+      prediction_strategy: react
+      toolkits:
+        - class_name: SerperToolkit
+          enabled: true
+      enabled: true
+      agent_config:
+        max_executions: 5
+
+    CODE_INTERPRET:
+      type: EXECUTOR
+      task_type: CODE_INTERPRET
+      llm:
+        temperature: 0.5
+      prediction_strategy: react
+      toolkits:
+        - class_name: E2BToolkit
+          enabled: true
+      enabled: true
+      agent_config:
+        max_executions: 8
+
+  # Default agents (fallback for other task types)
+  default_atomizer:
+    type: ATOMIZER
+    llm:
+      temperature: 0.1
+    enabled: true
+
+  default_planner:
+    type: PLANNER
+    llm:
+      temperature: 0.3
+    enabled: true
+
+  default_executor:
+    type: EXECUTOR
+    llm:
+      temperature: 0.5
+    enabled: true
+
+  default_aggregator:
+    type: AGGREGATOR
+    llm:
+      temperature: 0.2
+    enabled: true
+
+  default_verifier:
+    type: VERIFIER
+    llm:
+      temperature: 0.1
+    enabled: true
+
+  # Empty task-specific mappings (will use defaults)
+  atomizers: {}
+  planners: {}
+  aggregators: {}
+  verifiers: {}
+
+runtime:
+  max_depth: 3
+  enable_logging: false

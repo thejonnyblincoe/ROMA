@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for checkpoint/execution persistence
+  postgres:
+    image: postgres:16-alpine
+    container_name: roma-dspy-postgres
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-roma_dspy}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - roma-network
+    restart: unless-stopped
+
+  # ROMA-DSPy API Server
+  roma-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: roma-dspy-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Override database URL to use docker service name
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-roma_dspy}
+      POSTGRES_ENABLED: "true"
+      # MLflow tracking URI (single variable). If not set, default to in-network service.
+      # To run entirely in Docker, set this to http://mlflow:5000 in your .env.
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Application code (for development, comment out for production)
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+
+      # Persistent data
+      - ./logs:/app/logs
+      - ./executions:/app/executions
+      - checkpoints_data:/app/.checkpoints
+      - cache_data:/app/.cache
+
+      # Share MLflow artifact store with the API container so the client
+      # can upload artifacts/traces to the file-based store path returned
+      # by the MLflow server (file:///mlflow/artifacts/...)
+      - mlflow_artifacts:/mlflow/artifacts
+
+      # S3 mount point (mount S3 on host first, then share via volume)
+      # Host must run: scripts/setup_local.sh to mount S3 to STORAGE_BASE_PATH
+      - ${STORAGE_BASE_PATH:-/opt/sentient}:${STORAGE_BASE_PATH:-/opt/sentient}:rw
+
+    networks:
+      - roma-network
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    restart: unless-stopped
+
+  # MLflow Tracking Server (Optional - for experiment tracking)
+  mlflow:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.mlflow
+    container_name: roma-dspy-mlflow
+    env_file:
+      - .env
+    ports:
+      - "${MLFLOW_PORT:-5000}:5000"
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/mlflow
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlflow/artifacts
+      MLFLOW_SERVER_ALLOWED_HOSTS: "*"
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: "*"
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    networks:
+      - roma-network
+    # Prepare writable dirs at startup; keep root for simplicity
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - mkdir -p /mlflow /mlflow/artifacts && chmod -R 777 /mlflow && mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/mlflow --artifacts-destination /mlflow/artifacts
+    # Ensure current working directory is writable for mlflow.claude_code logging.
+    working_dir: /mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # command is not needed because entrypoint runs setup + server
+    profiles:
+      - observability  # Only start with: docker-compose --profile observability up
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  checkpoints_data:
+    driver: local
+  cache_data:
+    driver: local
+  mlflow_artifacts:
+    driver: local
+
+networks:
+  roma-network:
+    driver: bridge

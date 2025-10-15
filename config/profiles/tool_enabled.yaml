@@ -3,12 +3,22 @@
 
 agents:
   executor:
-    prediction_strategy: chain_of_thought  # CoT strategy until tools are implemented
-    tools: []  # Tools will be added here when implementation is ready
+    prediction_strategy: react  # ReAct strategy for tool usage
+    toolkits:
+      - class_name: FileToolkit
+        enabled: true
+        include_tools: []  # Include all tools
+        exclude_tools: []  # Exclude no tools
+        toolkit_config:
+          enable_delete: false  # Safer default
+          max_file_size: 5242880  # 5MB
     agent_config:
-      max_tool_calls: 10  # Pre-configured for future tool usage
-    strategy_config: {}  # Strategy-specific parameters
+      max_executions: 8  # More executions for complex tool workflows
+    strategy_config: {}
 
-# Extended timeout prepared for future tool operations
+# Extended timeout prepared for tool operations
 runtime:
-  timeout: 60  # Longer timeout anticipating tool execution overhead
+  timeout: 90  # Longer timeout for tool execution overhead
+  max_depth: 6  # Deeper recursion for tool-enabled scenarios
+  enable_logging: true  # Enable logging for debugging
+  log_level: DEBUG

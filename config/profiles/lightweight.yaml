@@ -15,7 +15,7 @@ agents:
   executor:
     llm:
       max_tokens: 1000
-    tools: []  # Remove all tools for lighter execution
+    toolkits: []  # Remove all tools for lighter execution
 
   aggregator:
     llm:
@@ -27,3 +27,6 @@ agents:
 
 runtime:
   max_concurrency: 3  # Reduce concurrency
+  max_depth: 3  # Shallow recursion for lightweight
+  enable_logging: false
+  log_level: WARNING

@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Dict, Any, Optional
 from collections import deque
 
-from src.roma_dspy.types.task_type import TaskType
+from roma_dspy.types.task_type import TaskType
 
 
 class RetryStrategy(str, Enum):

@@ -6,8 +6,8 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 from collections import deque
 
-from src.roma_dspy.types.task_type import TaskType
-from src.roma_dspy.types.resilience_types import RetryStrategy
+from roma_dspy.types.task_type import TaskType
+from roma_dspy.types.resilience_types import RetryStrategy
 
 
 class RetryConfig(BaseModel):

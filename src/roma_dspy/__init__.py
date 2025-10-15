@@ -1,5 +1,7 @@
 """ROMA-DSPy: modular hierarchical task decomposition framework."""
 
+__version__ = "0.1.0"
+
 from typing import Optional, Sequence
 
 from .core import (
@@ -25,6 +27,7 @@ from .core import (
 )
 
 __all__ = [
+    "__version__",
     "TaskDAG",
     "RecursiveSolver",
     "solve",

@@ -2,13 +2,12 @@
 
 from omegaconf import OmegaConf, DictConfig
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import os
-import logging
 
-from .schemas.root import ROMAConfig
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from roma_dspy.config.schemas.root import ROMAConfig
 
 
 class ConfigManager:
@@ -26,7 +25,7 @@ class ConfigManager:
 
     def load_config(
         self,
-        config_path: Optional[Path] = None,
+        config_path: Optional[Union[Path, str]] = None,
         profile: Optional[str] = None,
         overrides: Optional[List[str]] = None,
         env_prefix: str = "ROMA_"
@@ -60,15 +59,26 @@ class ConfigManager:
             f"overrides={overrides}, env_prefix={env_prefix}"
         )
 
-        # Step 1: Create base config from Pydantic schema
-        base_config = OmegaConf.structured(ROMAConfig)
-        logger.debug("Created base config from Pydantic schema")
+        # Step 1: Start from an empty OmegaConf and let Pydantic apply defaults
+        # later. This avoids type conflicts when merging YAML into a structured
+        # config containing FieldInfo defaults from pydantic dataclasses.
+        base_config = OmegaConf.create({})
+        logger.debug("Initialized empty base config (defaults applied in validation)")
 
         # Step 2: Load and merge YAML config if provided
         if config_path:
+            # Convert string to Path if needed
+            config_path = Path(config_path) if isinstance(config_path, str) else config_path
             yaml_config = self._load_yaml(config_path)
             base_config = OmegaConf.merge(base_config, yaml_config)
             logger.debug(f"Merged YAML config from {config_path}")
+        else:
+            # If no explicit config provided, attempt to merge defaults
+            default_cfg_path = self.config_dir / "defaults" / "config.yaml"
+            if default_cfg_path.exists():
+                yaml_config = self._load_yaml(default_cfg_path)
+                base_config = OmegaConf.merge(base_config, yaml_config)
+                logger.debug(f"Merged default config from {default_cfg_path}")
 
         # Step 3: Apply profile overlay if specified
         if profile:
@@ -95,7 +105,8 @@ class ConfigManager:
         # Step 7: Convert to Pydantic for validation
         try:
             config_dict = OmegaConf.to_container(base_config, resolve=True)
-            validated_config = ROMAConfig(**config_dict)
+            # Apply Pydantic dataclass defaults while validating the merged config
+            validated_config = ROMAConfig(**(config_dict or {}))
             logger.info("Configuration loaded and validated successfully")
             return validated_config
         except Exception as e:
@@ -141,23 +152,30 @@ class ConfigManager:
 
     def _load_env_vars(self, prefix: str) -> Optional[DictConfig]:
         """
-        Load environment variables with given prefix.
+        Load environment variables with the strict double-underscore schema prefix.
 
-        Converts environment variables like:
-        ROMA_AGENTS__EXECUTOR__LLM__MODEL=gpt-4o
-        to config path:
-        agents.executor.llm.model=gpt-4o
+        Only variables starting with f"{prefix}__" are considered configuration overrides.
+        This prevents unrelated env vars like ROMA_S3_BUCKET from polluting the
+        config root and breaking validation.
+
+        Example mapping:
+          ROMA__AGENTS__EXECUTOR__LLM__MODEL=gpt-4o
+            -> agents.executor.llm.model=gpt-4o
         """
         env_vars = {}
 
+        strict_prefix = f"{prefix}__"
+
         for key, value in os.environ.items():
-            if key.startswith(prefix):
-                # Convert ROMA_AGENTS__EXECUTOR__LLM__MODEL to agents.executor.llm.model
-                config_key = key[len(prefix):].lower().replace("__", ".")
+            if key.startswith(strict_prefix):
+                # Strip strict prefix and convert double-underscores to dots
+                config_key = key[len(strict_prefix):].lower().replace("__", ".")
                 env_vars[config_key] = value
 
         if env_vars:
-            logger.debug(f"Found environment variables: {list(env_vars.keys())}")
+            logger.debug(
+                f"Found config override env vars: {list(env_vars.keys())}"
+            )
             return OmegaConf.from_dotlist([f"{k}={v}" for k, v in env_vars.items()])
         return None
 

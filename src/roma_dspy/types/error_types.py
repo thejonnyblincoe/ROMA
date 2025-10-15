@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -62,6 +63,27 @@ class TaskHierarchyError(Exception):
         self.depth = 0
         self.child_errors: List[TaskHierarchyError] = []
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert error to a JSON-serializable dictionary."""
+        return {
+            "message": self.message,
+            "task_id": self.task_id,
+            "task_goal": self.task_goal,
+            "error_category": self.error_category.value if isinstance(self.error_category, ErrorCategory) else str(self.error_category),
+            "severity": self.severity.value if isinstance(self.severity, ErrorSeverity) else str(self.severity),
+            "original_error": str(self.original_error) if self.original_error else None,
+            "context": self.context,
+            "recovery_suggestions": self.recovery_suggestions,
+            "timestamp": self.timestamp.isoformat(),
+            "task_path": self.task_path,
+            "depth": self.depth,
+            "child_errors": [e.to_dict() for e in self.child_errors]
+        }
+
+    def __str__(self) -> str:
+        """Get string representation of the error."""
+        return self.get_error_summary()
+
     def add_parent_context(self, parent_task_id: str, parent_goal: Optional[str] = None) -> TaskHierarchyError:
         """Add parent task context to error path."""
         self.task_path.insert(0, parent_task_id)
@@ -107,6 +129,12 @@ class ModuleError(TaskHierarchyError):
         self.module_name = module_name
         super().__init__(message, task_id, **kwargs)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert module error to a JSON-serializable dictionary."""
+        data = super().to_dict()
+        data["module_name"] = self.module_name
+        return data
+
 
 class PlanningError(ModuleError):
     """Error during task planning/decomposition."""
@@ -144,3 +172,74 @@ class RetryExhaustedError(TaskHierarchyError):
         self.attempts = attempts
         self.last_error = last_error
         super().__init__(message, task_id, severity=ErrorSeverity.HIGH, **kwargs)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert retry exhausted error to a JSON-serializable dictionary."""
+        data = super().to_dict()
+        data["attempts"] = self.attempts
+        data["last_error"] = str(self.last_error)
+        return data
+
+
+# Utility functions for safe error serialization
+
+def serialize_error(error: Exception) -> str:
+    """
+    Safely serialize any exception to JSON string.
+
+    If the exception is a TaskHierarchyError (or subclass), uses its to_dict() method.
+    Otherwise, creates a simple JSON representation with the error message and type.
+
+    Args:
+        error: Exception to serialize
+
+    Returns:
+        JSON string representation of the error
+
+    Examples:
+        >>> error = ExecutionError("Task failed", "task_123")
+        >>> json_str = serialize_error(error)
+        >>> # Returns full JSON with task_id, severity, etc.
+
+        >>> error = ValueError("Invalid value")
+        >>> json_str = serialize_error(error)
+        >>> # Returns {"error_type": "ValueError", "message": "Invalid value"}
+    """
+    if isinstance(error, TaskHierarchyError):
+        return json.dumps(error.to_dict())
+    else:
+        return json.dumps({
+            "error_type": error.__class__.__name__,
+            "message": str(error)
+        })
+
+
+def error_to_dict(error: Exception) -> Dict[str, Any]:
+    """
+    Convert any exception to a JSON-serializable dictionary.
+
+    If the exception is a TaskHierarchyError (or subclass), uses its to_dict() method.
+    Otherwise, creates a simple dictionary with the error message and type.
+
+    Args:
+        error: Exception to convert
+
+    Returns:
+        Dictionary representation of the error
+
+    Examples:
+        >>> error = ExecutionError("Task failed", "task_123")
+        >>> data = error_to_dict(error)
+        >>> # Returns dict with task_id, severity, etc.
+
+        >>> error = ValueError("Invalid value")
+        >>> data = error_to_dict(error)
+        >>> # Returns {"error_type": "ValueError", "message": "Invalid value"}
+    """
+    if isinstance(error, TaskHierarchyError):
+        return error.to_dict()
+    else:
+        return {
+            "error_type": error.__class__.__name__,
+            "message": str(error)
+        }

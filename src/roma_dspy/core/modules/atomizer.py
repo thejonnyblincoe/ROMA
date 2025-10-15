@@ -5,18 +5,22 @@ from __future__ import annotations
 import dspy
 from typing import Union, Any, Optional, Mapping, Sequence, Mapping as TMapping
 
-from .base_module import BaseModule
-from ..signatures.signatures import AtomizerSignature
-from ...types import PredictionStrategy
+from roma_dspy.core.modules.base_module import BaseModule
+from roma_dspy.core.signatures.signatures import AtomizerSignature
+from roma_dspy.types import PredictionStrategy
 
 
 class Atomizer(BaseModule):
     """Decomposes tasks into atomic units."""
 
+    DEFAULT_SIGNATURE = AtomizerSignature
+
     def __init__(
         self,
         prediction_strategy: Union[PredictionStrategy, str] = PredictionStrategy.CHAIN_OF_THOUGHT,
         *,
+        signature: Any = None,
+        config: Optional[Any] = None,
         lm: Optional[dspy.LM] = None,
         model: Optional[str] = None,
         model_config: Optional[Mapping[str, Any]] = None,
@@ -24,7 +28,8 @@ class Atomizer(BaseModule):
         **strategy_kwargs: Any,
     ) -> None:
         super().__init__(
-            signature=AtomizerSignature,
+            signature=signature if signature is not None else self.DEFAULT_SIGNATURE,
+            config=config,
             prediction_strategy=prediction_strategy,
             lm=lm,
             model=model,

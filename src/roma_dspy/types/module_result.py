@@ -2,7 +2,7 @@
 Module execution result tracking for comprehensive node history.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, Dict, List
 from pydantic import BaseModel, Field
 from dataclasses import dataclass, field
@@ -109,7 +109,7 @@ class ModuleResult(BaseModel):
     module_name: str = Field(description="Name of the module (atomizer, planner, executor, aggregator)")
     input: Any = Field(description="Input provided to the module")
     output: Any = Field(description="Output produced by the module")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(), description="Execution timestamp")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Execution timestamp")
     duration: float = Field(default=0.0, description="Execution duration in seconds")
     error: Optional[str] = Field(default=None, description="Error message if execution failed")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
@@ -127,7 +127,7 @@ class StateTransition(BaseModel):
 
     from_state: str = Field(description="Previous state")
     to_state: str = Field(description="New state")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now())
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     reason: Optional[str] = Field(default=None, description="Reason for transition")
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
@@ -162,7 +162,7 @@ class ExecutionEvent(BaseModel):
     node_id: str = Field(description="ID of the task node")
     module_name: str = Field(description="Module that was executed")
     event_type: str = Field(description="Type of event (start, complete, error)")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now())
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     duration: Optional[float] = Field(default=None, description="Duration if event is complete")
     metadata: Dict[str, Any] = Field(default_factory=dict)
 

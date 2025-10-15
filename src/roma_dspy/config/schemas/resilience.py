@@ -1,12 +1,18 @@
 """Resilience configuration schemas for ROMA-DSPy."""
 
+from typing import Optional, Any
 from pydantic.dataclasses import dataclass
 from pydantic import field_validator
+
+# Import for type checking only (avoid OmegaConf issues with nested Pydantic models)
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from roma_dspy.types.checkpoint_models import CheckpointConfig
 
 
 @dataclass
 class ResilienceConfig:
-    """Configuration for resilience features (retry, circuit breaker)."""
+    """Configuration for resilience features (retry, circuit breaker, checkpointing)."""
 
     # Retry configuration
     retry_strategy: str = "exponential_backoff"
@@ -20,6 +26,26 @@ class ResilienceConfig:
     recovery_timeout: float = 60.0
     success_threshold: int = 2
     evaluation_window: float = 300.0
+
+    # Checkpoint configuration (stored as dict for OmegaConf compatibility)
+    checkpoint: Optional[Any] = None  # Will be converted to CheckpointConfig in __post_init__
+
+    def __post_init__(self):
+        """Initialize checkpoint config with defaults if not provided."""
+        from roma_dspy.types.checkpoint_models import CheckpointConfig
+
+        if self.checkpoint is None:
+            self.checkpoint = CheckpointConfig()
+        elif isinstance(self.checkpoint, dict):
+            # Convert dict to CheckpointConfig (from YAML/OmegaConf)
+            try:
+                self.checkpoint = CheckpointConfig(**self.checkpoint)
+            except Exception as e:
+                raise ValueError(f"Invalid checkpoint configuration: {e}") from e
+        elif not isinstance(self.checkpoint, CheckpointConfig):
+            raise TypeError(
+                f"Checkpoint must be CheckpointConfig or dict, got {type(self.checkpoint).__name__}"
+            )
 
     @field_validator("retry_strategy")
     @classmethod

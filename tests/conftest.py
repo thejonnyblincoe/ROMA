@@ -16,6 +16,8 @@ os.environ.setdefault("DSPY_CACHEDIR", cache_path)
 os.environ.setdefault("DSPY_CACHE_DIR", cache_path)
 
 import pytest
+import pytest_asyncio
+from loguru import logger
 
 from roma_dspy import SubTask
 from roma_dspy.types import NodeType, PredictionStrategy, TaskType
@@ -84,3 +86,182 @@ def stub_prediction_strategy(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(PredictionStrategy, "build", build)
     yield
+
+
+@pytest.fixture
+def caplog_loguru(caplog):
+    """Pytest fixture to capture loguru logs using pytest-loguru.
+
+    This fixture enables capturing logs from loguru for testing purposes.
+    It propagates loguru logs to the standard logging system so they can
+    be captured by pytest's caplog fixture.
+
+    Usage:
+        def test_logging(caplog_loguru):
+            logger.info("Test message")
+            assert "Test message" in caplog_loguru.text
+
+    Returns:
+        pytest.LogCaptureFixture: The caplog fixture with loguru integration
+    """
+    import logging
+
+    class PropagateHandler(logging.Handler):
+        def emit(self, record):
+            logging.getLogger(record.name).handle(record)
+
+    handler_id = logger.add(PropagateHandler(), format="{message}")
+    yield caplog
+    logger.remove(handler_id)
+
+
+@pytest.fixture
+def clean_loguru():
+    """Fixture to clean loguru handlers before and after tests.
+
+    Ensures tests start with a clean slate and don't interfere with each other.
+    """
+    logger.remove()  # Remove all existing handlers
+    yield
+    logger.remove()  # Clean up after test
+
+
+# ============================================================================
+# API Test Fixtures
+# ============================================================================
+
+@pytest.fixture
+def mock_execution():
+    """Create a mock Execution model for API tests."""
+    from datetime import datetime, timezone
+    from roma_dspy.core.storage.models import Execution
+
+    return Execution(
+        execution_id="test-exec-123",
+        status="running",
+        initial_goal="Test task goal",
+        max_depth=2,
+        total_tasks=10,
+        completed_tasks=5,
+        failed_tasks=0,
+        config={"test": "config"},
+        execution_metadata={"test": "metadata"},
+        # dag_snapshot removed - now sourced from checkpoints
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+
+@pytest.fixture
+def mock_checkpoint():
+    """Create a mock Checkpoint model for API tests."""
+    from datetime import datetime, timezone
+    from roma_dspy.core.storage.models import Checkpoint
+
+    return Checkpoint(
+        checkpoint_id="test-checkpoint-123",
+        execution_id="test-exec-123",
+        created_at=datetime.now(timezone.utc),
+        trigger="manual",
+        state="saved",
+        dag_snapshot={"dag_id": "test-dag", "nodes": [], "edges": []},
+        preserved_results={},
+        module_states={},
+        failed_task_ids=[],
+        file_path="/tmp/checkpoint.json",
+        file_size_bytes=1024,
+        compressed=True,
+    )
+
+
+@pytest.fixture
+def mock_storage(mock_execution, mock_checkpoint):
+    """Create a mock PostgresStorage for API tests."""
+    from unittest.mock import AsyncMock
+    from roma_dspy.core.storage.postgres_storage import PostgresStorage
+
+    storage = AsyncMock(spec=PostgresStorage)
+
+    # Mock common methods
+    storage.create_execution = AsyncMock(return_value=mock_execution)
+    storage.get_execution = AsyncMock(return_value=mock_execution)
+    storage.update_execution = AsyncMock(return_value=None)
+    storage.list_executions = AsyncMock(return_value=[mock_execution])
+    storage.count_executions = AsyncMock(return_value=1)
+
+    # Create mock CheckpointData with proper root_dag structure
+    # Use a simple namespace that has root_dag as a dict (helpers.py reads it as dict)
+    from unittest.mock import MagicMock
+    checkpoint_data = MagicMock()
+    checkpoint_data.checkpoint_id = "test-checkpoint-123"
+    checkpoint_data.execution_id = "test-exec-123"
+    checkpoint_data.root_dag = {"dag_id": "test-dag", "nodes": [], "edges": [], "statistics": {}}
+
+    storage.list_checkpoints = AsyncMock(return_value=[mock_checkpoint])
+    storage.get_latest_checkpoint = AsyncMock(return_value=checkpoint_data)
+    storage.load_checkpoint = AsyncMock(return_value=None)
+    storage.delete_checkpoint = AsyncMock(return_value=True)
+
+    storage.get_lm_traces = AsyncMock(return_value=[])
+    storage.get_execution_costs = AsyncMock(return_value={
+        "total_cost_usd": 0.0,
+        "total_tokens": 0,
+        "traces_count": 0
+    })
+
+    storage.initialize = AsyncMock(return_value=None)
+    storage.close = AsyncMock(return_value=None)
+
+    return storage
+
+
+@pytest.fixture
+def mock_config_manager():
+    """Create a mock ConfigManager for API tests."""
+    from unittest.mock import MagicMock
+    from roma_dspy.config.manager import ConfigManager
+
+    manager = MagicMock(spec=ConfigManager)
+
+    # Mock config object
+    mock_config = MagicMock()
+    mock_config.project = "roma-dspy"
+    mock_config.version = "0.1.0"
+    mock_config.storage.postgres.enabled = True
+    mock_config.storage.postgres.connection_url = "postgresql+asyncpg://localhost/test"
+    mock_config.model_dump.return_value = {"test": "config"}
+
+    manager.load_config.return_value = mock_config
+
+    return manager
+
+
+@pytest.fixture
+def test_app(mock_storage, mock_config_manager):
+    """Create FastAPI test application with mocked dependencies."""
+    from datetime import datetime, timezone
+    from roma_dspy.api.main import create_app
+
+    app = create_app(enable_rate_limit=False)
+
+    # Override app state with mocks
+    class MockAppState:
+        def __init__(self):
+            self.storage = mock_storage
+            self.config_manager = mock_config_manager
+            self.execution_service = None
+            self.startup_time = datetime.now(timezone.utc)
+
+    app.state.app_state = MockAppState()
+
+    return app
+
+
+@pytest_asyncio.fixture
+async def client(test_app):
+    """Create async HTTP client for testing API endpoints."""
+    from httpx import AsyncClient, ASGITransport
+
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac

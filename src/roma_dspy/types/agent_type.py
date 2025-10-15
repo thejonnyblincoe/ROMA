@@ -17,11 +17,12 @@ class AgentType(str, Enum):
     """
     ROMA agent type enumeration for the 5-agent architecture.
     """
-    
+
     ATOMIZER = "atomizer"           # Task decomposition decision
     PLANNER = "planner"             # Task breakdown into subtasks
     EXECUTOR = "executor"           # Atomic task execution
-    AGGREGATOR = "aggregator"       # Result synthesis  
+    AGGREGATOR = "aggregator"       # Result synthesis
+    VERIFIER = "verifier"           # Result validation  
     
     def __str__(self) -> str:
         return self.value
@@ -67,10 +68,14 @@ class AgentType(str, Enum):
     def is_aggregator(self) -> bool:
         """Check if this is an AGGREGATOR agent type."""
         return self == AgentType.AGGREGATOR
-        
+
+    @property
+    def is_verifier(self) -> bool:
+        """Check if this is a VERIFIER agent type."""
+        return self == AgentType.VERIFIER
 
 
 # Type hints for use in other modules
 AgentTypeLiteral = Literal[
-    "atomizer", "planner", "executor", "aggregator"
+    "atomizer", "planner", "executor", "aggregator", "verifier"
 ]

@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from typing import Callable, Optional, Set, Tuple
+from datetime import datetime, timezone
+from typing import Callable, Optional, Set, Tuple, Dict, Any
 
-from src.roma_dspy.core.engine.dag import TaskDAG
-from src.roma_dspy.core.engine.events import EventType, TaskEvent
-from src.roma_dspy.core.engine.runtime import ModuleRuntime
-from src.roma_dspy.core.engine.scheduler import EventScheduler
-from src.roma_dspy.core.signatures import TaskNode
-from src.roma_dspy.types import TaskStatus, FailureContext
-from src.roma_dspy.types.checkpoint_types import CheckpointTrigger, RecoveryStrategy
-from src.roma_dspy.resilience import create_default_retry_policy, with_module_resilience
-from src.roma_dspy.resilience.checkpoint_manager import CheckpointManager
-from src.roma_dspy.types.checkpoint_models import CheckpointConfig
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from roma_dspy.core.engine.dag import TaskDAG
+from roma_dspy.core.engine.events import EventType, TaskEvent
+from roma_dspy.core.engine.runtime import ModuleRuntime
+from roma_dspy.core.engine.scheduler import EventScheduler
+from roma_dspy.core.signatures import TaskNode
+from roma_dspy.types import TaskStatus, FailureContext
+from roma_dspy.types.checkpoint_types import CheckpointTrigger, RecoveryStrategy
+from roma_dspy.resilience import create_default_retry_policy
+from roma_dspy.resilience.checkpoint_manager import CheckpointManager
+from roma_dspy.types.checkpoint_models import CheckpointConfig
 
 
 class EventLoopController:
@@ -30,22 +30,31 @@ class EventLoopController:
         priority_fn: Optional[Callable[[TaskNode], int]] = None,
         checkpoint_manager: Optional[CheckpointManager] = None,
         max_queue_size: int = 1000,
+        postgres_storage: Optional[Any] = None,
     ) -> None:
         self.dag = dag
         self.runtime = runtime
         self.max_queue_size = max_queue_size
-        self.scheduler = EventScheduler(dag, priority_fn=priority_fn, max_queue_size=max_queue_size)
+        self.postgres_storage = postgres_storage
+        self._queued: Set[Tuple[str, str]] = set()  # (dag_id, task_id)
+        self.scheduler = EventScheduler(
+            dag,
+            priority_fn=priority_fn,
+            max_queue_size=max_queue_size,
+            on_event_dropped=self._handle_event_dropped,
+            postgres_storage=postgres_storage
+        )
         self.scheduler.register_processor(EventType.READY, self._handle_ready)
         self.scheduler.register_processor(EventType.COMPLETED, self._handle_completed)
         self.scheduler.register_processor(EventType.SUBGRAPH_COMPLETE, self._handle_subgraph_complete)
         self.scheduler.register_processor(EventType.FAILED, self._handle_failed)
-        self._queued: Set[Tuple[str, str]] = set()  # (dag_id, task_id)
 
         # Initialize checkpoint manager for recovery - respect disabled state
         self.checkpoint_manager = checkpoint_manager  # Don't create if None (disabled)
         self._failure_count = 0
         self._max_recovery_attempts = 3
         self._max_queued_tasks = max_queue_size  # Use same limit for event loop queue
+        self._failed_task_ids: Set[str] = set()  # Track failed tasks for checkpoint recovery
 
         # Event loop health tracking
         self._event_stats = {
@@ -98,6 +107,22 @@ class EventLoopController:
             # Restore scheduler state if pending
             scheduler_state = self.checkpoint_manager.get_pending_scheduler_state()
             if scheduler_state:
+                # Increment recovery attempt counter
+                self._failure_count += 1
+                logger.info(
+                    "Attempting checkpoint recovery (attempt %d/%d)",
+                    self._failure_count,
+                    self._max_recovery_attempts
+                )
+
+                # Check if max recovery attempts exceeded
+                if self._failure_count > self._max_recovery_attempts:
+                    logger.error(
+                        "Max recovery attempts (%d) exceeded, aborting restoration",
+                        self._max_recovery_attempts
+                    )
+                    return False
+
                 self.scheduler.restore_scheduler_state(scheduler_state)
                 logger.info("Applied scheduler state restoration")
 
@@ -105,12 +130,13 @@ class EventLoopController:
             event_loop_state = self.checkpoint_manager.get_pending_event_loop_state()
             if event_loop_state:
                 self._events_since_checkpoint = event_loop_state.get("events_processed", 0)
-                self._failure_count = event_loop_state.get("failure_count", 0)
+                # Don't restore failure_count from checkpoint - it's a runtime counter
                 self._last_checkpoint_time = event_loop_state.get("last_checkpoint_time")
 
-                # Restore queued tasks set
-                queued_tasks = event_loop_state.get("queued_tasks", [])
-                self._queued = set(tuple(task) for task in queued_tasks)
+                # DON'T restore queued_tasks - they should be regenerated based on DAG state
+                # This prevents dropped events from being incorrectly marked as queued
+                self._queued.clear()
+                # Let enqueue_ready_tasks() repopulate based on current DAG state
 
                 logger.info("Applied event loop state restoration")
 
@@ -122,6 +148,7 @@ class EventLoopController:
 
         except Exception as e:
             logger.error(f"Failed to apply pending restorations: {e}")
+            self._failure_count += 1
             return False
 
     async def _create_event_checkpoint(self, trigger: CheckpointTrigger, event: Optional[TaskEvent] = None) -> Optional[str]:
@@ -144,7 +171,7 @@ class EventLoopController:
                     "events_processed": self._event_stats["events_processed"],
                     "failure_count": self._failure_count
                 },
-                failed_task_ids=set(),  # Track failed tasks if needed
+                failed_task_ids=self._failed_task_ids.copy(),  # Use tracked failures
                 # Pass scheduler state in module_states for proper restoration
                 module_states={
                     "scheduler": self.scheduler.get_scheduler_state(),
@@ -213,9 +240,11 @@ class EventLoopController:
             dag_id=dag.dag_id,
         )
 
-    @with_module_resilience(module_name="event_loop_ready")
     async def _handle_ready(self, event: TaskEvent) -> Optional[TaskEvent]:
-        # Track event processing and maybe checkpoint (atomic operation)
+        # Track event processing stats
+        self._event_stats["events_processed"] += 1
+
+        # Track checkpoint interval and maybe checkpoint (atomic operation)
         events_count = self._events_since_checkpoint + 1
         self._events_since_checkpoint = events_count
 
@@ -257,6 +286,9 @@ class EventLoopController:
             # Checkpoint before planning as it's a critical operation
             await self._maybe_checkpoint(CheckpointTrigger.BEFORE_PLANNING, event)
             task = await self.runtime.plan_async(task, owning_dag)
+            # Checkpoint after planning completes
+            await self._maybe_checkpoint(CheckpointTrigger.AFTER_PLANNING, event)
+
             subgraph = owning_dag.get_subgraph(task.subgraph_id) if task.subgraph_id else None
 
             if subgraph and subgraph.graph.nodes():
@@ -279,8 +311,12 @@ class EventLoopController:
 
         return None
 
-    @with_module_resilience(module_name="event_loop_completed")
     async def _handle_completed(self, event: TaskEvent) -> Optional[TaskEvent]:
+        # Track event processing stats
+        self._event_stats["events_processed"] += 1
+        # Track checkpoint interval
+        self._events_since_checkpoint += 1
+
         if not event.task_id or not event.dag_id:
             return None
 
@@ -302,8 +338,12 @@ class EventLoopController:
 
         return None
 
-    @with_module_resilience(module_name="event_loop_subgraph")
     async def _handle_subgraph_complete(self, event: TaskEvent) -> Optional[TaskEvent]:
+        # Track event processing stats
+        self._event_stats["events_processed"] += 1
+        # Track checkpoint interval
+        self._events_since_checkpoint += 1
+
         if not event.task_id or not event.dag_id:
             return None
 
@@ -329,8 +369,18 @@ class EventLoopController:
         await self.enqueue_ready_tasks()
         return self._make_completed_event(task, owning_dag)
 
-    @with_module_resilience(module_name="event_loop_failed")
     async def _handle_failed(self, event: TaskEvent) -> Optional[TaskEvent]:
+        # Track event processing stats
+        self._event_stats["events_processed"] += 1
+        self._event_stats["events_failed"] += 1
+        self._event_stats["last_failure_time"] = datetime.now(timezone.utc)
+        # Track checkpoint interval
+        self._events_since_checkpoint += 1
+
+        # Track failed task for checkpoint recovery
+        if event.task_id:
+            self._failed_task_ids.add(event.task_id)
+
         # Checkpoint on failure for recovery purposes
         await self._maybe_checkpoint(CheckpointTrigger.ON_FAILURE, event)
 
@@ -389,7 +439,7 @@ class EventLoopController:
                 updated_task = task.increment_retry()
                 if updated_task.status != TaskStatus.READY:
                     updated_task = updated_task.transition_to(TaskStatus.READY)
-                await owning_dag.update_node(updated_task)
+                owning_dag.update_node(updated_task)
 
                 # Remove from queued set and re-add with new state
                 key = (owning_dag.dag_id, task.task_id)
@@ -415,6 +465,20 @@ class EventLoopController:
             event.data,
         )
         await owning_dag.mark_failed(event.task_id, error=event.data)
+
+        # Check if parent subgraph can still complete or should fail
+        # This enables proper failure propagation up the task hierarchy
+        parent_info = await owning_dag.check_subgraph_complete(task.task_id)
+
+        if parent_info:
+            parent_node, parent_dag = parent_info
+            # Parent subgraph completed (possibly with some failures)
+            return self._make_subgraph_event(parent_node, parent_dag)
+
+        # Also check if this failure blocks any parent tasks
+        # If the parent is waiting on this failed task, it should be notified
+        await self.enqueue_ready_tasks()
+
         return None
 
     def _resolve_dag(self, dag_id: str) -> Optional[TaskDAG]:
@@ -422,14 +486,24 @@ class EventLoopController:
             return None
         return self.dag.find_dag(dag_id)
 
+    def _handle_event_dropped(self, event: TaskEvent) -> None:
+        """Handle dropped events by removing them from _queued so they can be re-enqueued."""
+        if event.task_id and event.dag_id:
+            key = (event.dag_id, event.task_id)
+            self._queued.discard(key)
+            logger.warning(
+                "Event %s for task %s in dag %s was dropped due to queue overflow, removed from _queued",
+                event.event_type.name,
+                event.task_id,
+                event.dag_id
+            )
+
     # ------------------------------------------------------------------
     # Event Loop Health and Monitoring
     # ------------------------------------------------------------------
 
     def get_event_loop_health(self) -> Dict[str, Any]:
         """Get comprehensive health status of the event loop."""
-        import time
-
         scheduler_status = self.scheduler.get_queue_status()
 
         return {

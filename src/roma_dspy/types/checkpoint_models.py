@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from src.roma_dspy.types.checkpoint_types import CheckpointState, RecoveryStrategy, CheckpointTrigger
+from roma_dspy.types.checkpoint_types import CheckpointState, RecoveryStrategy, CheckpointTrigger
+
+
+class CacheStatistics(BaseModel):
+    """Cache performance statistics for checkpoint analysis."""
+    total_calls: int = Field(default=0, description="Total LM calls during execution")
+    cache_hits: int = Field(default=0, description="Number of cache hits")
+    cache_misses: int = Field(default=0, description="Number of cache misses")
+    hit_rate: float = Field(default=0.0, description="Cache hit rate (0-1)")
+    time_saved_ms: int = Field(default=0, description="Estimated time saved by cache (milliseconds)")
+    cost_saved_usd: float = Field(default=0.0, description="Estimated cost saved (USD)")
 
 
 class TaskSnapshot(BaseModel):
     """Serializable snapshot of a task node state."""
     task_id: str = Field(description="Unique task identifier")
+    goal: str = Field(description="Task goal description")
     status: str = Field(description="Current task status")
     task_type: str = Field(description="Task type classification")
     depth: int = Field(description="Task depth in hierarchy")
@@ -34,12 +45,20 @@ class DAGSnapshot(BaseModel):
     failed_tasks: Set[str] = Field(default_factory=set, description="Failed task IDs")
     dependencies: Dict[str, List[str]] = Field(default_factory=dict, description="Task dependencies")
     subgraphs: Dict[str, "DAGSnapshot"] = Field(default_factory=dict, description="Nested subgraph snapshots")
+    statistics: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="DAG execution statistics (task counts, status distribution, depth info)"
+    )
 
 
 class CheckpointData(BaseModel):
     """Complete checkpoint data for state recovery."""
     checkpoint_id: str = Field(description="Unique checkpoint identifier")
-    created_at: datetime = Field(default_factory=datetime.now, description="Checkpoint creation time")
+    execution_id: str = Field(description="Execution identifier (for Postgres FK)")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Checkpoint creation time (UTC timezone-aware)"
+    )
     trigger: CheckpointTrigger = Field(description="Event that triggered checkpoint creation")
     state: CheckpointState = Field(default=CheckpointState.CREATED, description="Checkpoint validity state")
 
@@ -56,6 +75,15 @@ class CheckpointData(BaseModel):
     # Runtime context
     solver_config: Dict[str, Any] = Field(default_factory=dict, description="RecursiveSolver configuration")
     module_states: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="Module instance states")
+
+    # Cache statistics
+    cache_stats: Optional[CacheStatistics] = Field(
+        default=None,
+        description="Cache performance stats at checkpoint time"
+    )
+
+    # File path for hybrid storage
+    file_path: Optional[str] = Field(default=None, description="Path to file-based checkpoint")
 
     class Config:
         json_encoders = {
@@ -113,3 +141,17 @@ class CheckpointConfig(BaseModel):
     # Compression and storage
     compress_checkpoints: bool = Field(default=True, description="Compress checkpoint data")
     verify_integrity: bool = Field(default=True, description="Verify checkpoint integrity on load")
+
+    # Periodic checkpoints
+    periodic_checkpoints_enabled: bool = Field(
+        default=True,
+        description="Enable periodic background checkpoints during execution"
+    )
+    periodic_interval_seconds: float = Field(
+        default=30.0,
+        description="Interval between periodic checkpoints (seconds)"
+    )
+    min_execution_time_for_periodic: float = Field(
+        default=10.0,
+        description="Minimum execution time before periodic checkpoints start (seconds)"
+    )

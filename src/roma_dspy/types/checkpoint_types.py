@@ -27,6 +27,8 @@ class RecoveryStrategy(str, Enum):
 
 class CheckpointTrigger(str, Enum):
     """Events that trigger checkpoint creation."""
+    EXECUTION_START = "execution_start"  # Initial checkpoint when execution begins
+    EXECUTION_COMPLETE = "execution_complete"  # Final checkpoint when execution finishes
     BEFORE_PLANNING = "before_planning"
     AFTER_PLANNING = "after_planning"
     BEFORE_AGGREGATION = "before_aggregation"

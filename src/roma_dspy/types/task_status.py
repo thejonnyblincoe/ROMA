@@ -83,7 +83,7 @@ class TaskStatus(str, Enum):
             Set of valid target statuses for transitions
         """
         transitions = {
-            TaskStatus.PENDING: {TaskStatus.ATOMIZING, TaskStatus.EXECUTING, TaskStatus.FAILED},
+            TaskStatus.PENDING: {TaskStatus.ATOMIZING, TaskStatus.EXECUTING, TaskStatus.READY, TaskStatus.FAILED},
             TaskStatus.ATOMIZING: {TaskStatus.PLANNING, TaskStatus.EXECUTING, TaskStatus.FAILED},
             TaskStatus.PLANNING: {TaskStatus.PLAN_DONE, TaskStatus.FAILED},
             TaskStatus.PLAN_DONE: {TaskStatus.AGGREGATING, TaskStatus.READY},

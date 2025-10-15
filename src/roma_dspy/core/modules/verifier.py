@@ -5,18 +5,22 @@ from __future__ import annotations
 import dspy
 from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping
 
-from .base_module import BaseModule
-from ..signatures.signatures import VerifierSignature
-from ...types import PredictionStrategy
+from roma_dspy.core.modules.base_module import BaseModule
+from roma_dspy.core.signatures.signatures import VerifierSignature
+from roma_dspy.types import PredictionStrategy
 
 
 class Verifier(BaseModule):
     """Verifies task execution results."""
 
+    DEFAULT_SIGNATURE = VerifierSignature
+
     def __init__(
         self,
         prediction_strategy: Union[PredictionStrategy, str] = PredictionStrategy.CHAIN_OF_THOUGHT,
         *,
+        signature: Any = None,
+        config: Optional[Any] = None,
         lm: Optional[dspy.LM] = None,
         model: Optional[str] = None,
         model_config: Optional[Mapping[str, Any]] = None,
@@ -24,7 +28,8 @@ class Verifier(BaseModule):
         **strategy_kwargs: Any,
     ) -> None:
         super().__init__(
-            signature=VerifierSignature,
+            signature=signature if signature is not None else self.DEFAULT_SIGNATURE,
+            config=config,
             prediction_strategy=prediction_strategy,
             lm=lm,
             model=model,
@@ -76,7 +81,12 @@ class Verifier(BaseModule):
         call_params: Optional[Dict[str, Any]] = None,
         **call_kwargs: Any,
     ):
-        runtime_tools = self._merge_tools(self._tools, tools)
+        # BUG FIX: Get execution-scoped tools from ExecutionContext (for toolkit-based agents)
+        execution_tools = await self._get_execution_tools()
+        runtime_tools = self._merge_tools(execution_tools, tools)
+
+        # Update predictor's internal tools (for ReAct/CodeAct that don't accept tools as parameters)
+        self._update_predictor_tools(runtime_tools)
 
         ctx = dict(self._context_defaults)
         if context:

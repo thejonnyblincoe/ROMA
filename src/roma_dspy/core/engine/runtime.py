@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, TYPE_CHECKING
 
-from .dag import TaskDAG
-from ..modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from ..signatures import SubTask, TaskNode
-from ...types import ModuleResult, NodeType, TaskStatus, AgentType, TokenMetrics
-from ...resilience import with_module_resilience, measure_execution_time
+from loguru import logger
+
+from roma_dspy.core.context import ExecutionContext
+from roma_dspy.core.engine.dag import TaskDAG
+from roma_dspy.core.modules import Aggregator, Atomizer, Executor, Planner, Verifier
+from roma_dspy.core.observability.execution_manager import add_span_attribute
+from roma_dspy.core.registry import AgentRegistry
+from roma_dspy.core.signatures import SubTask, TaskNode
+from roma_dspy.tools.base.manager import ToolkitManager
+from roma_dspy.types import ModuleResult, NodeType, TaskStatus, AgentType, TokenMetrics
+from roma_dspy.resilience import with_module_resilience, measure_execution_time
+
+if TYPE_CHECKING:
+    from ..context import ContextManager
 
 
 SolveFn = Callable[[TaskNode, TaskDAG, int], TaskNode]
@@ -26,6 +36,10 @@ class ContextStore:
         # Map subgraph_id -> {index -> task_id}
         self._index_maps: Dict[str, Dict[int, str]] = {}
 
+        # Execution context for LM tracing
+        self._execution_id: Optional[str] = None
+        self._postgres_storage: Optional[Any] = None
+
     async def store_result(self, task_id: str, result: str) -> None:
         """
         Store task result in a thread-safe manner.
@@ -36,6 +50,19 @@ class ContextStore:
         """
         async with self._lock:
             self._store[task_id] = result
+
+    def store_result_sync(self, task_id: str, result: str) -> None:
+        """
+        Store task result synchronously without async locking.
+
+        WARNING: Not thread-safe. Use only in synchronous execution contexts
+        where async locking is not available.
+
+        Args:
+            task_id: Unique task identifier
+            result: Task execution result
+        """
+        self._store[task_id] = result
 
     def get_result(self, task_id: str) -> Optional[str]:
         """
@@ -74,6 +101,28 @@ class ContextStore:
             Task ID or None if not found
         """
         return self._index_maps.get(subgraph_id, {}).get(index)
+
+    def set_execution_context(
+        self,
+        execution_id: str,
+        postgres_storage: Optional[Any] = None
+    ) -> None:
+        """Set execution context for LM trace persistence.
+
+        Args:
+            execution_id: Unique execution identifier
+            postgres_storage: Optional PostgresStorage instance
+        """
+        self._execution_id = execution_id
+        self._postgres_storage = postgres_storage
+
+    def get_execution_context(self) -> tuple[Optional[str], Optional[Any]]:
+        """Get execution context for LM tracing.
+
+        Returns:
+            Tuple of (execution_id, postgres_storage)
+        """
+        return self._execution_id, self._postgres_storage
 
     def get_context_for_dependencies(self, dep_ids: List[str]) -> str:
         """
@@ -155,7 +204,8 @@ class ContextStore:
         lines = ["Context Store Summary:", "=" * 80]
         for task_id, result in self._store.items():
             lines.append(f"\nTask ID: {task_id[:8]}...")
-            lines.append(f"Result: {result[:200]}{'...' if len(result) > 200 else ''}")
+            result_str = str(result) if not isinstance(result, str) else result
+            lines.append(f"Result: {result_str[:200]}{'...' if len(result_str) > 200 else ''}")
             lines.append("-" * 80)
         return "\n".join(lines)
 
@@ -178,62 +228,249 @@ class ContextStore:
 
 
 class ModuleRuntime:
-    """Shared module orchestration for both sync and async solvers."""
+    """Module orchestration using AgentRegistry for task-aware agent selection."""
 
-    def __init__(
-        self,
-        atomizer: Atomizer,
-        planner: Planner,
-        executor: Executor,
-        aggregator: Aggregator,
-        verifier: Optional[Verifier] = None,
-    ) -> None:
-        self.atomizer = atomizer
-        self.planner = planner
-        self.executor = executor
-        self.aggregator = aggregator
-        self.verifier = verifier
+    def __init__(self, registry: AgentRegistry, context_manager: Optional["ContextManager"] = None) -> None:
+        self.registry = registry
         self.context_store = ContextStore()
+        self.context_manager = context_manager  # Set by solver after initialization
+
+    # ------------------------------------------------------------------
+    # Helper: Extract tools data from agent for context building
+    # ------------------------------------------------------------------
+
+    async def _get_tools_data_async(self, agent: "BaseModule") -> list[dict]:
+        """
+        Extract tool information from agent for context building.
+
+        For toolkit-based agents, retrieves tools from ToolkitManager using ExecutionContext.
+        Returns tool names and descriptions for inclusion in agent context XML.
+
+        Returns:
+            List of dicts with 'name' and 'description' keys
+        """
+        # Check if agent uses toolkits (config-based dynamic tool loading)
+        if hasattr(agent, '_toolkit_configs') and agent._toolkit_configs:
+            # Get tools from ToolkitManager via ExecutionContext
+            ctx = ExecutionContext.get()
+            if ctx and ctx.file_storage:
+                try:
+                    manager = ToolkitManager.get_instance()
+                    tools_dict = await manager.get_tools_for_execution(
+                        execution_id=ctx.execution_id,
+                        file_storage=ctx.file_storage,
+                        toolkit_configs=agent._toolkit_configs
+                    )
+                    return [
+                        {"name": name, "description": getattr(tool, "__doc__", "No description available")}
+                        for name, tool in tools_dict.items()
+                    ]
+                except Exception as e:
+                    logger.warning(f"Failed to load toolkit tools for context: {e}")
+                    return []
+
+        # No toolkits configured - return empty list
+        return []
+
+    async def _persist_lm_trace(
+        self,
+        execution_id: str,
+        postgres: Any,
+        module: Any,
+        result: Any,
+        start_time: float,
+        task_id: str
+    ) -> None:
+        """Persist LM call trace to Postgres.
+
+        Args:
+            execution_id: Execution identifier
+            postgres: PostgresStorage instance
+            module: Module that made the LM call
+            result: LM call result
+            start_time: Call start timestamp
+            task_id: Task identifier
+        """
+        try:
+            latency_ms = int((time.time() - start_time) * 1000)
+
+            # Extract token usage from DSPy result
+            # DSPy Prediction objects use get_lm_usage() method
+            # Returns nested dict: {'model_name': {'prompt_tokens': X, ...}}
+            usage = None
+            if hasattr(result, 'get_lm_usage'):
+                usage = result.get_lm_usage()
+                logger.debug(f"[LM Trace] get_lm_usage() returned: {usage}")
+            else:
+                logger.debug(f"[LM Trace] Result has no get_lm_usage() method. Type: {type(result).__name__}")
+
+            # Extract token data from nested structure
+            prompt_tokens = 0
+            completion_tokens = 0
+            total_tokens = 0
+
+            if usage and isinstance(usage, dict):
+                # DSPy returns: {'model_name': {'prompt_tokens': X, 'completion_tokens': Y, ...}}
+                # Get first (and usually only) model's usage data
+                for _model_name, model_usage in usage.items():
+                    if isinstance(model_usage, dict):
+                        prompt_tokens = model_usage.get('prompt_tokens', 0)
+                        completion_tokens = model_usage.get('completion_tokens', 0)
+                        total_tokens = model_usage.get('total_tokens', prompt_tokens + completion_tokens)
+                        logger.debug(f"[LM Trace] Extracted tokens: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
+                        break  # Use first model's data
+
+            # Get model info from module's LM
+            lm = getattr(module, 'lm', None) or getattr(module, '_lm', None)
+            model = getattr(lm, 'model', 'unknown') if lm else 'unknown'
+            temperature = getattr(lm, 'kwargs', {}).get('temperature') if lm else None
+            max_tokens = getattr(lm, 'kwargs', {}).get('max_tokens') if lm else None
+
+            # Calculate cost if available
+            # First try DSPy's usage dict, then fallback to TokenMetrics
+            cost_usd = None
+            if usage and isinstance(usage, dict):
+                cost_usd = usage.get('cost')
+            elif hasattr(result, 'metrics') and isinstance(result.metrics, TokenMetrics):
+                cost_usd = result.metrics.cost
+
+            # Get prediction strategy
+            prediction_strategy = str(getattr(module, '_prediction_strategy', None))
+
+            await postgres.save_lm_trace(
+                execution_id=execution_id,
+                task_id=task_id,
+                module_name=module.__class__.__name__.lower(),
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                cost_usd=cost_usd,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                prediction_strategy=prediction_strategy,
+                latency_ms=latency_ms,
+                metadata={"success": True}
+            )
+            logger.debug(f"Persisted LM trace for task {task_id}")
+        except Exception as e:
+            logger.warning(f"Failed to persist LM trace: {e}")
+
+    async def _execute_agent_with_tracing(
+        self,
+        agent_type: AgentType,
+        task: TaskNode,
+        dag: TaskDAG,
+        *,
+        context_builder_args: tuple = (),
+        prepare_module_kwargs: Callable[[TaskNode, Optional[str]], dict],
+        process_result: Callable[[TaskNode, Any, float, Any, Any, TaskDAG], TaskNode],
+    ) -> TaskNode:
+        """
+        Generic execution wrapper with LM tracing for all agent types.
+
+        This method eliminates ~175 lines of duplicate code by extracting the common
+        pattern shared across atomize_async, plan_async, execute_async, force_execute_async,
+        and aggregate_async.
+
+        Args:
+            agent_type: Type of agent to execute (ATOMIZER, PLANNER, etc.)
+            task: Current task node
+            dag: Task DAG
+            context_builder_args: Additional args for context builder (e.g., self, dag for planner/executor)
+            prepare_module_kwargs: Function to prepare module-specific kwargs from task and context
+            process_result: Function to process module result into updated task
+
+        Returns:
+            Updated task node after execution
+
+        Raises:
+            Exception: Re-raises any exception from module execution with enhanced context
+        """
+        # 1. Get agent from registry
+        agent = self.registry.get_agent(agent_type, task.task_type)
+
+        # 2. Build context using ContextManager if available
+        context = None
+        if self.context_manager:
+            tools_data = await self._get_tools_data_async(agent)
+            logger.debug(f"[Context] Loaded {len(tools_data)} tools for {agent_type.value}")
+            # Dynamic context builder method lookup
+            builder_name = f"build_{agent_type.value.lower()}_context"
+            context_builder = getattr(self.context_manager, builder_name)
+            context = context_builder(task, tools_data, *context_builder_args)
+            if tools_data:
+                logger.debug(f"[Context] Tools in context: {[t['name'] for t in tools_data[:5]]}...")
+
+        # PHASE 3: Add ROMA span attributes for MLflow observability
+        add_span_attribute(task, agent_type)
+
+        # 3. Execute with timing and tracing
+        try:
+            start_time = time.time()
+
+            # Prepare module-specific kwargs
+            module_kwargs = prepare_module_kwargs(task, context)
+
+            # Execute module
+            result, duration, token_metrics, messages = await self._async_execute_module(
+                agent, **module_kwargs
+            )
+
+            # 4. Persist LM trace to Postgres (common pattern)
+            execution_id, postgres = self.context_store.get_execution_context()
+            if postgres and execution_id:
+                await self._persist_lm_trace(
+                    execution_id=execution_id,
+                    postgres=postgres,
+                    module=agent,
+                    result=result,
+                    start_time=start_time,
+                    task_id=task.task_id
+                )
+
+            # 5. Process result (module-specific logic)
+            task = process_result(task, result, duration, token_metrics, messages, dag)
+
+            return task
+
+        except Exception as e:
+            self._enhance_error_context(e, agent_type, task)
+            raise
 
     # ------------------------------------------------------------------
     # Core module execution helpers
     # ------------------------------------------------------------------
 
-    def atomize(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        task = task.transition_to(TaskStatus.ATOMIZING)
-        try:
-            result, duration = self._execute_module(self.atomizer, task.goal)
-            task = self._record_module_result(
-                task,
-                "atomizer",
-                task.goal,
-                {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
-                duration,
-            )
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.ATOMIZER, task)
-            raise
-        task = task.set_node_type(result.node_type)
-        dag.update_node(task)
-        return task
 
     async def atomize_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
         task = task.transition_to(TaskStatus.ATOMIZING)
-        try:
-            result, duration = await self._async_execute_module(self.atomizer, task.goal)
-            task = self._record_module_result(
-                task,
+
+        def prepare_kwargs(t, context):
+            # Module.aforward expects: (input_task, *, context_payload=...)
+            return {"input_task": t.goal, "context_payload": context}
+
+        def process_result(t, result, duration, token_metrics, messages, dag):
+            t = self._record_module_result(
+                t,
                 "atomizer",
-                task.goal,
+                t.goal,
                 {"is_atomic": result.is_atomic, "node_type": result.node_type.value},
                 duration,
+                token_metrics=token_metrics,
+                messages=messages,
             )
-            task = task.set_node_type(result.node_type)
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.ATOMIZER, task)
-            raise
-        dag.update_node(task)
-        return task
+            t = t.set_node_type(result.node_type)
+            dag.update_node(t)
+            return t
+
+        return await self._execute_agent_with_tracing(
+            AgentType.ATOMIZER,
+            task,
+            dag,
+            prepare_module_kwargs=prepare_kwargs,
+            process_result=process_result,
+        )
 
     def transition_from_atomizing(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
         if task.node_type == NodeType.EXECUTE:
@@ -243,258 +480,126 @@ class ModuleRuntime:
         dag.update_node(task)
         return task
 
-    def plan(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        try:
-            result, duration = self._execute_module(self.planner, task.goal)
-            task = self._record_module_result(
-                task,
-                "planner",
-                task.goal,
-                {
-                    "subtasks": [s.model_dump() for s in result.subtasks],
-                    "dependencies": result.dependencies_graph,
-                },
-                duration,
-            )
-            task = self._create_subtask_graph(task, dag, result)
-            task = task.transition_to(TaskStatus.PLAN_DONE)
-            dag.update_node(task)
-            return task
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.PLANNER, task)
-            raise
 
     async def plan_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        try:
-            result, duration = await self._async_execute_module(self.planner, task.goal)
-            task = self._record_module_result(
-                task,
+        def prepare_kwargs(t, context):
+            return {"input_task": t.goal, "context_payload": context}
+
+        def process_result(t, result, duration, token_metrics, messages, dag):
+            t = self._record_module_result(
+                t,
                 "planner",
-                task.goal,
+                t.goal,
                 {
                     "subtasks": [s.model_dump() for s in result.subtasks],
                     "dependencies": result.dependencies_graph,
                 },
                 duration,
-            )
-            task = self._create_subtask_graph(task, dag, result)
-            task = task.transition_to(TaskStatus.PLAN_DONE)
-            dag.update_node(task)
-            return task
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.PLANNER, task)
-            raise
-
-    def execute(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        try:
-            result, duration = self._execute_module(self.executor, task.goal)
-            task = self._record_module_result(
-                task,
-                "executor",
-                task.goal,
-                result.output,
-                duration,
-            )
-            task = task.with_result(result.output)
-            dag.update_node(task)
-            return task
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.EXECUTOR, task)
-            raise
-
-    async def execute_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        # Retrieve context from dependencies if they exist
-        context = None
-        if task.dependencies:
-            dep_ids = list(task.dependencies)
-            # Build context with structured, LLM-friendly formatting
-            context_parts = []
-
-            for dep_id in dep_ids:
-                result_str = self.context_store.get_result(dep_id)
-                if result_str:
-                    # Get the dependency task for its goal
-                    dep_task = None
-                    try:
-                        dep_task, _ = dag.find_node(dep_id)
-                    except ValueError:
-                        pass
-
-                    # Try to get index for cleaner display
-                    dep_idx = None
-                    if task.parent_id:
-                        parent = dag.get_node(task.parent_id) if task.parent_id in dag.graph else None
-                        if parent and parent.subgraph_id:
-                            dep_idx = self.context_store.get_task_index(parent.subgraph_id, dep_id)
-
-                    # Format as structured context
-                    if dep_idx is not None:
-                        context_entry = f"<subtask id=\"{dep_idx}\">"
-                        if dep_task:
-                            context_entry += f"\n  <goal>{dep_task.goal}</goal>"
-                        context_entry += f"\n  <output>{result_str}</output>\n</subtask>"
-                        context_parts.append(context_entry)
-                    else:
-                        # Fallback for non-indexed tasks
-                        context_entry = f"<previous_task>\n  <output>{result_str}</output>\n</previous_task>"
-                        context_parts.append(context_entry)
-
-            if context_parts:
-                context = "<context>\n" + "\n\n".join(context_parts) + "\n</context>"
-
-        try:
-            # Execute with context
-            result, duration, token_metrics, messages = await self._async_execute_module(
-                self.executor,
-                task.goal,
-                context=context if context else None
-            )
-
-            # Record with context metadata
-            metadata = {}
-            if context:
-                metadata["context_received"] = context[:200] + "..." if len(context) > 200 else context
-                metadata["dependency_ids"] = list(task.dependencies)
-
-            task = self._record_module_result(
-                task,
-                "executor",
-                task.goal,
-                result.output,
-                duration,
-                metadata=metadata,
                 token_metrics=token_metrics,
                 messages=messages,
             )
-            task = task.with_result(result.output)
-            dag.update_node(task)
+            t = self._create_subtask_graph(t, dag, result)
+            t = t.transition_to(TaskStatus.PLAN_DONE)
+            dag.update_node(t)
+            return t
 
-            # Store result for future dependent tasks
-            await self.context_store.store_result(task.task_id, result.output)
-
-            return task
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.EXECUTOR, task)
-            raise
-
-    def force_execute(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
-        task = task.set_node_type(NodeType.EXECUTE)
-        task = task.transition_to(TaskStatus.EXECUTING)
-        dag.update_node(task)
-        result, duration, token_metrics, messages = self._execute_module(self.executor, task.goal)
-        task = self._record_module_result(
+        return await self._execute_agent_with_tracing(
+            AgentType.PLANNER,
             task,
-            "executor",
-            task.goal,
-            result.output,
-            duration,
-            metadata={"forced": True, "depth": task.depth},
-            token_metrics=token_metrics,
-            messages=messages,
+            dag,
+            context_builder_args=(self, dag),
+            prepare_module_kwargs=prepare_kwargs,
+            process_result=process_result,
         )
-        task = task.with_result(result.output)
-        dag.update_node(task)
+
+
+    async def execute_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
+        # Capture context in closure for use in process_result
+        context_captured = None
+
+        def prepare_kwargs(t: TaskNode, context: Optional[str]) -> dict:
+            nonlocal context_captured
+            context_captured = context
+            return {"goal": t.goal, "context": context}
+
+        def process_result(t: TaskNode, result: Any, duration: float, token_metrics: Any, messages: Any, dag: TaskDAG) -> TaskNode:
+            # Record with context metadata
+            metadata = {}
+            if context_captured and isinstance(context_captured, str):
+                metadata["context_received"] = context_captured[:200] + "..." if len(context_captured) > 200 else context_captured
+                if t.dependencies:
+                    metadata["dependency_ids"] = list(t.dependencies)
+            # Capture sources for provenance tracking
+            if hasattr(result, 'sources') and result.sources:
+                metadata["sources"] = result.sources
+
+            t = self._record_module_result(
+                t, "executor", t.goal, result.output, duration,
+                metadata=metadata, token_metrics=token_metrics, messages=messages
+            )
+            t = t.with_result(result.output)
+            dag.update_node(t)
+            return t
+
+        task = await self._execute_agent_with_tracing(
+            AgentType.EXECUTOR,
+            task,
+            dag,
+            context_builder_args=(self, dag),
+            prepare_module_kwargs=prepare_kwargs,
+            process_result=process_result,
+        )
+
+        # Store result for future dependent tasks
+        await self.context_store.store_result(task.task_id, task.result)
         return task
+
 
     async def force_execute_async(self, task: TaskNode, dag: TaskDAG) -> TaskNode:
         task = task.set_node_type(NodeType.EXECUTE)
         task = task.transition_to(TaskStatus.EXECUTING)
         dag.update_node(task)
 
-        # Retrieve context from dependencies if they exist
-        context = None
-        if task.dependencies:
-            dep_ids = list(task.dependencies)
-            # Build context with structured, LLM-friendly formatting
-            context_parts = []
+        # Capture context in closure for use in process_result
+        context_captured = None
 
-            for dep_id in dep_ids:
-                result_str = self.context_store.get_result(dep_id)
-                if result_str:
-                    # Get the dependency task for its goal
-                    dep_task = None
-                    try:
-                        dep_task, _ = dag.find_node(dep_id)
-                    except ValueError:
-                        pass
+        def prepare_kwargs(t: TaskNode, context: Optional[str]) -> dict:
+            nonlocal context_captured
+            context_captured = context
+            return {"goal": t.goal, "context": context}
 
-                    # Try to get index for cleaner display
-                    dep_idx = None
-                    if task.parent_id:
-                        parent = dag.get_node(task.parent_id) if task.parent_id in dag.graph else None
-                        if parent and parent.subgraph_id:
-                            dep_idx = self.context_store.get_task_index(parent.subgraph_id, dep_id)
+        def process_result(t: TaskNode, result: Any, duration: float, token_metrics: Any, messages: Any, dag: TaskDAG) -> TaskNode:
+            # Record with context metadata (forced execution has additional metadata)
+            metadata = {"forced": True, "depth": t.depth}
+            if context_captured and isinstance(context_captured, str):
+                metadata["context_received"] = context_captured[:200] + "..." if len(context_captured) > 200 else context_captured
+                if t.dependencies:
+                    metadata["dependency_ids"] = list(t.dependencies)
+            # Capture sources for provenance tracking
+            if hasattr(result, 'sources') and result.sources:
+                metadata["sources"] = result.sources
 
-                    # Format as structured context
-                    if dep_idx is not None:
-                        context_entry = f"<subtask id=\"{dep_idx}\">"
-                        if dep_task:
-                            context_entry += f"\n  <goal>{dep_task.goal}</goal>"
-                        context_entry += f"\n  <output>{result_str}</output>\n</subtask>"
-                        context_parts.append(context_entry)
-                    else:
-                        # Fallback for non-indexed tasks
-                        context_entry = f"<previous_task>\n  <output>{result_str}</output>\n</previous_task>"
-                        context_parts.append(context_entry)
+            t = self._record_module_result(
+                t, "executor", t.goal, result.output, duration,
+                metadata=metadata, token_metrics=token_metrics, messages=messages
+            )
+            t = t.with_result(result.output)
+            dag.update_node(t)
+            return t
 
-            if context_parts:
-                context = "<context>\n" + "\n\n".join(context_parts) + "\n</context>"
-
-        # Execute with context
-        result, duration, token_metrics, messages = await self._async_execute_module(
-            self.executor,
-            task.goal,
-            context=context if context else None
-        )
-
-        # Record with context metadata
-        metadata = {"forced": True, "depth": task.depth}
-        if context:
-            metadata["context_received"] = context[:200] + "..." if len(context) > 200 else context
-            metadata["dependency_ids"] = list(task.dependencies)
-
-        task = self._record_module_result(
+        task = await self._execute_agent_with_tracing(
+            AgentType.EXECUTOR,
             task,
-            "executor",
-            task.goal,
-            result.output,
-            duration,
-            metadata=metadata,
-            token_metrics=token_metrics,
-            messages=messages,
+            dag,
+            context_builder_args=(self, dag),
+            prepare_module_kwargs=prepare_kwargs,
+            process_result=process_result,
         )
-        task = task.with_result(result.output)
-        dag.update_node(task)
 
         # Store result for future dependent tasks
-        await self.context_store.store_result(task.task_id, result.output)
-
+        await self.context_store.store_result(task.task_id, task.result)
         return task
 
-    def aggregate(self, task: TaskNode, subgraph: Optional[TaskDAG], dag: TaskDAG) -> TaskNode:
-        if task.status != TaskStatus.PLAN_DONE:
-            return task
-        task = task.transition_to(TaskStatus.AGGREGATING)
-        subtask_results = self._collect_subtask_results(subgraph)
-        try:
-            result, duration = self._execute_module(
-                self.aggregator,
-                original_goal=task.goal,
-                subtasks_results=subtask_results,
-            )
-            task = self._record_module_result(
-                task,
-                "aggregator",
-                {"original_goal": task.goal, "subtask_count": len(subtask_results)},
-                result.synthesized_result,
-                duration,
-            )
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.AGGREGATOR, task)
-            raise
-        task = task.with_result(result.synthesized_result)
-        dag.update_node(task)
-        return task
 
     async def aggregate_async(
         self,
@@ -505,42 +610,42 @@ class ModuleRuntime:
         if task.status != TaskStatus.PLAN_DONE:
             return task
         task = task.transition_to(TaskStatus.AGGREGATING)
+
+        # Collect subtask results for aggregation
         subtask_results = self._collect_subtask_results(subgraph)
-        try:
-            result, duration = await self._async_execute_module(
-                self.aggregator,
-                original_goal=task.goal,
-                subtasks_results=subtask_results,
-            )
-            task = self._record_module_result(
-                task,
+
+        def prepare_kwargs(t: TaskNode, context: Optional[str]) -> dict:
+            return {
+                "original_goal": t.goal,
+                "subtasks_results": subtask_results,
+                "context_payload": context,
+            }
+
+        def process_result(t: TaskNode, result: Any, duration: float, token_metrics: Any, messages: Any, dag: TaskDAG) -> TaskNode:
+            t = self._record_module_result(
+                t,
                 "aggregator",
-                {"original_goal": task.goal, "subtask_count": len(subtask_results)},
+                {"original_goal": t.goal, "subtask_count": len(subtask_results)},
                 result.synthesized_result,
                 duration,
+                token_metrics=token_metrics,
+                messages=messages,
             )
-        except Exception as e:
-            self._enhance_error_context(e, AgentType.AGGREGATOR, task)
-            raise
-        task = task.with_result(result.synthesized_result)
-        dag.update_node(task)
-        return task
+            t = t.with_result(result.synthesized_result)
+            dag.update_node(t)
+            return t
+
+        return await self._execute_agent_with_tracing(
+            AgentType.AGGREGATOR,
+            task,
+            dag,
+            prepare_module_kwargs=prepare_kwargs,
+            process_result=process_result,
+        )
 
     # ------------------------------------------------------------------
     # Subgraph helpers
     # ------------------------------------------------------------------
-
-    def process_subgraph(
-        self,
-        task: TaskNode,
-        dag: TaskDAG,
-        solve_fn: SolveFn,
-    ) -> TaskNode:
-        subgraph = dag.get_subgraph(task.subgraph_id) if task.subgraph_id else None
-        if subgraph:
-            self.solve_subgraph(subgraph, solve_fn)
-            task = self.aggregate(task, subgraph, dag)
-        return task
 
     async def process_subgraph_async(
         self,
@@ -553,15 +658,6 @@ class ModuleRuntime:
             await self.solve_subgraph_async(subgraph, solve_fn)
             task = await self.aggregate_async(task, subgraph, dag)
         return task
-
-    def solve_subgraph(self, subgraph: TaskDAG, solve_fn: SolveFn) -> None:
-        for task_id in subgraph.get_execution_order():
-            task = subgraph.get_node(task_id)
-            dependencies = subgraph.get_task_dependencies(task_id)
-            if all(dep.status == TaskStatus.COMPLETED for dep in dependencies):
-                if task.status == TaskStatus.PENDING:
-                    solved = solve_fn(task, subgraph, task.depth)
-                    subgraph.update_node(solved)
 
     async def solve_subgraph_async(
         self,
@@ -585,11 +681,6 @@ class ModuleRuntime:
     # ------------------------------------------------------------------
     # Internal utilities
     # ------------------------------------------------------------------
-
-    @measure_execution_time
-    @with_module_resilience(module_name="module_execution")
-    def _execute_module(self, module, *args, **kwargs):
-        return module(*args, **kwargs)
 
     @measure_execution_time
     @with_module_resilience(module_name="module_execution")
@@ -626,6 +717,7 @@ class ModuleRuntime:
         for idx, subtask in enumerate(planner_result.subtasks):
             subtask_node = TaskNode(
                 goal=subtask.goal,
+                task_type=subtask.task_type,  # Propagate task_type for proper retry/backoff policies
                 parent_id=task.task_id,
                 depth=task.depth + 1,
                 max_depth=task.max_depth,
@@ -742,7 +834,7 @@ class ModuleRuntime:
     ) -> List[TaskNode]:
         coros = []
         for task in tasks:
-            if task.status == TaskStatus.PENDING:
+            if task.status in (TaskStatus.PENDING, TaskStatus.READY):
                 coros.append(solve_fn(task, subgraph, task.depth))
         return await asyncio.gather(*coros) if coros else []
 

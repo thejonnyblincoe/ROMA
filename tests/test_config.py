@@ -6,7 +6,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 import os
 
-from src.roma_dspy.config import (
+from roma_dspy.config import (
     load_config,
     ConfigManager,
     ROMAConfig,
@@ -89,7 +89,7 @@ class TestAgentConfig:
         config = AgentConfig()
         assert isinstance(config.llm, LLMConfig)
         assert config.prediction_strategy == "chain_of_thought"
-        assert config.tools == []
+        assert config.toolkits == []
         assert config.enabled is True
         assert config.agent_config == {}
         assert config.strategy_config == {}
@@ -109,27 +109,36 @@ class TestAgentConfig:
             AgentConfig(prediction_strategy="invalid_strategy")
 
     def test_valid_tools(self):
-        """Test valid tools."""
-        config = AgentConfig(tools=["calculator", "web_search"])
-        assert config.tools == ["calculator", "web_search"]
+        """Test valid toolkits configuration."""
+        from roma_dspy.config.schemas.toolkit import ToolkitConfig
+        toolkit = ToolkitConfig(class_name="CalculatorToolkit", enabled=True)
+        config = AgentConfig(toolkits=[toolkit])
+        assert len(config.toolkits) == 1
+        assert config.toolkits[0].class_name == "CalculatorToolkit"
 
     def test_invalid_tools(self):
-        """Test invalid tools."""
-        with pytest.raises(ValueError, match="Unknown tool"):
-            AgentConfig(tools=["invalid_tool"])
+        """Test invalid toolkits configuration."""
+        from roma_dspy.config.schemas.toolkit import ToolkitConfig
+        # This test now validates at toolkit manager level, not config level
+        # Empty class name should fail
+        with pytest.raises(ValueError):
+            ToolkitConfig(class_name="")
 
     def test_tool_strategy_compatibility(self):
-        """Test that tools work with compatible strategies."""
+        """Test that toolkits work with compatible strategies."""
+        from roma_dspy.config.schemas.toolkit import ToolkitConfig
+        toolkit = ToolkitConfig(class_name="CalculatorToolkit", enabled=True)
+
         # Should work with react
         AgentConfig(
             prediction_strategy="react",
-            tools=["calculator"]
+            toolkits=[toolkit]
         )
 
         # Should work with code_act
         AgentConfig(
             prediction_strategy="code_act",
-            tools=["calculator"]
+            toolkits=[toolkit]
         )
 
 
@@ -147,27 +156,33 @@ class TestAgentsConfig:
         assert isinstance(config.aggregator, AgentConfig)
         assert isinstance(config.verifier, AgentConfig)
 
-        # Check executor configuration (now uses chain_of_thought without tools)
-        assert config.executor.tools == []
+        # Check executor configuration (now uses chain_of_thought without toolkits)
+        assert config.executor.toolkits == []
         assert config.executor.prediction_strategy == "chain_of_thought"
 
     def test_tool_strategy_compatibility_validation(self):
-        """Test cross-agent tool/strategy validation."""
-        # Should pass with compatible strategy
-        config = AgentsConfig()
-        config.executor.prediction_strategy = "react"
-        config.executor.tools = ["calculator"]
-        # This should not raise an error during validation
-        validated = AgentsConfig(**config.__dict__)
+        """Test cross-agent toolkit/strategy validation."""
+        from roma_dspy.config.schemas.toolkit import ToolkitConfig
+        toolkit = ToolkitConfig(class_name="CalculatorToolkit", enabled=True)
 
-        # Should fail with incompatible strategy
-        with pytest.raises(ValueError, match="doesn't support tools"):
-            AgentsConfig(
-                executor=AgentConfig(
-                    prediction_strategy="chain_of_thought",
-                    tools=["calculator"]
-                )
+        # Should pass with compatible strategy
+        config = AgentsConfig(
+            executor=AgentConfig(
+                prediction_strategy="react",
+                toolkits=[toolkit]
             )
+        )
+        assert len(config.executor.toolkits) == 1
+
+        # Chain of thought with toolkits is now allowed (toolkits just won't be used)
+        # No validation error should be raised
+        config2 = AgentsConfig(
+            executor=AgentConfig(
+                prediction_strategy="chain_of_thought",
+                toolkits=[toolkit]
+            )
+        )
+        assert len(config2.executor.toolkits) == 1
 
 
 class TestROMAConfig:
@@ -278,14 +293,14 @@ agents:
   executor:
     llm:
       temperature: 0.1
-    tools: []
+    toolkits: []
 """)
 
             manager = ConfigManager(config_dir=config_dir)
             config = manager.load_config(profile="test")
 
             assert config.agents.executor.llm.temperature == 0.1
-            assert config.agents.executor.tools == []
+            assert config.agents.executor.toolkits == []
 
     def test_profile_not_found(self):
         """Test error when profile not found."""

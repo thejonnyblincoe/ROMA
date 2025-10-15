@@ -4,7 +4,7 @@ from typing import Dict, Any, Union
 from omegaconf import DictConfig, OmegaConf
 from pathlib import Path
 
-from .schemas.root import ROMAConfig
+from roma_dspy.config.schemas.root import ROMAConfig
 
 
 def merge_configs(*configs: DictConfig) -> DictConfig:

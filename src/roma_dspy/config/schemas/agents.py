@@ -4,8 +4,10 @@ from pydantic.dataclasses import dataclass
 from pydantic import field_validator, model_validator
 from typing import List, Dict, Any, Optional
 
-from .base import LLMConfig
-from src.roma_dspy.types import PredictionStrategy
+from roma_dspy.config.schemas.base import LLMConfig
+from roma_dspy.config.schemas.toolkit import ToolkitConfig
+from roma_dspy.types import PredictionStrategy, AgentType, TaskType
+from roma_dspy.tools.base.manager import ToolkitManager
 
 
 @dataclass
@@ -14,8 +16,16 @@ class AgentConfig:
 
     llm: Optional[LLMConfig] = None
     prediction_strategy: str = "chain_of_thought"
-    tools: Optional[List[str]] = None
+    toolkits: Optional[List[ToolkitConfig]] = None
     enabled: bool = True
+
+    # NEW: Agent type and task type classification (using enum types)
+    type: Optional[AgentType] = None  # Agent type (ATOMIZER, PLANNER, EXECUTOR, AGGREGATOR, VERIFIER)
+    task_type: Optional[TaskType] = None  # Task type (RETRIEVE, WRITE, THINK, CODE_INTERPRET, IMAGE_GENERATION)
+
+    # NEW: Inline signature support (OPTIONAL)
+    signature: Optional[str] = None  # e.g., "goal -> is_atomic: bool, node_type: NodeType"
+    signature_instructions: Optional[str] = None  # Custom instructions for signature
 
     # Separate agent-specific and strategy-specific configurations
     agent_config: Optional[Dict[str, Any]] = None      # Agent business logic parameters
@@ -25,12 +35,55 @@ class AgentConfig:
         """Initialize nested configs with defaults if not provided."""
         if self.llm is None:
             self.llm = LLMConfig()
-        if self.tools is None:
-            self.tools = []
+        if self.toolkits is None:
+            self.toolkits = []
         if self.agent_config is None:
             self.agent_config = {}
         if self.strategy_config is None:
             self.strategy_config = {}
+
+        # Normalize signature: empty string becomes None
+        if self.signature is not None and self.signature.strip() == "":
+            object.__setattr__(self, 'signature', None)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def validate_agent_type(cls, v: Optional[str | AgentType]) -> Optional[AgentType]:
+        """Validate and convert agent type to enum."""
+        if v is None:
+            return None
+        if isinstance(v, AgentType):
+            return v
+        try:
+            return AgentType.from_string(v)
+        except ValueError:
+            available = [agent_type.value for agent_type in AgentType]
+            raise ValueError(f"Invalid agent type '{v}'. Available: {available}")
+
+    @field_validator("task_type", mode="before")
+    @classmethod
+    def validate_task_type(cls, v: Optional[str | TaskType]) -> Optional[TaskType]:
+        """Validate and convert task type to enum."""
+        if v is None:
+            return None
+        if isinstance(v, TaskType):
+            return v
+        try:
+            return TaskType.from_string(v)
+        except ValueError:
+            available = [task_type.value for task_type in TaskType]
+            raise ValueError(f"Invalid task type '{v}'. Available: {available}")
+
+    @field_validator("signature")
+    @classmethod
+    def validate_signature(cls, v: Optional[str]) -> Optional[str]:
+        """Normalize signature string (NO validation - factory handles fallback)."""
+        if v is None or v.strip() == "":
+            return None  # Empty = use default
+
+        # Just normalize whitespace, don't validate format
+        # Let the factory handle invalid signatures with fallback
+        return v.strip()
 
     @field_validator("prediction_strategy")
     @classmethod
@@ -43,20 +96,21 @@ class AgentConfig:
             available = [strategy.value for strategy in PredictionStrategy]
             raise ValueError(f"Invalid prediction strategy '{v}'. Available: {available}")
 
-    @field_validator("tools")
+    @field_validator("toolkits")
     @classmethod
-    def validate_tools(cls, v: Optional[List[str]]) -> List[str]:
-        """Validate tools against available tools."""
-        # Handle None case (can happen when merging configs)
+    def validate_toolkits(cls, v: Optional[List[ToolkitConfig]]) -> List[ToolkitConfig]:
+        """Validate toolkit configurations."""
         if v is None:
             return []
 
-        # Based on actual tools in the codebase
-        available_tools = ["calculator", "web_search"]
+        manager = ToolkitManager.get_instance()
 
-        for tool in v:
-            if tool not in available_tools:
-                raise ValueError(f"Unknown tool '{tool}'. Available tools: {available_tools}")
+        for toolkit_config in v:
+            try:
+                manager.validate_toolkit_config(toolkit_config)
+            except Exception as e:
+                raise ValueError(f"Invalid toolkit configuration: {e}")
+
         return v
 
 
@@ -76,7 +130,7 @@ class AgentsConfig:
             self.atomizer = AgentConfig(
                 llm=LLMConfig(temperature=0.1, max_tokens=1000),
                 prediction_strategy="chain_of_thought",
-                tools=[],
+                toolkits=[],
                 agent_config={"confidence_threshold": 0.8},
                 strategy_config={}
             )
@@ -85,7 +139,7 @@ class AgentsConfig:
             self.planner = AgentConfig(
                 llm=LLMConfig(temperature=0.3, max_tokens=3000),
                 prediction_strategy="chain_of_thought",
-                tools=[],
+                toolkits=[],
                 agent_config={"max_subtasks": 10},
                 strategy_config={}
             )
@@ -94,7 +148,7 @@ class AgentsConfig:
             self.executor = AgentConfig(
                 llm=LLMConfig(temperature=0.5),
                 prediction_strategy="chain_of_thought",  # Use CoT instead of ReAct for now
-                tools=[],
+                toolkits=[],
                 agent_config={"max_executions": 5},
                 strategy_config={}
             )
@@ -103,7 +157,7 @@ class AgentsConfig:
             self.aggregator = AgentConfig(
                 llm=LLMConfig(temperature=0.2, max_tokens=4000),
                 prediction_strategy="chain_of_thought",
-                tools=[],
+                toolkits=[],
                 agent_config={"synthesis_strategy": "hierarchical"},
                 strategy_config={}
             )
@@ -112,38 +166,26 @@ class AgentsConfig:
             self.verifier = AgentConfig(
                 llm=LLMConfig(temperature=0.1),
                 prediction_strategy="chain_of_thought",
-                tools=[],
+                toolkits=[],
                 agent_config={"verification_depth": "moderate"},
                 strategy_config={}
             )
 
-    @model_validator(mode="after")
-    def validate_tool_strategy_compatibility(self):
-        """Ensure tools are only used with compatible strategies."""
-        tool_compatible_strategies = ["react", "code_act"]
+    def get_config_for_agent(self, agent_type: AgentType) -> Optional[AgentConfig]:
+        """
+        Get configuration for a specific agent type.
 
-        # Check executor (most likely to have tools)
-        if self.executor.tools:
-            if self.executor.prediction_strategy not in tool_compatible_strategies:
-                raise ValueError(
-                    f"Executor has tools {self.executor.tools} but strategy "
-                    f"'{self.executor.prediction_strategy}' doesn't support tools. "
-                    f"Use one of: {tool_compatible_strategies}"
-                )
+        Args:
+            agent_type: The type of agent to get configuration for
 
-        # Check other agents that might have tools
-        for agent_name, agent_config in [
-            ("atomizer", self.atomizer),
-            ("planner", self.planner),
-            ("aggregator", self.aggregator),
-            ("verifier", self.verifier)
-        ]:
-            if agent_config.tools:
-                if agent_config.prediction_strategy not in tool_compatible_strategies:
-                    raise ValueError(
-                        f"{agent_name} has tools {agent_config.tools} but strategy "
-                        f"'{agent_config.prediction_strategy}' doesn't support tools. "
-                        f"Use one of: {tool_compatible_strategies}"
-                    )
-
-        return self
+        Returns:
+            AgentConfig if found, None otherwise
+        """
+        agent_map = {
+            AgentType.ATOMIZER: self.atomizer,
+            AgentType.PLANNER: self.planner,
+            AgentType.EXECUTOR: self.executor,
+            AgentType.AGGREGATOR: self.aggregator,
+            AgentType.VERIFIER: self.verifier
+        }
+        return agent_map.get(agent_type)

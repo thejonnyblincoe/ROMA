@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import dspy
 import inspect
+import time
 from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping, List, TYPE_CHECKING
 
-from src.roma_dspy.types.prediction_strategy import PredictionStrategy
-from src.roma_dspy.resilience import with_module_resilience
-from src.roma_dspy.settings import settings
+from loguru import logger
+
+from roma_dspy.types.prediction_strategy import PredictionStrategy
+from roma_dspy.resilience import with_module_resilience
+from roma_dspy.tools.base.manager import ToolkitManager
 
 if TYPE_CHECKING:
-    from src.roma_dspy.config.schemas.agents import AgentConfig
+    from roma_dspy.config.schemas.agents import AgentConfig
+    from roma_dspy.config.schemas.toolkit import ToolkitConfig
 
 
 class BaseModule(dspy.Module):
@@ -22,6 +26,9 @@ class BaseModule(dspy.Module):
     - Build a predictor from a PredictionStrategy for a given signature.
     - Sync and async entrypoints (forward / aforward) with optional tools, context and per-call kwargs.
     """
+
+    # Class-level counter for instance IDs
+    _instance_counter = 0
 
     def __call__(self, *args, **kwargs):
         """Delegate to forward method for compatibility with runtime calls."""
@@ -42,6 +49,10 @@ class BaseModule(dspy.Module):
     ) -> None:
         super().__init__()
 
+        # Assign unique instance ID for debugging
+        BaseModule._instance_counter += 1
+        self._instance_id = BaseModule._instance_counter
+
         self.signature = signature
 
         # If config is provided, use it to set up the module
@@ -57,8 +68,9 @@ class BaseModule(dspy.Module):
         # Use config values
         prediction_strategy = PredictionStrategy.from_string(config.prediction_strategy)
 
-        # Resolve tool names to actual tool objects
-        self._tools: List[Any] = self._resolve_tool_names(config.tools)
+        # Store toolkit configs for execution-scoped initialization (with backward compatibility)
+        self._toolkit_configs = getattr(config, 'toolkits', [])
+        self._tools: Dict[str, Any] = {}  # Will be populated per-execution
 
         # Build LM from config
         llm_config = config.llm
@@ -66,11 +78,15 @@ class BaseModule(dspy.Module):
             "temperature": llm_config.temperature,
             "max_tokens": llm_config.max_tokens,
             "timeout": llm_config.timeout,
+            "num_retries": llm_config.num_retries,
+            "cache": llm_config.cache,
         }
         if llm_config.api_key:
             lm_kwargs["api_key"] = llm_config.api_key
         if llm_config.base_url:
             lm_kwargs["base_url"] = llm_config.base_url
+        if llm_config.rollout_id is not None:
+            lm_kwargs["rollout_id"] = llm_config.rollout_id
 
         self._lm = dspy.LM(llm_config.model, **lm_kwargs)
 
@@ -80,10 +96,25 @@ class BaseModule(dspy.Module):
         # Only pass strategy-specific parameters to the prediction strategy
         build_kwargs.update(config.strategy_config)
 
-        if prediction_strategy in (PredictionStrategy.REACT, PredictionStrategy.CODE_ACT) and self._tools:
-            build_kwargs.setdefault("tools", self._tools)
-
-        self._predictor = prediction_strategy.build(self.signature, **build_kwargs)
+        # For ReAct/CodeAct strategies with toolkit configs, defer predictor creation
+        # These strategies need tools at construction time (for Literal type in signature)
+        # But toolkit-based tools are only available at execution time (need ExecutionContext)
+        # Solution: Build predictor lazily on first aforward() call
+        if (prediction_strategy in (PredictionStrategy.REACT, PredictionStrategy.CODE_ACT)
+            and len(self._toolkit_configs) > 0):
+            # Store config for lazy initialization
+            self._lazy_init_needed = True
+            self._prediction_strategy = prediction_strategy
+            self._build_kwargs = build_kwargs
+            self._predictor = None
+        else:
+            # Build predictor immediately for non-tool strategies or legacy tool mode
+            if prediction_strategy in (PredictionStrategy.REACT, PredictionStrategy.CODE_ACT):
+                build_kwargs.setdefault("tools", self._tools or {})
+            self._predictor = prediction_strategy.build(self.signature, **build_kwargs)
+            self._lazy_init_needed = False
+            self._prediction_strategy = None
+            self._build_kwargs = None
 
         # Store agent-specific configuration for use by agent logic
         self._agent_config = config.agent_config
@@ -105,7 +136,8 @@ class BaseModule(dspy.Module):
         if isinstance(prediction_strategy, str):
             prediction_strategy = PredictionStrategy.from_string(prediction_strategy)
 
-        self._tools: List[Any] = self._normalize_tools(tools)
+        self._toolkit_configs = []  # No toolkit configs in legacy mode
+        self._tools: Dict[str, Any] = self._normalize_tools(tools)
 
         build_kwargs = dict(strategy_kwargs)
         if prediction_strategy in (PredictionStrategy.REACT, PredictionStrategy.CODE_ACT) and self._tools:
@@ -114,7 +146,10 @@ class BaseModule(dspy.Module):
         self._predictor = prediction_strategy.build(self.signature, **build_kwargs)
 
         if lm is not None and model is not None:
-            pass
+            logger.warning(
+                "Both 'lm' and 'model' parameters provided to BaseModule. "
+                "Using 'lm' instance and ignoring 'model' parameter."
+            )
 
         if lm is None:
             if model is None:
@@ -137,18 +172,27 @@ class BaseModule(dspy.Module):
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
         config: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
+        context_payload: Optional[str] = None,
         call_params: Optional[Dict[str, Any]] = None,
         **call_kwargs: Any,
     ):
         """
+        Synchronous forward pass.
+
+        Note: For toolkit-based modules, sync forward will have empty tools.
+        Use async version for full toolkit support:
+            result = await module.aforward(input_task, **kwargs)
+
         Args:
             input_task: The string for the signature input field ('goal').
             tools: Optional tools (dspy.Tool objects) to use for this call.
             config: Optional per-call LM overrides.
-            context: Dict passed into dspy.context(...) for this call.
+            context: Dict passed into dspy.context(...) for this call (DSPy runtime config).
+            context_payload: XML string to pass to signature's context field (agent instructions).
             call_params: Extra kwargs to pass to predictor call (strategy-specific).
             **call_kwargs: Additional kwargs merged into call_params for convenience.
         """
+        # Sync forward: toolkit-based modules have empty tools (graceful degradation)
         runtime_tools = self._merge_tools(self._tools, tools)
 
         # Build context kwargs (merge defaults and per-call), ensure an LM is set
@@ -165,6 +209,8 @@ class BaseModule(dspy.Module):
             extra["config"] = config
         if runtime_tools:
             extra["tools"] = runtime_tools
+        if context_payload is not None:
+            extra["context"] = context_payload
 
         # Filter extras to what the predictor's forward accepts (avoid TypeError)
         target_method = getattr(self._predictor, "forward", None)
@@ -180,14 +226,29 @@ class BaseModule(dspy.Module):
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
         config: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
+        context_payload: Optional[str] = None,
         call_params: Optional[Dict[str, Any]] = None,
         **call_kwargs: Any,
     ):
         """
         Async version of forward(...). Uses acall(...) when available, filtering kwargs
         based on aforward(...) if present, otherwise forward(...).
+
+        Args:
+            input_task: The string for the signature input field ('goal').
+            tools: Optional tools (dspy.Tool objects) to use for this call.
+            config: Optional per-call LM overrides.
+            context: Dict passed into dspy.context(...) for this call (DSPy runtime config).
+            context_payload: XML string to pass to signature's context field (agent instructions).
+            call_params: Extra kwargs to pass to predictor call (strategy-specific).
+            **call_kwargs: Additional kwargs merged into call_params for convenience.
         """
-        runtime_tools = self._merge_tools(self._tools, tools)
+        # Get execution-scoped tools from ExecutionContext
+        execution_tools = await self._get_execution_tools()
+        runtime_tools = self._merge_tools(execution_tools, tools)
+
+        # Update predictor's internal tools (for ReAct/CodeAct that don't accept tools as parameters)
+        self._update_predictor_tools(runtime_tools)
 
         ctx = dict(self._context_defaults)
         if context:
@@ -201,6 +262,8 @@ class BaseModule(dspy.Module):
             extra["config"] = config
         if runtime_tools:
             extra["tools"] = runtime_tools
+        if context_payload is not None:
+            extra["context"] = context_payload
 
         # Choose method to derive accepted kwargs
         method_for_filter = getattr(self._predictor, "aforward", None) or getattr(self._predictor, "forward", None)
@@ -253,8 +316,8 @@ class BaseModule(dspy.Module):
         return self
 
     @property
-    def tools(self) -> List[Any]:
-        return list(self._tools)
+    def tools(self) -> Dict[str, Any]:
+        return dict(self._tools)
 
     @property
     def agent_config(self) -> Dict[str, Any]:
@@ -267,8 +330,9 @@ class BaseModule(dspy.Module):
 
     def add_tools(self, *tools: Any) -> "BaseModule":
         for t in tools:
-            if not any(t is existing for existing in self._tools):
-                self._tools.append(t)
+            tool_name = getattr(t, '__name__', f'tool_{len(self._tools)}')
+            if tool_name not in self._tools:
+                self._tools[tool_name] = t
         return self
 
     def clear_tools(self) -> "BaseModule":
@@ -278,31 +342,150 @@ class BaseModule(dspy.Module):
     # ---------- Internals ----------
 
     @staticmethod
-    def _resolve_tool_names(tool_names: Optional[List[str]]) -> List[Any]:
-        """Resolve tool names to actual tool objects."""
-        # For now, return empty list until tools are implemented
-        return []
-
-    @staticmethod
-    def _normalize_tools(tools: Optional[Union[Sequence[Any], TMapping[str, Any]]]) -> List[Any]:
+    def _normalize_tools(tools: Optional[Union[Sequence[Any], TMapping[str, Any]]]) -> Dict[str, Any]:
+        """Normalize tools to dict format to preserve tool names."""
         if tools is None:
-            return []
+            return {}
         if isinstance(tools, dict):
-            return list(tools.values())
+            return dict(tools)
         if isinstance(tools, (list, tuple)):
-            return list(tools)
+            # Convert list to dict using function names as keys
+            result = {}
+            for idx, tool in enumerate(tools):
+                tool_name = getattr(tool, '__name__', f'tool_{idx}')
+                result[tool_name] = tool
+            return result
         raise TypeError("tools must be a sequence of dspy.Tool or a mapping name->dspy.Tool")
 
+    async def _get_execution_tools(self) -> Dict[str, Any]:
+        """
+        Get tools for current execution from ExecutionContext.
+
+        This method retrieves toolkit-based tools from the ToolkitManager
+        using the execution-scoped FileStorage from ExecutionContext.
+
+        If no ExecutionContext is set (e.g., in tests or legacy mode),
+        falls back to empty dict.
+
+        Returns:
+            Dict of tool name -> tool function
+        """
+        # Import here to avoid circular dependency
+        from roma_dspy.core.context import ExecutionContext
+
+        # If we have toolkit configs, get tools from ToolkitManager
+        if self._toolkit_configs:
+            ctx = ExecutionContext.get()
+            if ctx:
+                manager = ToolkitManager.get_instance()
+                tools_dict = await manager.get_tools_for_execution(
+                    execution_id=ctx.execution_id,
+                    file_storage=ctx.file_storage,
+                    toolkit_configs=self._toolkit_configs,
+                )
+                # get_tools_for_execution now returns a dict directly
+                return tools_dict
+
+        # Fallback to existing tools (for legacy mode or when no context)
+        return dict(self._tools)
+
     @staticmethod
-    def _merge_tools(default_tools: List[Any], runtime_tools: Optional[Union[Sequence[Any], TMapping[str, Any]]]) -> List[Any]:
+    def _merge_tools(default_tools: Dict[str, Any], runtime_tools: Optional[Union[Sequence[Any], TMapping[str, Any]]]) -> Dict[str, Any]:
+        """Merge default and runtime tools as dicts."""
         if runtime_tools is None:
-            return list(default_tools)
-        merged = list(default_tools)
+            return dict(default_tools)
+        merged = dict(default_tools)
         to_add = BaseModule._normalize_tools(runtime_tools)
-        for t in to_add:
-            if not any(t is existing for existing in merged):
-                merged.append(t)
+        merged.update(to_add)
         return merged
+
+    def _update_predictor_tools(self, runtime_tools: Dict[str, Any]) -> None:
+        """
+        Update predictor's internal tools dynamically.
+
+        Handles two cases:
+        1. Lazy initialization: If predictor was deferred (ReAct/CodeAct with toolkits),
+           build it now with runtime tools
+        2. Dynamic update: If predictor already exists, update its internal tools dict
+
+        Args:
+            runtime_tools: Dict of tool name -> tool function to update predictor with
+        """
+        if not runtime_tools:
+            return
+
+        # Case 1: Lazy initialization - build predictor with tools
+        if self._lazy_init_needed and self._predictor is None:
+            build_kwargs = dict(self._build_kwargs)
+            # DSPy ReAct/CodeAct expect tools as a list of callables, not a dict
+            # Pass list of tool functions (values), not dict keys
+            build_kwargs["tools"] = list(runtime_tools.values())
+            self._predictor = self._prediction_strategy.build(self.signature, **build_kwargs)
+            logger.debug(
+                f"Initialized {self._prediction_strategy.value} predictor with {len(runtime_tools)} custom tools + finish tool"
+            )
+            # Patch finish tool to accept kwargs (prevents LLM from passing output params)
+            self._patch_finish_tool()
+            # Clear lazy init state
+            self._lazy_init_needed = False
+            self._prediction_strategy = None
+            self._build_kwargs = None
+            return
+
+        # Case 2: Dynamic update - update existing predictor's tools
+        if not hasattr(self._predictor, 'tools'):
+            return
+
+        from dspy.adapters.types.tool import Tool
+
+        # Convert our dict of tools to DSPy Tool objects
+        predictor_tools = {}
+        for name, func in runtime_tools.items():
+            if not isinstance(func, Tool):
+                predictor_tools[name] = Tool(func)
+            else:
+                predictor_tools[name] = func
+
+        # Preserve any existing predictor-specific tools (like ReAct's 'finish' tool)
+        preserved_count = 0
+        if isinstance(self._predictor.tools, dict):
+            for name, tool in self._predictor.tools.items():
+                if name not in predictor_tools:
+                    predictor_tools[name] = tool
+                    preserved_count += 1
+
+        if preserved_count > 0:
+            logger.debug(f"Preserved {preserved_count} built-in tools (e.g., finish)")
+
+        self._predictor.tools = predictor_tools
+
+        # Patch finish tool to accept kwargs
+        self._patch_finish_tool()
+
+    def _patch_finish_tool(self) -> None:
+        """
+        Patch the finish tool to accept arbitrary keyword arguments.
+
+        DSPy's ReAct creates a finish tool with args={} (no parameters), but LLMs sometimes
+        try to pass output parameters like {"output": "..."} or {"answer": "..."}.
+        This causes validation errors. Setting has_kwargs=True allows the finish tool to
+        accept and ignore these extra parameters.
+
+        See: https://github.com/stanfordnlp/dspy/issues/7909
+        """
+        if not hasattr(self._predictor, 'tools') or not isinstance(self._predictor.tools, dict):
+            return
+
+        finish_tool = self._predictor.tools.get('finish')
+        if finish_tool is None:
+            return
+
+        # Check if tool has has_kwargs attribute (DSPy 3.0+)
+        if hasattr(finish_tool, 'has_kwargs'):
+            finish_tool.has_kwargs = True
+            logger.debug("Patched finish tool to accept kwargs (prevents LLM output parameter errors)")
+        else:
+            logger.debug("Finish tool doesn't support has_kwargs attribute (DSPy version may be older)")
 
     @staticmethod
     def _get_allowed_kwargs(func: Optional[Any]) -> Optional[set]:

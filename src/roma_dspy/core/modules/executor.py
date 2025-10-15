@@ -5,18 +5,22 @@ from __future__ import annotations
 import dspy
 from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping, List
 
-from ..signatures.signatures import ExecutorSignature
-from ...types import PredictionStrategy
-from .base_module import BaseModule
+from roma_dspy.core.signatures.signatures import ExecutorSignature
+from roma_dspy.types import PredictionStrategy
+from roma_dspy.core.modules.base_module import BaseModule
 
 
 class Executor(BaseModule):
     """Executes atomic tasks and routes to tools."""
 
+    DEFAULT_SIGNATURE = ExecutorSignature
+
     def __init__(
         self,
         prediction_strategy: Union[PredictionStrategy, str] = PredictionStrategy.CHAIN_OF_THOUGHT,
         *,
+        signature: Any = None,
+        config: Optional[Any] = None,
         lm: Optional[dspy.LM] = None,
         model: Optional[str] = None,
         model_config: Optional[Mapping[str, Any]] = None,
@@ -24,7 +28,8 @@ class Executor(BaseModule):
         **strategy_kwargs: Any,
     ) -> None:
         super().__init__(
-            signature=ExecutorSignature,
+            signature=signature if signature is not None else self.DEFAULT_SIGNATURE,
+            config=config,
             prediction_strategy=prediction_strategy,
             lm=lm,
             model=model,
@@ -76,7 +81,13 @@ class Executor(BaseModule):
         call_params: Optional[Dict[str, Any]] = None,
         **call_kwargs: Any,
     ):
-        runtime_tools = self._merge_tools(self._tools, tools)
+        """Execute task - returns raw DSPy Prediction with get_lm_usage()."""
+        # BUG FIX: Get execution-scoped tools from ExecutionContext (for toolkit-based agents)
+        execution_tools = await self._get_execution_tools()
+        runtime_tools = self._merge_tools(execution_tools, tools)
+
+        # Update predictor's internal tools (for ReAct/CodeAct that don't accept tools as parameters)
+        self._update_predictor_tools(runtime_tools)
 
         ctx = dict(self._context_defaults)
         if call_context:
@@ -94,11 +105,10 @@ class Executor(BaseModule):
         method_for_filter = getattr(self._predictor, "aforward", None) or getattr(self._predictor, "forward", None)
         filtered = self._filter_kwargs(method_for_filter, extra)
 
+        # Return raw DSPy prediction (has get_lm_usage() method)
         with dspy.context(**ctx):
             acall = getattr(self._predictor, "acall", None)
             payload = dict(goal=goal, context=context)
-            if acall is not None and hasattr(self._predictor, "aforward"):
-                return await acall(**payload, **filtered)
             if acall is not None:
                 return await acall(**payload, **filtered)
             return self._predictor(**payload, **filtered)

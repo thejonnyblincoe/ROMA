@@ -6,12 +6,11 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 import networkx as nx
 from datetime import datetime
 from uuid import uuid4
-import logging
 
-from ..signatures.base_models.task_node import TaskNode
-from ...types import TaskStatus, NodeType
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from roma_dspy.core.signatures.base_models.task_node import TaskNode
+from roma_dspy.types import TaskStatus, NodeType
 
 
 class TaskDAG:
@@ -331,14 +330,39 @@ class TaskDAG:
         # Add all subtasks to subgraph
         for subtask in subtasks:
             # Set parent_id and calculate depth
+            # Note: task_id is automatically preserved by TaskNode.model_copy() override
             subtask = subtask.model_copy(update={'parent_id': parent_task_id})
             subtask = subgraph.add_node(subtask)
 
         # Add dependencies if provided
+        # BUG FIX: Filter out dependencies that reference tasks outside this subgraph
+        # Cross-DAG dependencies are handled by hierarchical execution, not graph edges
         if dependencies:
+            # Get set of task IDs that exist in this subgraph
+            subtask_ids = {t.task_id for t in subtasks}
+
+            logger.debug(f"[create_subgraph] Subtask IDs in subgraph: {[tid[:8] for tid in subtask_ids]}")
+            logger.debug(f"[create_subgraph] Raw dependencies: {dependencies}")
+
             for task_id, dep_ids in dependencies.items():
-                if task_id in [t.task_id for t in subtasks]:
-                    subgraph.add_dependencies(task_id, dep_ids)
+                if task_id not in subtask_ids:
+                    logger.warning(f"[create_subgraph] Skipping dependencies for {task_id[:8]}... - not in subgraph")
+                    continue
+
+                # Filter dep_ids to only include tasks that exist in this subgraph
+                # Dependencies on parent-level tasks are implicit via execution order
+                valid_dep_ids = [dep_id for dep_id in dep_ids if dep_id in subtask_ids]
+                invalid_dep_ids = [dep_id for dep_id in dep_ids if dep_id not in subtask_ids]
+
+                if invalid_dep_ids:
+                    logger.warning(
+                        f"[create_subgraph] Task {task_id[:8]}... has cross-DAG dependencies (filtered out): "
+                        f"{[dep[:8] for dep in invalid_dep_ids]}"
+                    )
+
+                if valid_dep_ids:
+                    logger.debug(f"[create_subgraph] Adding dependencies for {task_id[:8]}...: {[dep[:8] for dep in valid_dep_ids]}")
+                    subgraph.add_dependencies(task_id, valid_dep_ids)
 
         # Store subgraph reference
         self.subgraphs[subgraph_id] = subgraph
@@ -447,6 +471,14 @@ class TaskDAG:
             depth = task.depth
             depth_distribution[depth] = depth_distribution.get(depth, 0) + 1
 
+        # Serialize metadata with datetime conversion for JSON compatibility
+        serialized_metadata = {}
+        for key, value in self.metadata.items():
+            if isinstance(value, datetime):
+                serialized_metadata[key] = value.isoformat()
+            else:
+                serialized_metadata[key] = value
+
         return {
             'dag_id': self.dag_id,
             'total_tasks': len(all_tasks),
@@ -454,7 +486,7 @@ class TaskDAG:
             'depth_distribution': depth_distribution,
             'num_subgraphs': len(self.subgraphs),
             'is_complete': self.is_dag_complete(),
-            'metadata': self.metadata
+            'metadata': serialized_metadata
         }
 
     def export_to_dict(self) -> Dict[str, Any]:
@@ -464,19 +496,14 @@ class TaskDAG:
         Returns:
             Dictionary representation of the DAG
         """
-        nodes = []
+        tasks = {}
         edges = []
 
         for node_id in self.graph.nodes():
             task = self.get_node(node_id)
-            nodes.append({
-                'id': task.task_id,
-                'goal': task.goal,
-                'status': task.status.value,
-                'depth': task.depth,
-                'node_type': task.node_type.value if task.node_type else None,
-                'execution_history': list(task.execution_history.keys())
-            })
+            # Use Pydantic's model_dump for complete serialization
+            task_dict = task.model_dump(mode='json')
+            tasks[task.task_id] = task_dict
 
         for from_id, to_id, edge_data in self.graph.edges(data=True):
             edges.append({
@@ -487,7 +514,7 @@ class TaskDAG:
 
         result = {
             'dag_id': self.dag_id,
-            'nodes': nodes,
+            'tasks': tasks,
             'edges': edges,
             'statistics': self.get_statistics()
         }
@@ -500,6 +527,65 @@ class TaskDAG:
             }
 
         return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], execution_id: Optional[str] = None) -> 'TaskDAG':
+        """
+        Reconstruct a TaskDAG from dictionary representation.
+
+        Args:
+            data: Dictionary containing DAG structure from export_to_dict()
+            execution_id: Optional execution ID override
+
+        Returns:
+            Reconstructed TaskDAG instance
+
+        Raises:
+            ValueError: If data format is invalid
+        """
+        # Create new DAG instance
+        dag_id = data.get('dag_id')
+        stats = data.get('statistics', {})
+        exec_id = execution_id or stats.get('metadata', {}).get('execution_id')
+
+        dag = cls(dag_id=dag_id, execution_id=exec_id)
+
+        # Restore metadata if present
+        if 'metadata' in stats:
+            dag.metadata.update(stats['metadata'])
+
+        # Reconstruct tasks
+        tasks_data = data.get('tasks', {})
+        node_map: Dict[str, TaskNode] = {}
+
+        for task_id, task_data in tasks_data.items():
+            # Use Pydantic's model_validate to reconstruct complete TaskNode
+            # Override execution_id if provided
+            if exec_id and 'execution_id' in task_data:
+                task_data['execution_id'] = exec_id
+
+            task = TaskNode.model_validate(task_data)
+
+            node_map[task_id] = task
+            dag.graph.add_node(task_id, task=task, added_at=datetime.now())
+
+        # Reconstruct edges
+        edges_data = data.get('edges', [])
+        for edge_data in edges_data:
+            from_id = edge_data['from']
+            to_id = edge_data['to']
+            edge_type = edge_data.get('type', 'dependency')
+
+            dag.graph.add_edge(from_id, to_id, edge_type=edge_type)
+
+        # Recursively reconstruct subgraphs
+        if 'subgraphs' in data:
+            for sub_id, sub_data in data['subgraphs'].items():
+                subgraph = cls.from_dict(sub_data, execution_id=exec_id)
+                subgraph.parent_dag = dag
+                dag.subgraphs[sub_id] = subgraph
+
+        return dag
 
     # ------------------------------------------------------------------
     # Scheduling helpers (async wrappers to support event scheduler)
@@ -585,8 +671,8 @@ class TaskDAG:
 
         raise ValueError(f"Task {task_id} not found in DAG hierarchy")
 
-    def get_all_tasks(self) -> Dict[str, TaskNode]:
-        """Get all tasks in this DAG and its subgraphs."""
+    def get_all_tasks_dict(self) -> Dict[str, TaskNode]:
+        """Get all tasks in this DAG and its subgraphs as a dictionary mapping task_id -> TaskNode."""
         all_tasks = {}
 
         # Add tasks from this DAG
@@ -595,7 +681,7 @@ class TaskDAG:
 
         # Add tasks from subgraphs
         for subgraph in self.subgraphs.values():
-            all_tasks.update(subgraph.get_all_tasks())
+            all_tasks.update(subgraph.get_all_tasks_dict())
 
         return all_tasks
 
@@ -623,7 +709,7 @@ class TaskDAG:
         # Parse status if provided
         task_status = None
         if status:
-            from src.roma_dspy.types.task_status import TaskStatus
+            from roma_dspy.types.task_status import TaskStatus
             try:
                 # Handle both string and TaskStatus enum
                 if isinstance(status, str):
@@ -639,6 +725,32 @@ class TaskDAG:
 
         self.update_node(updated_task)
         return updated_task
+
+    # ------------------------------------------------------------------
+    # Task Status Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def completed_tasks(self) -> List[TaskNode]:
+        """
+        Get all completed tasks in this DAG and subgraphs.
+
+        Returns:
+            List of TaskNode instances with COMPLETED status
+        """
+        all_tasks = self.get_all_tasks(include_subgraphs=True)
+        return [task for task in all_tasks if task.status == TaskStatus.COMPLETED]
+
+    @property
+    def failed_tasks(self) -> List[TaskNode]:
+        """
+        Get all failed tasks in this DAG and subgraphs.
+
+        Returns:
+            List of TaskNode instances with FAILED status
+        """
+        all_tasks = self.get_all_tasks(include_subgraphs=True)
+        return [task for task in all_tasks if task.status == TaskStatus.FAILED]
 
     # ------------------------------------------------------------------
     # DAG Integrity and Validation Methods

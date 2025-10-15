@@ -4,10 +4,11 @@ import pytest
 from datetime import datetime
 from typing import Any, Dict
 
-from src.roma_dspy.core.engine.dag import TaskDAG
-from src.roma_dspy.core.signatures import TaskNode
-from src.roma_dspy.types import TaskType, TaskStatus, NodeType
-from src.roma_dspy.types.checkpoint_models import TaskSnapshot, DAGSnapshot
+from roma_dspy.core.engine.dag import TaskDAG
+from roma_dspy.core.signatures.base_models.task_node import TaskNode
+from roma_dspy.types import TaskType, TaskStatus, NodeType
+from roma_dspy.types.module_result import NodeMetrics
+from roma_dspy.types.checkpoint_models import TaskSnapshot, DAGSnapshot
 
 
 class TestDAGSerialization:
@@ -16,6 +17,9 @@ class TestDAGSerialization:
     @pytest.fixture
     def sample_task(self):
         """Create sample task with various data types."""
+        # Retry configuration goes in metrics
+        metrics = NodeMetrics(retry_count=2, max_retries=3)
+
         return TaskNode(
             task_id="serialization_test_task",
             goal="Test task with complex data for serialization",
@@ -23,8 +27,8 @@ class TestDAGSerialization:
             status=TaskStatus.COMPLETED,
             result={"output": "Complex result", "metadata": {"count": 42, "success": True}},
             depth=1,
-            retry_count=2,
-            max_retries=3,
+            execution_id="test_execution_123",  # Required field
+            metrics=metrics,
             metadata={"custom_field": "custom_value", "timestamp": "2023-12-01T10:00:00"}
         )
 
@@ -39,11 +43,14 @@ class TestDAGSerialization:
             goal="Root task for serialization testing",
             task_type=TaskType.THINK,
             status=TaskStatus.PLAN_DONE,
-            depth=0
+            depth=0,
+            execution_id=dag.execution_id  # Use DAG's execution_id
         )
         dag.add_node(root_task)
 
         # Add various tasks with different states
+        failed_metrics = NodeMetrics(retry_count=3, max_retries=3)
+
         tasks = [
             TaskNode(
                 task_id="completed_task",
@@ -52,7 +59,8 @@ class TestDAGSerialization:
                 status=TaskStatus.COMPLETED,
                 result="Successfully retrieved data",
                 depth=1,
-                parent_id="root_task"
+                parent_id="root_task",
+                execution_id=dag.execution_id
             ),
             TaskNode(
                 task_id="failed_task",
@@ -62,8 +70,8 @@ class TestDAGSerialization:
                 error="Execution failed due to network timeout",
                 depth=1,
                 parent_id="root_task",
-                retry_count=3,
-                max_retries=3
+                metrics=failed_metrics,  # Retry config in metrics
+                execution_id=dag.execution_id
             ),
             TaskNode(
                 task_id="pending_task",
@@ -71,7 +79,8 @@ class TestDAGSerialization:
                 task_type=TaskType.WRITE,
                 status=TaskStatus.PENDING,
                 depth=1,
-                parent_id="root_task"
+                parent_id="root_task",
+                execution_id=dag.execution_id
             )
         ]
 
@@ -185,7 +194,7 @@ class TestDAGSerialization:
         completed_tasks = set()
         failed_tasks = set()
 
-        for task_id, task in complex_dag.get_all_tasks().items():
+        for task_id, task in complex_dag.get_all_tasks_dict().items():
             task_snapshot = TaskSnapshot(
                 task_id=task.task_id,
                 status=task.status.value,
@@ -222,7 +231,7 @@ class TestDAGSerialization:
         """Test DAGSnapshot JSON serialization."""
         # Create minimal DAG snapshot
         tasks = {}
-        for task_id, task in complex_dag.get_all_tasks().items():
+        for task_id, task in complex_dag.get_all_tasks_dict().items():
             tasks[task_id] = TaskSnapshot(
                 task_id=task.task_id,
                 status=task.status.value,
@@ -263,7 +272,7 @@ class TestDAGSerialization:
 
         # Create subgraph snapshots
         subgraph_tasks = {}
-        for task_id, task in complex_dag.get_all_tasks().items():
+        for task_id, task in complex_dag.get_all_tasks_dict().items():
             if task_id != "root_task":  # Exclude root task
                 subgraph_tasks[task_id] = TaskSnapshot(
                     task_id=task.task_id,
@@ -300,7 +309,8 @@ class TestDAGSerialization:
             task_id="restore_test_task",
             goal="Task for restoration testing",
             task_type=TaskType.THINK,
-            status=TaskStatus.PENDING
+            status=TaskStatus.PENDING,
+            execution_id=dag.execution_id  # Required field
         )
         dag.add_node(task)
 
@@ -317,14 +327,14 @@ class TestDAGSerialization:
         dag = TaskDAG("retry_reset_test")
 
         # Add task with retry count
-        from src.roma_dspy.types.module_result import NodeMetrics
         metrics = NodeMetrics(retry_count=3, max_retries=5)
         task = TaskNode(
             task_id="retry_test_task",
             goal="Task with retries",
             task_type=TaskType.CODE_INTERPRET,
             status=TaskStatus.FAILED,
-            metrics=metrics
+            metrics=metrics,
+            execution_id=dag.execution_id  # Required field
         )
         dag.add_node(task)
 
@@ -345,7 +355,8 @@ class TestDAGSerialization:
             goal="Task to prepare for retry",
             task_type=TaskType.CODE_INTERPRET,
             status=TaskStatus.FAILED,
-            error="Previous execution failed"
+            error="Previous execution failed",
+            execution_id=dag.execution_id  # Required field
         )
         dag.add_node(task)
 

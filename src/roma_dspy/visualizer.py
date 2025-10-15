@@ -15,9 +15,9 @@ from enum import Enum
 import time
 from collections import defaultdict
 
-from .core.signatures.base_models.task_node import TaskNode
-from .types import TaskStatus, NodeType
-from .core.engine.dag import TaskDAG
+from roma_dspy.core.signatures.base_models.task_node import TaskNode
+from roma_dspy.types import TaskStatus, NodeType
+from roma_dspy.core.engine.dag import TaskDAG
 
 
 def _resolve_visualization_inputs(
@@ -279,7 +279,8 @@ class TreeVisualizer:
     """
 
     def __init__(self, use_colors: bool = True, show_ids: bool = False,
-                 show_timing: bool = True, show_tokens: bool = True):
+                 show_timing: bool = True, show_tokens: bool = True,
+                 max_goal_length: int = 60):
         """
         Initialize tree visualizer.
 
@@ -288,24 +289,30 @@ class TreeVisualizer:
             show_ids: Whether to show task IDs
             show_timing: Whether to show timing information
             show_tokens: Whether to show token usage and costs
+            max_goal_length: Maximum goal text length (0 = unlimited)
         """
         self.use_colors = use_colors
         self.show_ids = show_ids
         self.show_timing = show_timing
         self.show_tokens = show_tokens
+        self.max_goal_length = max_goal_length
         self.rt_viz = RealTimeVisualizer(use_colors=use_colors)  # Reuse color methods
 
     def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> str:
         """
-        Generate tree visualization from solver's last DAG.
+        Generate tree visualization from solver's last DAG or dict snapshot.
 
         Args:
-            source: RecursiveSolver, TaskDAG, or TaskNode to visualize
+            source: RecursiveSolver, TaskDAG, TaskNode, or dict snapshot to visualize
             dag: Optional DAG to visualize (defaults to solver.last_dag if available)
 
         Returns:
             String representation of the tree
         """
+        # Check if source is a dict snapshot from storage
+        if isinstance(source, dict) and 'tasks' in source:
+            return self.visualize_from_snapshot(source)
+
         dag, root_task = _resolve_visualization_inputs(source, dag)
 
         if not dag and root_task is None:
@@ -351,6 +358,262 @@ class TreeVisualizer:
             ))
 
         return "\n".join(lines)
+
+    def visualize_from_snapshot(self, snapshot: Dict[str, Any]) -> str:
+        """
+        Generate tree visualization from dict snapshot (from PostgreSQL storage).
+
+        Args:
+            snapshot: Dict snapshot with keys: 'tasks', 'subgraphs', 'statistics', 'dag_id'
+
+        Returns:
+            String representation of the tree
+        """
+        from roma_dspy.core.signatures.base_models.task_node import TaskNode
+
+        # Validate snapshot structure
+        if not isinstance(snapshot, dict):
+            return "Invalid snapshot format. Expected dict."
+
+        if 'tasks' not in snapshot:
+            return "Invalid snapshot format. Expected dict with 'tasks' key."
+
+        tasks_data = snapshot['tasks']
+        subgraphs = snapshot.get('subgraphs', {})
+        statistics = snapshot.get('statistics', {})
+
+        if not tasks_data:
+            return "No tasks found in snapshot."
+
+        # tasks_data is a dict mapping task_id -> task_data
+        tasks = tasks_data
+
+        # Find root node (prefer is_root flag, fallback to depth 0)
+        root_node_data = None
+        for node_data in tasks.values():
+            # New format: use is_root field
+            if node_data.get('is_root', False):
+                root_node_data = node_data
+                break
+            # Legacy format: use depth 0
+            if node_data.get('depth', -1) == 0 and root_node_data is None:
+                root_node_data = node_data
+
+        if not root_node_data:
+            return "No root task found in snapshot."
+
+        # Build header
+        lines = []
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+        lines.append(self.rt_viz.color("📊 HIERARCHICAL TASK DECOMPOSITION TREE (FROM STORAGE)", ColorCode.BOLD))
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+        lines.append("")
+
+        # Build tree recursively from snapshot
+        visited = set()
+        self._build_tree_from_snapshot(
+            root_node_data,
+            tasks,
+            subgraphs,
+            lines,
+            0,
+            visited,
+            is_last=True,
+            prefix=""
+        )
+
+        # Add statistics
+        lines.append("")
+        lines.append(self.rt_viz.color("=" * 80, ColorCode.CYAN))
+
+        if statistics:
+            lines.extend(self._generate_statistics_from_snapshot(statistics))
+        else:
+            lines.append(self.rt_viz.color(
+                "Detailed statistics unavailable in snapshot.",
+                ColorCode.DIM
+            ))
+
+        return "\n".join(lines)
+
+    def _build_tree_from_snapshot(
+        self,
+        node_data: Dict[str, Any],
+        all_nodes: Dict[str, Any],
+        all_subgraphs: Dict[str, Any],
+        lines: List[str],
+        depth: int,
+        visited: Set[str],
+        is_last: bool,
+        prefix: str
+    ):
+        """Recursively build tree representation from snapshot dict."""
+        # Snapshot uses 'task_id', not 'id'
+        node_id = node_data.get('task_id') or node_data.get('id')
+
+        if not node_id:
+            lines.append(f"{prefix}⚠️ (task missing ID)")
+            return
+
+        if node_id in visited:
+            lines.append(f"{prefix}↺ (circular reference to {node_id[:8]}...)")
+            return
+
+        visited.add(node_id)
+
+        # Build current node line
+        connector = "└── " if is_last else "├── "
+        node_line = self._format_node_from_snapshot(node_data, depth)
+
+        lines.append(f"{prefix}{connector}{node_line}")
+
+        # Add task details
+        if self.show_ids:
+            detail_prefix = prefix + ("    " if is_last else "│   ")
+            node_id_short = node_id[:8] if node_id else "unknown"
+            lines.append(f"{detail_prefix}ID: {self.rt_viz.color(node_id_short, ColorCode.DIM)}")
+
+        # Add execution history from snapshot (it's a list of module names)
+        execution_history = node_data.get('execution_history', [])
+        if execution_history and self.show_timing:
+            detail_prefix = prefix + ("    " if is_last else "│   ")
+
+            # execution_history is a list of module names
+            if isinstance(execution_history, list):
+                for module_name in execution_history:
+                    emoji = self.rt_viz.get_module_emoji(module_name)
+                    lines.append(f"{detail_prefix}{emoji} {module_name}")
+            # If it's a dict (from newer snapshots), handle it
+            elif isinstance(execution_history, dict):
+                for module_name, module_data in execution_history.items():
+                    emoji = self.rt_viz.get_module_emoji(module_name)
+                    duration = module_data.get('duration', 0.0)
+                    duration_str = self.rt_viz.format_duration(duration)
+
+                    # Check for token metrics
+                    if self.show_tokens and 'token_metrics' in module_data:
+                        metrics = module_data['token_metrics']
+                        if metrics and metrics.get('cost', 0) > 0:
+                            if metrics.get('total_tokens', 0) > 0:
+                                token_str = f"[{metrics['prompt_tokens']}/{metrics['completion_tokens']} tokens, ${metrics['cost']:.6f}]"
+                            else:
+                                token_str = f"[${metrics['cost']:.6f}]"
+                            token_colored = self.rt_viz.color(token_str, ColorCode.CYAN)
+                            lines.append(f"{detail_prefix}{emoji} {module_name}: {duration_str} {token_colored}")
+                        else:
+                            lines.append(f"{detail_prefix}{emoji} {module_name}: {duration_str}")
+                    else:
+                        lines.append(f"{detail_prefix}{emoji} {module_name}: {duration_str}")
+
+        # Process subgraph if exists
+        subgraph_id = node_data.get('subgraph_id')
+        if subgraph_id and subgraph_id in all_subgraphs:
+            subgraph_data = all_subgraphs[subgraph_id]
+            subgraph_tasks_data = subgraph_data.get('tasks', {})
+
+            # Convert subgraph tasks to dict if it's a list (use 'task_id' as key)
+            if isinstance(subgraph_tasks_data, list):
+                subgraph_tasks = {task.get('task_id', task.get('id')): task for task in subgraph_tasks_data}
+            else:
+                subgraph_tasks = subgraph_tasks_data
+
+            child_prefix = prefix + ("    " if is_last else "│   ")
+            children = list(subgraph_tasks.values())
+
+            for i, child_data in enumerate(children):
+                is_child_last = (i == len(children) - 1)
+                self._build_tree_from_snapshot(
+                    child_data,
+                    subgraph_tasks,  # Use subgraph's tasks for children
+                    all_subgraphs,   # Pass all subgraphs for nested subgraphs
+                    lines,
+                    depth + 1,
+                    visited,
+                    is_child_last,
+                    child_prefix
+                )
+
+    def _format_node_from_snapshot(self, node_data: Dict[str, Any], depth: int) -> str:
+        """Format a single node from snapshot data for display."""
+        from roma_dspy.types import TaskStatus, NodeType
+
+        # Status emoji
+        status_str = node_data.get('status', 'pending')
+        try:
+            status = TaskStatus(status_str)
+        except ValueError:
+            status = TaskStatus.PENDING
+        status_emoji = self.rt_viz.get_status_emoji(status)
+
+        # Depth indicator
+        max_depth = node_data.get('max_depth', 3)
+        depth_str = f"[D{depth}/{max_depth}]"
+        depth_colored = self.rt_viz.color(depth_str, ColorCode.YELLOW)
+
+        # Node type
+        node_type_str = node_data.get('node_type')
+        if node_type_str:
+            try:
+                node_type = NodeType(node_type_str)
+                type_emoji = "📝" if node_type == NodeType.PLAN else "⚡"
+                type_str = f"{type_emoji}{node_type.value}"
+                type_colored = self.rt_viz.color(type_str, ColorCode.MAGENTA)
+            except ValueError:
+                type_colored = ""
+        else:
+            type_colored = ""
+
+        # Goal (truncate if max_goal_length is set and > 0)
+        goal = node_data.get('goal', '(no goal)')
+        if self.max_goal_length > 0 and len(goal) > self.max_goal_length:
+            goal = goal[:self.max_goal_length - 3] + "..."
+        goal_colored = self.rt_viz.color(goal, ColorCode.BRIGHT_BLUE)
+
+        # Status
+        status_colored = self._color_by_status(status.value, status)
+
+        return f"{status_emoji} {depth_colored} {goal_colored} {type_colored} [{status_colored}]"
+
+    def _generate_statistics_from_snapshot(self, stats: Dict[str, Any]) -> List[str]:
+        """Generate statistics summary from snapshot statistics dict."""
+        from roma_dspy.types import TaskStatus
+
+        lines = []
+        lines.append(self.rt_viz.color("📈 EXECUTION STATISTICS", ColorCode.BOLD))
+        lines.append("")
+
+        # Task counts by status
+        status_counts = stats.get('status_counts', {})
+        if status_counts:
+            lines.append("Task Status Distribution:")
+            for status_str, count in status_counts.items():
+                try:
+                    status = TaskStatus(status_str)
+                    emoji = self.rt_viz.get_status_emoji(status)
+                except ValueError:
+                    emoji = "❓"
+                lines.append(f"  {emoji} {status_str}: {count}")
+
+        # Depth distribution
+        depth_dist = stats.get('depth_distribution', {})
+        if depth_dist:
+            lines.append("")
+            lines.append("Depth Distribution:")
+            # Convert keys to int for proper sorting
+            depth_items = [(int(k) if isinstance(k, (int, str)) and str(k).isdigit() else k, v)
+                          for k, v in depth_dist.items()]
+            for depth, count in sorted(depth_items):
+                bar = "█" * min(count, 20)
+                lines.append(f"  Level {depth}: {bar} ({count} tasks)")
+
+        # Summary
+        lines.append("")
+        lines.append(f"Total Tasks: {stats.get('total_tasks', 0)}")
+        lines.append(f"Subgraphs Created: {stats.get('num_subgraphs', 0)}")
+        is_complete = stats.get('is_complete', False)
+        lines.append(f"Execution Complete: {'✅ Yes' if is_complete else '❌ No'}")
+
+        return lines
 
     def _find_root_task(self, dag: TaskDAG) -> Optional[TaskNode]:
         """Find the root task in the DAG."""
@@ -447,10 +710,10 @@ class TreeVisualizer:
         else:
             type_colored = ""
 
-        # Goal (truncate if too long)
+        # Goal (truncate if max_goal_length is set and > 0)
         goal = task.goal
-        if len(goal) > 60:
-            goal = goal[:57] + "..."
+        if self.max_goal_length > 0 and len(goal) > self.max_goal_length:
+            goal = goal[:self.max_goal_length - 3] + "..."
         goal_colored = self.rt_viz.color(goal, ColorCode.BRIGHT_BLUE)
 
         # Status
@@ -1293,6 +1556,108 @@ class LLMTraceVisualizer:
 
         lines.append(f"Tasks: {task_count} total ({completed_count} completed, {failed_count} failed)")
         lines.append(f"Max Depth Reached: {max_depth}")
+
+    def visualize_from_snapshot(self, snapshot: Dict[str, Any]) -> str:
+        """
+        Generate LLM trace visualization from dict snapshot (from PostgreSQL storage).
+
+        Note: This generates a simplified trace from snapshot data. For full execution
+        history with module inputs/outputs, use visualize() with a live DAG object.
+
+        Args:
+            snapshot: Dict snapshot with keys: 'tasks', 'subgraphs', 'statistics', 'dag_id'
+
+        Returns:
+            String representation of the execution trace
+        """
+        # Validate snapshot structure
+        if not isinstance(snapshot, dict):
+            return "Invalid snapshot format. Expected dict."
+
+        if 'tasks' not in snapshot:
+            return "Invalid snapshot format. Expected dict with 'tasks' key."
+
+        tasks_data = snapshot['tasks']
+        statistics = snapshot.get('statistics', {})
+
+        if not tasks_data:
+            return "No tasks found in snapshot."
+
+        # Find root node
+        root_node_data = None
+        for node_data in tasks_data.values():
+            if node_data.get('is_root', False):
+                root_node_data = node_data
+                break
+            if node_data.get('depth', -1) == 0 and root_node_data is None:
+                root_node_data = node_data
+
+        if not root_node_data:
+            return "No root task found in snapshot."
+
+        lines = []
+        lines.append("=== EXECUTION TRACE (FROM STORAGE) ===")
+        lines.append(f"Root Goal: {root_node_data.get('goal', '(no goal)')}")
+        lines.append(f"Max Depth: {root_node_data.get('max_depth', 'unknown')}")
+        lines.append("")
+        lines.append("NOTE: This is a simplified trace from snapshot data.")
+        lines.append("Full module input/output details are only available with live DAG visualization.")
+        lines.append("")
+
+        # Collect tasks sorted by creation time or task_id
+        task_list = []
+        for task_id, task_data in tasks_data.items():
+            task_list.append((task_data.get('depth', 0), task_id, task_data))
+
+        # Sort by depth and task_id
+        task_list.sort(key=lambda x: (x[0], x[1]))
+
+        # Format tasks
+        for depth, task_id, task_data in task_list:
+            indent = "  " * depth
+            lines.append(f"{indent}[DEPTH {depth}] Task: {task_data.get('goal', '(no goal)')}")
+            lines.append(f"{indent}  ID: {task_id[:8]}...")
+            lines.append(f"{indent}  Status: {task_data.get('status', 'unknown')}")
+
+            # Show execution history if available
+            execution_history = task_data.get('execution_history', {})
+            if execution_history:
+                lines.append(f"{indent}  Modules executed:")
+                if isinstance(execution_history, list):
+                    for module_name in execution_history:
+                        lines.append(f"{indent}    - {module_name}")
+                elif isinstance(execution_history, dict):
+                    for module_name, module_data in execution_history.items():
+                        duration = module_data.get('duration', 0.0) if isinstance(module_data, dict) else 0.0
+                        if duration > 0:
+                            lines.append(f"{indent}    - {module_name}: {duration:.2f}s")
+                        else:
+                            lines.append(f"{indent}    - {module_name}")
+
+            # Show result if available
+            result = task_data.get('result')
+            if result and self.verbose:
+                result_str = str(result)
+                if len(result_str) > 200:
+                    result_str = result_str[:200] + "..."
+                lines.append(f"{indent}  Result: {result_str}")
+
+            lines.append("")
+
+        # Add summary if enabled and statistics available
+        if self.show_summary and statistics:
+            lines.append("=== EXECUTION SUMMARY ===")
+            lines.append(f"Total Tasks: {statistics.get('total_tasks', 0)}")
+
+            status_counts = statistics.get('status_counts', {})
+            if status_counts:
+                for status, count in status_counts.items():
+                    lines.append(f"  {status}: {count}")
+
+            lines.append(f"Subgraphs Created: {statistics.get('num_subgraphs', 0)}")
+            lines.append(f"Execution Complete: {'Yes' if statistics.get('is_complete', False) else 'No'}")
+
+        return "\n".join(lines)
 
     def export_trace_json(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> Dict[str, Any]:
         """

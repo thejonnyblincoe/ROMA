@@ -1,6 +1,8 @@
 """Type definitions and enumerations for ROMA DSPy."""
 
 from .agent_type import AgentType, AgentTypeLiteral
+from .execution_event_type import ExecutionEventType
+from .execution_status import ExecutionStatus, ExecutionStatusLiteral
 from .media_type import MediaType, MediaTypeLiteral
 from .module_result import ModuleResult, StateTransition, NodeMetrics, ExecutionEvent, TokenMetrics
 from .node_type import NodeType, NodeTypeLiteral
@@ -19,16 +21,32 @@ from .checkpoint_types import (
     CheckpointNotFoundError
 )
 from .checkpoint_models import (
+    CacheStatistics,
     CheckpointData,
     CheckpointConfig,
     RecoveryPlan,
     TaskSnapshot,
     DAGSnapshot
 )
+from .error_types import (
+    ErrorSeverity,
+    ErrorCategory,
+    TaskHierarchyError,
+    ModuleError,
+    PlanningError,
+    ExecutionError,
+    AggregationError,
+    RetryExhaustedError,
+    serialize_error,
+    error_to_dict
+)
 
 __all__ = [
     "AgentType",
     "AgentTypeLiteral",
+    "ExecutionEventType",
+    "ExecutionStatus",
+    "ExecutionStatusLiteral",
     "MediaType",
     "MediaTypeLiteral",
     "ModuleResult",
@@ -57,9 +75,20 @@ __all__ = [
     "CheckpointCorruptedError",
     "CheckpointExpiredError",
     "CheckpointNotFoundError",
+    "CacheStatistics",
     "CheckpointData",
     "CheckpointConfig",
     "RecoveryPlan",
     "TaskSnapshot",
     "DAGSnapshot",
+    "ErrorSeverity",
+    "ErrorCategory",
+    "TaskHierarchyError",
+    "ModuleError",
+    "PlanningError",
+    "ExecutionError",
+    "AggregationError",
+    "RetryExhaustedError",
+    "serialize_error",
+    "error_to_dict",
 ]

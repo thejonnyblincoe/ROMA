@@ -24,5 +24,18 @@ agents:
     llm:
       temperature: 0.0  # Deterministic verification
 
+runtime:
+  max_depth: 8  # Deeper recursion for higher quality
+  enable_logging: true
+  log_level: INFO
+
 resilience:
-  max_retries: 5  # More retries for higher reliability
+  retry:
+    enabled: true
+    max_attempts: 5  # More retries for higher reliability
+    strategy: exponential_backoff
+    base_delay: 2.0  # Longer delays for stability
+    max_delay: 30.0
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 3  # Lower threshold for quality

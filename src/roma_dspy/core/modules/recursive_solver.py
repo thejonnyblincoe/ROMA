@@ -6,10 +6,10 @@ from typing import Optional, Callable
 
 import dspy
 
-from ..engine.solve import RecursiveSolver
-from ..engine.dag import TaskDAG
-from ..signatures import TaskNode
-from ...visualizer import LLMTraceVisualizer
+from roma_dspy.core.engine.solve import RecursiveSolver
+from roma_dspy.core.engine.dag import TaskDAG
+from roma_dspy.core.signatures import TaskNode
+from roma_dspy.visualizer import LLMTraceVisualizer
 
 
 class RecursiveSolverModule(dspy.Module):
@@ -24,14 +24,10 @@ class RecursiveSolverModule(dspy.Module):
         super().__init__()
         self._solver = solver
 
-        # Expose commonly used components as direct attributes (shared references)
-        self.atomizer = solver.atomizer
-        self.planner = solver.planner
-        self.executor = solver.executor
-        self.aggregator = solver.aggregator
-        self.verifier = solver.verifier
+        # Expose solver's core attributes (these actually exist on RecursiveSolver)
         self.runtime = solver.runtime
         self.max_depth = solver.max_depth
+        self.registry = solver.registry  # For accessing agents via registry.get_agent(AgentType, TaskType)
 
     def forward(
         self,

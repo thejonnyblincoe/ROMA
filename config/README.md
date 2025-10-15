@@ -5,7 +5,7 @@ This directory contains the YAML-based configuration system for ROMA-DSPy, built
 ## Quick Start
 
 ```python
-from src.roma_dspy.config import load_config
+from roma_dspy.config import load_config
 
 # Load with defaults
 config = load_config()
@@ -166,8 +166,8 @@ Example validations:
 
 ### BaseModule Integration
 ```python
-from src.roma_dspy.config import load_config
-from src.roma_dspy.modules import Executor
+from roma_dspy.config import load_config
+from roma_dspy.core.modules import Executor
 
 # Load configuration
 config = load_config(profile="lightweight")
@@ -181,7 +181,7 @@ executor = Executor(
 
 ### RecursiveSolver Integration
 ```python
-from src.roma_dspy.engine.solve import RecursiveSolver
+from roma_dspy.core.engine.solve import RecursiveSolver
 
 # Create solver with config
 solver = RecursiveSolver(config=config)
@@ -219,6 +219,6 @@ config = load_config(overrides=["runtime.verbose=true"])
 print(OmegaConf.to_yaml(config))
 
 # Validate specific sections
-from src.roma_dspy.config.schemas import LLMConfig
+from roma_dspy.config.schemas import LLMConfig
 llm_config = LLMConfig(**config.agents.executor.llm)
 ```

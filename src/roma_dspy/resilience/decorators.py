@@ -7,21 +7,22 @@ without modifying existing method signatures.
 
 import asyncio
 import functools
-import logging
 import time
 from typing import Callable, Optional, Any, TypeVar, Union
 from datetime import datetime
 
-from src.roma_dspy.types.task_type import TaskType
-from src.roma_dspy.types.task_status import TaskStatus
-from src.roma_dspy.types.resilience_types import CircuitOpenError, CircuitState
-from src.roma_dspy.types.resilience_models import (
+from loguru import logger
+
+from roma_dspy.types.task_type import TaskType
+from roma_dspy.types.task_status import TaskStatus
+from roma_dspy.types.resilience_types import CircuitOpenError, CircuitState
+from roma_dspy.types.resilience_models import (
     RetryConfig,
     CircuitBreakerConfig,
     FailureContext
 )
-from src.roma_dspy.resilience.retry_policy import RetryPolicy, create_default_retry_policy
-from src.roma_dspy.resilience.circuit_breaker import module_circuit_breaker
+from roma_dspy.resilience.retry_policy import RetryPolicy, create_default_retry_policy
+from roma_dspy.resilience.circuit_breaker import module_circuit_breaker
 
 F = TypeVar('F', bound=Callable[..., Any])
 
@@ -53,6 +54,10 @@ def with_retry(
                     try:
                         return await func(*args, **kwargs)
                     except Exception as e:
+                        # Don't retry circuit open errors or cancellation
+                        if isinstance(e, (CircuitOpenError, asyncio.CancelledError)):
+                            raise
+
                         last_exception = e
 
                         if not retry_policy.should_retry(attempt, task_type):
@@ -87,6 +92,10 @@ def with_retry(
                     try:
                         return func(*args, **kwargs)
                     except Exception as e:
+                        # Don't retry circuit open errors
+                        if isinstance(e, CircuitOpenError):
+                            raise
+
                         last_exception = e
 
                         if not retry_policy.should_retry(attempt, task_type):
@@ -215,18 +224,19 @@ def with_module_resilience(
     """
 
     def decorator(func: F) -> F:
-        # Apply circuit breaker first (outer), then retry (inner)
-        circuit_protected = with_circuit_breaker(
-            module_name=module_name,
-            config=circuit_config
-        )(func)
-
+        # Apply retry first (inner), then circuit breaker (outer)
+        # This ensures circuit breaker sees aggregate retry behavior, not individual attempts
         retry_protected = with_retry(
             retry_config=retry_config,
             task_type=task_type
-        )(circuit_protected)
+        )(func)
 
-        return retry_protected
+        circuit_protected = with_circuit_breaker(
+            module_name=module_name,
+            config=circuit_config
+        )(retry_protected)
+
+        return circuit_protected
 
     return decorator
 
@@ -234,42 +244,96 @@ def with_module_resilience(
 
 def measure_execution_time(func: F) -> F:
     """
-    Decorator to measure and log execution time.
+    Decorator to measure and log execution time with integrated logging.
+
+    Extracts token_metrics and messages from the result object and returns them
+    along with the result and duration. Automatically logs start, completion, and errors.
 
     Args:
         func: Function to measure
 
     Returns:
-        Decorated function with timing measurement
+        Decorated function with timing measurement, metrics extraction, and logging
     """
 
     if asyncio.iscoroutinefunction(func):
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
+            # Extract context for logging (module name from first arg if available)
+            context_name = func.__name__
+            if args and hasattr(args[0], '__class__'):
+                context_name = f"{args[0].__class__.__name__}.{func.__name__}"
+
+            # Log execution start
+            logger.debug(f"{context_name} async starting | args_count={len(args)} | kwargs={list(kwargs.keys())}")
+
             start_time = datetime.now()
             try:
                 result = await func(*args, **kwargs)
                 duration = (datetime.now() - start_time).total_seconds()
-                return result, duration
+
+                # Extract metrics from result object
+                token_metrics = getattr(result, 'token_metrics', None) or getattr(result, 'token_usage', None)
+                messages = getattr(result, 'messages', None)
+
+                # Log successful completion with metrics
+                log_msg = f"{context_name} async completed | duration={duration:.2f}s"
+                if token_metrics:
+                    log_msg += f" | tokens={getattr(token_metrics, 'total', 'N/A')}"
+                logger.info(log_msg)
+
+                return result, duration, token_metrics, messages
             except Exception as e:
                 duration = (datetime.now() - start_time).total_seconds()
                 # Attach duration to exception for logging
                 e.__dict__['execution_duration'] = duration
+
+                # Log failure with duration and full traceback
+                import traceback
+                tb_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__))
+                logger.error(
+                    f"{context_name} async failed | duration={duration:.2f}s | error={str(e)}\nFull traceback:\n{tb_str}"
+                )
                 raise
 
         return async_wrapper
     else:
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
+            # Extract context for logging (module name from first arg if available)
+            context_name = func.__name__
+            if args and hasattr(args[0], '__class__'):
+                context_name = f"{args[0].__class__.__name__}.{func.__name__}"
+
+            # Log execution start
+            logger.debug(f"{context_name} starting | args_count={len(args)} | kwargs={list(kwargs.keys())}")
+
             start_time = datetime.now()
             try:
                 result = func(*args, **kwargs)
                 duration = (datetime.now() - start_time).total_seconds()
-                return result, duration
+
+                # Extract metrics from result object
+                token_metrics = getattr(result, 'token_metrics', None) or getattr(result, 'token_usage', None)
+                messages = getattr(result, 'messages', None)
+
+                # Log successful completion with metrics
+                log_msg = f"{context_name} completed | duration={duration:.2f}s"
+                if token_metrics:
+                    log_msg += f" | tokens={getattr(token_metrics, 'total', 'N/A')}"
+                logger.info(log_msg)
+
+                return result, duration, token_metrics, messages
             except Exception as e:
                 duration = (datetime.now() - start_time).total_seconds()
                 # Attach duration to exception for logging
                 e.__dict__['execution_duration'] = duration
+
+                # Log failure with duration
+                logger.error(
+                    f"{context_name} failed | duration={duration:.2f}s | error={str(e)}",
+                    exc_info=True
+                )
                 raise
 
         return sync_wrapper
