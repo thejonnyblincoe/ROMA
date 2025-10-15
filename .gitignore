@@ -13,3 +13,6 @@ wheels/
 .pytest_cache
 .dspy_cache
 .*
+wandb/
+*.tex
+logs/
