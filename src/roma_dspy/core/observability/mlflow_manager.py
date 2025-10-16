@@ -92,9 +92,8 @@ class MLflowManager:
                 self.config.enabled = False
                 return
 
-            # Set experiment
-            mlflow.set_experiment(self.config.experiment_name)
-            logger.info(f"MLflow experiment set to: {self.config.experiment_name}")
+            # Ensure experiment exists and is active (restore if soft-deleted; create if missing)
+            self._ensure_experiment(mlflow)
 
             # Enable DSPy autolog
             mlflow.dspy.autolog(
@@ -115,6 +114,72 @@ class MLflowManager:
         except Exception as e:
             logger.error(f"Failed to initialize MLflow: {e}")
             self.config.enabled = False
+
+    def _ensure_experiment(self, mlflow_mod) -> None:
+        """Ensure the configured experiment is usable.
+
+        Behavior:
+        - Try to set experiment by name (happy path)
+        - If it fails due to soft-deleted or missing experiment, attempt to restore or create
+        - Prefer HTTP-served artifact root for new experiments (mlflow-artifacts:/<name>)
+        """
+        name = self.config.experiment_name
+
+        try:
+            mlflow_mod.set_experiment(name)
+            logger.info(f"MLflow experiment set to: {name}")
+            return
+        except Exception as e:
+            logger.warning(f"set_experiment('{name}') failed: {e}. Attempting auto-recovery…")
+
+        try:
+            from mlflow.tracking import MlflowClient
+            try:
+                # ViewType import path differs across mlflow versions; handle gracefully
+                from mlflow.entities import ViewType  # mlflow <3.6
+            except Exception:
+                from mlflow.entities.view_type import ViewType  # type: ignore
+
+            client = MlflowClient(tracking_uri=self.config.tracking_uri)
+            exps = client.search_experiments(view_type=ViewType.ALL)
+            target = next((exp for exp in exps if exp.name == name), None)
+
+            if target:
+                lifecycle = getattr(target, "lifecycle_stage", "").lower()
+                if lifecycle == "deleted":
+                    # Restore then set as active
+                    client.restore_experiment(target.experiment_id)
+                    mlflow_mod.set_experiment(name)
+                    logger.info(f"Restored deleted MLflow experiment and set active: {name}")
+                    return
+                else:
+                    # Exists but set_experiment failed for another reason – re-raise for visibility
+                    raise RuntimeError(
+                        f"Experiment '{name}' exists (stage={lifecycle}) but could not be activated."
+                    )
+
+            # Not found: create with HTTP-served artifact root if possible
+            safe = name.replace(" ", "_")
+            artifact_location = f"mlflow-artifacts:/{safe}"
+            try:
+                client.create_experiment(name, artifact_location=artifact_location)
+                logger.info(
+                    f"Created MLflow experiment '{name}' at {artifact_location} and set active"
+                )
+            except Exception as ce:
+                logger.warning(f"create_experiment failed for '{name}': {ce}. Falling back to set_experiment")
+
+            # Final attempt to set
+            mlflow_mod.set_experiment(name)
+            return
+
+        except Exception as e:
+            # Surface a clear error with guidance
+            raise RuntimeError(
+                "Failed to ensure MLflow experiment. Either restore the soft-deleted experiment, "
+                "choose a new experiment name, or permanently delete the old one. Details: "
+                f"{e}"
+            )
 
     
 

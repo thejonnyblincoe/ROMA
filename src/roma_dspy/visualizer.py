@@ -9,7 +9,7 @@ Provides multiple visualization modes for understanding the solver's execution:
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List, Set, Tuple
 from enum import Enum
 import time
@@ -890,6 +890,22 @@ class TimelineVisualizer:
 
         return f"{header:30} |{''.join(timeline)}|"
 
+    def visualize_from_snapshot(self, snapshot: Dict[str, Any]) -> str:
+        """
+        Generate timeline visualization from dict snapshot (limited functionality).
+
+        Args:
+            snapshot: Dict snapshot with keys: 'tasks', 'subgraphs', 'statistics', 'dag_id'
+
+        Returns:
+            Message indicating timeline is not available from snapshots
+        """
+        return (
+            "Timeline visualization is not available from storage snapshots.\n"
+            "Timeline requires live execution events that are not preserved in snapshots.\n"
+            "Use the tree, statistics, or llm_trace visualizers instead."
+        )
+
 
 class StatisticsVisualizer:
     """
@@ -1021,6 +1037,64 @@ class StatisticsVisualizer:
         for module_stats in self.stats['modules'].values():
             total_time += module_stats['total_time']
         self.stats['performance']['total_time'] = total_time
+
+    def visualize_from_snapshot(self, snapshot: Dict[str, Any]) -> str:
+        """
+        Generate statistics visualization from dict snapshot.
+
+        Args:
+            snapshot: Dict snapshot with keys: 'tasks', 'subgraphs', 'statistics', 'dag_id'
+
+        Returns:
+            Formatted statistics string
+        """
+        # Validate snapshot structure
+        if not isinstance(snapshot, dict):
+            return "Invalid snapshot format. Expected dict."
+
+        statistics = snapshot.get('statistics', {})
+
+        if not statistics:
+            return "No statistics found in snapshot."
+
+        lines = []
+        lines.append("=" * 80)
+        lines.append("📊 EXECUTION STATISTICS (FROM STORAGE)")
+        lines.append("=" * 80)
+        lines.append("")
+
+        # Task counts by status
+        status_counts = statistics.get('status_counts', {})
+        if status_counts:
+            lines.append("Task Status Distribution:")
+            for status_str, count in status_counts.items():
+                lines.append(f"  {status_str}: {count}")
+            lines.append("")
+
+        # Depth distribution
+        depth_dist = statistics.get('depth_distribution', {})
+        if depth_dist:
+            lines.append("Depth Distribution:")
+            # Convert keys to int for proper sorting
+            depth_items = [(int(k) if isinstance(k, (int, str)) and str(k).isdigit() else k, v)
+                          for k, v in depth_dist.items()]
+            for depth, count in sorted(depth_items):
+                bar = "█" * min(count, 20)
+                lines.append(f"  Level {depth}: {bar} ({count} tasks)")
+            lines.append("")
+
+        # Summary
+        lines.append("Summary:")
+        lines.append(f"  Total Tasks: {statistics.get('total_tasks', 0)}")
+        lines.append(f"  Subgraphs Created: {statistics.get('num_subgraphs', 0)}")
+        is_complete = statistics.get('is_complete', False)
+        lines.append(f"  Execution Complete: {'✅ Yes' if is_complete else '❌ No'}")
+
+        lines.append("")
+        lines.append("=" * 80)
+        lines.append("Note: Detailed module execution statistics are only available from live DAG visualization.")
+
+        return "\n".join(lines)
 
 
 class ContextFlowVisualizer:
@@ -1235,6 +1309,23 @@ class ContextFlowVisualizer:
 
         return f"Subtask {subtask_index} not found."
 
+    def visualize_from_snapshot(self, snapshot: Dict[str, Any]) -> str:
+        """
+        Generate context flow visualization from dict snapshot (limited functionality).
+
+        Args:
+            snapshot: Dict snapshot with keys: 'tasks', 'subgraphs', 'statistics', 'dag_id'
+
+        Returns:
+            Message indicating context flow is not available from snapshots
+        """
+        return (
+            "Context flow visualization is not available from storage snapshots.\n"
+            "Context flow requires the runtime context store to show dependencies and XML-formatted context.\n"
+            "This information is not preserved in database snapshots.\n"
+            "Use the tree, statistics, or llm_trace visualizers instead."
+        )
+
 
 class LLMTraceVisualizer:
     """
@@ -1248,7 +1339,17 @@ class LLMTraceVisualizer:
     - Reproducing execution flows
     """
 
-    def __init__(self, show_metrics: bool = True, show_summary: bool = True, verbose: bool = True):
+    def __init__(
+        self,
+        show_metrics: bool = True,
+        show_summary: bool = True,
+        verbose: bool = True,
+        fancy: bool = False,
+        mlflow_tracking_uri: Optional[str] = None,
+        mlflow_experiment_name: Optional[str] = None,
+        show_io: bool = False,
+        console_width: Optional[int] = None,
+    ):
         """
         Initialize LLM trace visualizer.
 
@@ -1256,10 +1357,29 @@ class LLMTraceVisualizer:
             show_metrics: Whether to display duration/tokens/cost for each module
             show_summary: Whether to display execution summary at the end
             verbose: Whether to show full inputs/outputs (True) or compact versions (False)
+            fancy: Whether to use Rich library for beautiful CLI visualization (True) or plain text (False)
+            mlflow_tracking_uri: MLflow tracking URI (default: http://localhost:5000)
         """
         self.show_metrics = show_metrics
         self.show_summary = show_summary
         self.verbose = verbose
+        self.fancy = fancy
+        self.mlflow_tracking_uri = mlflow_tracking_uri or "http://localhost:5000"
+        self._mlflow_client = None
+        self.mlflow_experiment_name = mlflow_experiment_name
+        self.show_io = show_io
+        self.console_width = console_width
+
+    def _make_console(self):
+        """Create a Rich Console, honoring explicit width if provided.
+
+        force_terminal=True ensures width is respected even when not attached
+        to a TTY (e.g., docker exec without -t).
+        """
+        from rich.console import Console
+        if self.console_width:
+            return Console(width=self.console_width, force_terminal=True)
+        return Console()
 
     def visualize(self, source: Optional[Any] = None, dag: Optional[TaskDAG] = None) -> str:
         """
@@ -1288,29 +1408,34 @@ class LLMTraceVisualizer:
         if not root_task:
             return "No root task found in DAG."
 
-        lines = []
-        lines.append("=== EXECUTION TRACE ===")
-        lines.append(f"Root Goal: {root_task.goal}")
-        lines.append(f"Max Depth: {root_task.max_depth}")
-
-        # Format timestamp properly
-        start_time = self._normalize_timestamp(root_task.created_at)
-        lines.append(f"Start Time: {start_time.isoformat()}")
-        lines.append("")
-
         # Collect all execution events chronologically
         events = self._collect_execution_events(dag, root_task)
 
-        # Format trace
-        self._format_trace(lines, events, dag)
+        # Route to appropriate formatter
+        if self.fancy:
+            return self._format_trace_rich(events, dag, root_task)
+        else:
+            # Plain text format (existing implementation)
+            lines = []
+            lines.append("=== EXECUTION TRACE ===")
+            lines.append(f"Root Goal: {root_task.goal}")
+            lines.append(f"Max Depth: {root_task.max_depth}")
 
-        # Add summary if enabled
-        if self.show_summary:
+            # Format timestamp properly
+            start_time = self._normalize_timestamp(root_task.created_at)
+            lines.append(f"Start Time: {start_time.isoformat()}")
             lines.append("")
-            lines.append("=== EXECUTION SUMMARY ===")
-            self._add_summary(lines, events, root_task)
 
-        return "\n".join(lines)
+            # Format trace
+            self._format_trace(lines, events, dag)
+
+            # Add summary if enabled
+            if self.show_summary:
+                lines.append("")
+                lines.append("=== EXECUTION SUMMARY ===")
+                self._add_summary(lines, events, root_task)
+
+            return "\n".join(lines)
 
     def _collect_execution_events(self, dag: TaskDAG, root_task: TaskNode) -> List[Dict[str, Any]]:
         """Collect all execution events in chronological order."""
@@ -1556,6 +1681,1210 @@ class LLMTraceVisualizer:
 
         lines.append(f"Tasks: {task_count} total ({completed_count} completed, {failed_count} failed)")
         lines.append(f"Max Depth Reached: {max_depth}")
+
+    # ==================== RICH FORMATTING METHODS ====================
+
+    def _format_trace_rich(self, events: List[Dict[str, Any]], dag: TaskDAG, root_task: TaskNode) -> str:
+        """Format execution trace using Rich library for beautiful CLI output."""
+        try:
+            from rich.console import Console
+            from rich.tree import Tree
+
+            console = Console()
+
+            # Build rich tree
+            tree = self._build_rich_tree(events, dag, root_task)
+
+            # Build summary panel
+            if self.show_summary:
+                summary = self._format_summary_rich(events, root_task)
+            else:
+                summary = None
+
+            # Render to string
+            with console.capture() as capture:
+                console.print(tree)
+                if summary:
+                    console.print()
+                    console.print(summary)
+
+            return capture.get()
+        except Exception as e:
+            # Fallback to plain text if Rich fails
+            return f"Error generating Rich visualization: {e}\nFalling back to plain text.\n\n" + self.visualize(source=dag)
+
+    def _build_rich_tree(self, events: List[Dict[str, Any]], dag: TaskDAG, root_task: TaskNode) -> "Tree":
+        """Build Rich Tree from execution events."""
+        from rich.tree import Tree
+
+        # Create root with execution info
+        root_label = (
+            f"📊 [bold cyan]Execution Trace[/bold cyan] "
+            f"[dim][{root_task.task_id[:8]}][/dim]"
+        )
+        tree = Tree(root_label)
+
+        # Group events by task
+        task_events = defaultdict(list)
+        for event in events:
+            task_events[event['task'].task_id].append(event)
+
+        # Build tree recursively
+        visited = set()
+        self._add_task_to_tree(tree, root_task, task_events, dag, visited, depth=0)
+
+        return tree
+
+    def _add_task_to_tree(self, parent_node: "Tree", task: TaskNode, task_events: Dict,
+                         dag: TaskDAG, visited: Set[str], depth: int):
+        """Recursively add tasks to Rich tree."""
+        if task.task_id in visited:
+            parent_node.add("[dim]↻ Circular reference[/dim]")
+            return
+
+        visited.add(task.task_id)
+
+        # Create task node with status emoji and goal
+        status_emoji = self._get_status_emoji(task.status)
+        task_label = f"{status_emoji} [bold blue][D{depth}][/bold blue] {task.goal[:80]}"
+        task_node = parent_node.add(task_label)
+
+        # Add module executions
+        if task.task_id in task_events:
+            events = sorted(task_events[task.task_id], key=lambda e: e.get('timestamp', 0))
+            for event in events:
+                if event['type'] == 'module_execution':
+                    module_panel = self._format_module_rich(event['module_result'])
+                    task_node.add(module_panel)
+
+        # Recurse to subtasks
+        if task.subgraph_id and dag:
+            subgraph = dag.get_subgraph(task.subgraph_id)
+            if subgraph:
+                for child in subgraph.get_all_tasks(include_subgraphs=False):
+                    self._add_task_to_tree(
+                        task_node, child, task_events, dag, visited, depth + 1
+                    )
+
+    def _format_module_rich(self, module_result) -> "Panel":
+        """Format module execution as Rich Panel."""
+        from rich.panel import Panel
+        import re
+
+        module_name = module_result.module_name
+        emoji = self._get_module_emoji(module_name)
+
+        sections = []
+
+        # Input section
+        sections.append("[bold]📥 Input:[/bold]")
+        sections.append(self._format_value_rich(module_result.input, indent="  "))
+        sections.append("")
+
+        # Reasoning (if available)
+        reasoning = self._extract_reasoning(module_result)
+        if reasoning:
+            sections.append("[bold yellow]💭 Reasoning:[/bold yellow]")
+            reasoning_text = reasoning[:200] + "..." if len(reasoning) > 200 and not self.verbose else reasoning
+            sections.append(f"[dim]  {reasoning_text}[/dim]")
+            sections.append("")
+
+        # Tool calls (if available)
+        tool_calls = self._extract_tool_calls(module_result)
+        if tool_calls:
+            sections.append(self._format_tool_calls_rich(tool_calls))
+            sections.append("")
+
+        # Output section
+        sections.append("[bold]📤 Output:[/bold]")
+        sections.append(self._format_value_rich(module_result.output, indent="  "))
+        sections.append("")
+
+        # Metrics
+        if self.show_metrics:
+            metrics_line = self._format_metrics_inline(module_result)
+            sections.append(metrics_line)
+
+        content = "\n".join(sections)
+
+        # Create panel
+        title = f"{emoji} [bold magenta]{module_name.capitalize()}[/bold magenta]"
+        return Panel(
+            content,
+            title=title,
+            border_style="blue",
+            padding=(1, 2),
+            expand=False
+        )
+
+    def _extract_reasoning(self, module_result) -> Optional[str]:
+        """Extract reasoning from multiple sources."""
+        import re
+
+        # Check metadata first
+        if module_result.metadata and 'reasoning' in module_result.metadata:
+            return str(module_result.metadata['reasoning'])
+
+        # Check output object
+        if hasattr(module_result.output, 'reasoning'):
+            return str(module_result.output.reasoning)
+
+        # Parse from messages (DSPy signatures often have reasoning field)
+        if module_result.messages:
+            for msg in module_result.messages:
+                if msg.get('role') == 'assistant':
+                    content = msg.get('content', '')
+                    # Try to extract reasoning with regex
+                    patterns = [
+                        r'(?:Reasoning|Analysis|Thought):\s*(.+?)(?:\n\n|\n(?=[A-Z])|$)',
+                        r'<reasoning>(.*?)</reasoning>',
+                    ]
+                    for pattern in patterns:
+                        match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+                        if match:
+                            return match.group(1).strip()
+
+        return None
+
+    def _extract_tool_calls(self, module_result) -> List[Dict]:
+        """Extract tool calls from multiple sources."""
+        tool_calls = []
+
+        # Source 1: Explicit metadata
+        if module_result.metadata and 'tool_calls' in module_result.metadata:
+            calls = module_result.metadata['tool_calls']
+            if isinstance(calls, list):
+                tool_calls.extend(calls)
+
+        # Source 2: OpenAI-style messages
+        if module_result.messages:
+            assistant_calls = {}
+            for msg in module_result.messages:
+                if msg.get('role') == 'assistant' and 'tool_calls' in msg:
+                    for tc in msg['tool_calls']:
+                        call_id = tc.get('id')
+                        assistant_calls[call_id] = {
+                            'name': tc.get('function', {}).get('name'),
+                            'args': tc.get('function', {}).get('arguments'),
+                            'result': None
+                        }
+                elif msg.get('role') == 'tool':
+                    # Match result to call
+                    call_id = msg.get('tool_call_id')
+                    if call_id in assistant_calls:
+                        assistant_calls[call_id]['result'] = msg.get('content')
+
+            tool_calls.extend(assistant_calls.values())
+
+        return tool_calls
+
+    def _format_tool_calls_rich(self, tool_calls: List[Dict]) -> str:
+        """Format tool calls with tree structure."""
+        import json
+
+        lines = ["🛠️  [bold green]Tool Calls:[/bold green]"]
+        for i, call in enumerate(tool_calls):
+            is_last = (i == len(tool_calls) - 1)
+            connector = "└─" if is_last else "├─"
+
+            name = call.get('name', 'unknown')
+            args = call.get('args', '')
+
+            # Format args (truncate if long)
+            if isinstance(args, str) and len(args) > 50:
+                args = args[:50] + "..."
+            elif isinstance(args, dict):
+                args = json.dumps(args)
+                if len(args) > 50:
+                    args = args[:50] + "..."
+
+            lines.append(f"  {connector} [cyan]{name}[/cyan]([dim]{args}[/dim])")
+
+            # Add result if available
+            result = call.get('result')
+            if result:
+                continuation = "  " if is_last else "│ "
+                result_preview = result[:80] + "..." if len(result) > 80 else result
+                lines.append(f"  {continuation}└─ [green]✓[/green] {result_preview}")
+
+        return "\n".join(lines)
+
+    def _format_metrics_inline(self, module_result) -> str:
+        """Format metrics inline with icons."""
+        metrics_parts = []
+
+        # Duration
+        duration_str = f"⏱️  [yellow]{module_result.duration:.2f}s[/yellow]"
+        metrics_parts.append(duration_str)
+
+        # Token metrics
+        if module_result.token_metrics:
+            tm = module_result.token_metrics
+            if tm.total_tokens > 0:
+                token_str = f"📊 [cyan]{tm.prompt_tokens}/{tm.completion_tokens} tokens[/cyan]"
+                metrics_parts.append(token_str)
+            if tm.cost > 0:
+                cost_indicator = self._get_cost_indicator(tm.cost)
+                cost_str = f"💰 {cost_indicator} [green]${tm.cost:.6f}[/green]"
+                metrics_parts.append(cost_str)
+            if tm.model:
+                metrics_parts.append(f"🤖 [dim]{tm.model}[/dim]")
+
+        return " | ".join(metrics_parts)
+
+    def _format_value_rich(self, value: Any, indent: str = "") -> str:
+        """Format value with Rich markup."""
+        import json
+
+        if value is None:
+            return f"{indent}[dim](none)[/dim]"
+        elif isinstance(value, str):
+            if len(value) > 150 and not self.verbose:
+                return f"{indent}[dim]{value[:150]}...[/dim]"
+            return f"{indent}{value}"
+        elif isinstance(value, dict):
+            json_str = json.dumps(value, indent=2)
+            if len(json_str) > 200 and not self.verbose:
+                return f"{indent}[dim]{json_str[:200]}...[/dim]"
+            return f"{indent}[cyan]{json_str}[/cyan]"
+        elif isinstance(value, (list, tuple)):
+            if len(str(value)) > 150 and not self.verbose:
+                return f"{indent}[dim]{str(value)[:150]}...[/dim]"
+            return f"{indent}{str(value)}"
+        else:
+            return f"{indent}{str(value)}"
+
+    def _format_summary_rich(self, events: List[Dict[str, Any]], root_task: TaskNode) -> "Panel":
+        """Create Rich summary panel."""
+        from rich.table import Table
+        from rich.panel import Panel
+
+        # Calculate metrics (reuse existing logic from _add_summary)
+        total_duration = 0.0
+        total_tokens = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
+        total_cost = 0.0
+        task_count = 0
+        completed_count = 0
+        failed_count = 0
+        max_depth = 0
+
+        seen_tasks = set()
+
+        for event in events:
+            task = event['task']
+
+            # Track unique tasks
+            if task.task_id not in seen_tasks:
+                seen_tasks.add(task.task_id)
+                task_count += 1
+                if task.status == TaskStatus.COMPLETED:
+                    completed_count += 1
+                elif task.status == TaskStatus.FAILED:
+                    failed_count += 1
+                max_depth = max(max_depth, task.depth)
+
+            # Aggregate module metrics
+            if event['type'] == 'module_execution':
+                module_result = event['module_result']
+                total_duration += module_result.duration
+
+                if module_result.token_metrics:
+                    tm = module_result.token_metrics
+                    total_prompt_tokens += tm.prompt_tokens
+                    total_completion_tokens += tm.completion_tokens
+                    total_tokens += tm.total_tokens
+                    total_cost += tm.cost
+
+        # Create table
+        table = Table(show_header=True, header_style="bold cyan", box=None)
+        table.add_column("Metric", style="cyan", width=20)
+        table.add_column("Value", style="yellow", justify="right")
+
+        table.add_row("Total Tasks", str(task_count))
+        table.add_row("✅ Completed", f"[green]{completed_count}[/green]")
+        if failed_count > 0:
+            table.add_row("❌ Failed", f"[red]{failed_count}[/red]")
+        table.add_row("Max Depth", str(max_depth))
+        table.add_row("Duration", f"{total_duration:.2f}s")
+        if total_tokens > 0:
+            table.add_row("Total Tokens", f"{total_tokens:,}")
+        if total_cost > 0:
+            cost_indicator = self._get_cost_indicator(total_cost)
+            table.add_row("Total Cost", f"{cost_indicator} ${total_cost:.6f}")
+
+        return Panel(
+            table,
+            title="📊 [bold]Execution Summary[/bold]",
+            border_style="green",
+            padding=(1, 2)
+        )
+
+    def _get_status_emoji(self, status: TaskStatus) -> str:
+        """Get emoji for task status."""
+        return {
+            TaskStatus.PENDING: "⏳",
+            TaskStatus.ATOMIZING: "🔍",
+            TaskStatus.PLANNING: "📝",
+            TaskStatus.PLAN_DONE: "✔️",
+            TaskStatus.READY: "🟢",
+            TaskStatus.EXECUTING: "⚡",
+            TaskStatus.AGGREGATING: "🔄",
+            TaskStatus.COMPLETED: "✅",
+            TaskStatus.FAILED: "❌",
+            TaskStatus.NEEDS_REPLAN: "🔁"
+        }.get(status, "❓")
+
+    def _get_module_emoji(self, module_name: str) -> str:
+        """Get emoji for module type."""
+        return {
+            "atomizer": "🔍",
+            "planner": "📝",
+            "executor": "⚡",
+            "aggregator": "🔄",
+            "verifier": "✓"
+        }.get(module_name.lower(), "📦")
+
+    def _get_cost_indicator(self, cost: float) -> str:
+        """Get visual indicator for cost level."""
+        if cost < 0.001:
+            return "🟢"  # Cheap
+        elif cost < 0.01:
+            return "🟡"  # Moderate
+        else:
+            return "🔴"  # Expensive
+
+    # ==================== END RICH FORMATTING ====================
+
+    # ==================== MLFLOW INTEGRATION ====================
+
+    def _get_mlflow_client(self):
+        """Lazy initialization of MLflow client."""
+        if self._mlflow_client is None:
+            try:
+                import mlflow
+                mlflow.set_tracking_uri(self.mlflow_tracking_uri)
+                self._mlflow_client = mlflow
+            except ImportError:
+                raise ImportError(
+                    "mlflow package required for MLflow visualization. "
+                    "Install with: pip install mlflow>=2.18.0"
+                )
+        return self._mlflow_client
+
+    def _fetch_mlflow_traces(self, execution_id: str) -> List[Any]:
+        """
+        Fetch all MLflow traces for the given execution_id.
+
+        Strategy:
+        1) Find runs where run name equals the execution_id or the tag 'execution_id' matches.
+        2) Query traces scoped by those run_ids with include_spans=True so span data is present.
+        3) If none found via run_id scoping, fall back to scanning experiments and filtering by
+           trace tags ('execution_id' or 'mlflow.trace.session').
+
+        Note: include_spans=True requires experiments to use an HTTP-served artifact root
+        (e.g., mlflow-artifacts:/). Old experiments with container-local paths won't return spans
+        to the client. The API-level Rich formatter handles both cases gracefully.
+        """
+        from mlflow.tracking import MlflowClient
+
+        client = MlflowClient(tracking_uri=self.mlflow_tracking_uri)
+
+        try:
+            experiments = client.search_experiments()
+            exp_ids = [exp.experiment_id for exp in experiments]
+
+            # Prefer scoping to configured experiment (by name), if provided
+            if self.mlflow_experiment_name:
+                try:
+                    exp = next((e for e in experiments if e.name == self.mlflow_experiment_name), None)
+                    if exp:
+                        exp_ids = [exp.experiment_id]
+                except Exception:
+                    pass
+
+            # Step 1: find matching runs
+            matching_run_ids: Set[str] = set()
+            for exp_id in exp_ids:
+                # Some servers don't support OR in filter; query twice
+                for flt in [
+                    f"tags.execution_id = '{execution_id}'",
+                    f"tags.mlflow.runName = '{execution_id}'",
+                ]:
+                    try:
+                        runs = client.search_runs([exp_id], filter_string=flt, max_results=200)
+                        for r in runs:
+                            rid = getattr(getattr(r, 'info', r), 'run_id', None)
+                            if rid:
+                                matching_run_ids.add(rid)
+                    except Exception:
+                        # ignore invalid filter errors per server
+                        continue
+
+            # Step 2: collect traces for those runs (with spans)
+            collected: List[Any] = []
+            for rid in matching_run_ids:
+                try:
+                    # Scope by the run's own experiment to avoid cross-experiment issues
+                    try:
+                        run = client.get_run(rid)
+                        run_exp_ids = [run.info.experiment_id]
+                    except Exception:
+                        run_exp_ids = exp_ids
+                    traces = client.search_traces(experiment_ids=run_exp_ids, run_id=rid, include_spans=True)
+                    collected.extend(traces)
+                except Exception:
+                    # if run-scoped fetch fails, continue
+                    continue
+
+            if collected:
+                return collected
+
+            # Step 3: fallback — scan each experiment and filter by trace tags
+            all_traces: List[Any] = []
+            for exp_id in exp_ids:
+                try:
+                    traces = client.search_traces(experiment_ids=[exp_id], include_spans=True)
+                except Exception:
+                    # try without spans
+                    try:
+                        traces = client.search_traces(experiment_ids=[exp_id])
+                    except Exception:
+                        continue
+
+                for t in traces:
+                    info = getattr(t, 'info', None)
+                    tags = getattr(info, 'tags', {}) if info else {}
+                    if isinstance(tags, dict) and (
+                        tags.get('execution_id') == execution_id or tags.get('mlflow.trace.session') == execution_id
+                    ):
+                        all_traces.append(t)
+
+            if not all_traces:
+                raise ValueError(
+                    f"No MLflow traces found for execution {execution_id}. "
+                    f"Ensure the MLflow experiment stores artifacts via mlflow-artifacts:/ and that "
+                    f"run name or tags include the execution_id."
+                )
+            return all_traces
+
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Failed to fetch MLflow traces: {e}")
+
+    def _mlflow_spans_to_events(self, traces: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Convert MLflow trace spans to event structure for visualization.
+
+        Args:
+            traces: List of MLflow Trace objects
+
+        Returns:
+            List of event dictionaries sorted chronologically
+        """
+        events = []
+
+        # Build span map once for O(1) lookups (performance optimization)
+        span_map = self._build_span_map(traces)
+
+        for trace in traces:
+            # Each trace has a list of spans
+            if not hasattr(trace, 'data') or not hasattr(trace.data, 'spans'):
+                continue
+
+            for span in trace.data.spans:
+                # Extract span timing
+                start_time = datetime.fromtimestamp(span.start_time_ns / 1e9, tz=timezone.utc)
+                end_time = datetime.fromtimestamp(span.end_time_ns / 1e9, tz=timezone.utc) if span.end_time_ns else start_time
+                duration_s = (span.end_time_ns - span.start_time_ns) / 1e9 if span.end_time_ns else 0
+
+                # Extract attributes
+                attrs = span.attributes if hasattr(span, 'attributes') else {}
+
+                # Build module_result-like structure
+                module_result = type('ModuleResult', (), {
+                    'inputs': span.inputs if hasattr(span, 'inputs') else {},
+                    'output': span.outputs if hasattr(span, 'outputs') else None,
+                    'metadata': attrs,
+                    'messages': self._extract_messages_from_span(span),
+                    'token_metrics': self._extract_token_metrics_from_span(span),
+                    'timestamp': start_time,
+                    'duration': duration_s,
+                })()
+
+                # Create event
+                event = {
+                    'type': 'module_execution',
+                    'timestamp': start_time,
+                    'module_name': span.name,
+                    'module_result': module_result,
+                    'task_id': attrs.get('task_id'),
+                    'depth': self._calculate_span_depth(span, span_map),
+                    'span_id': span.span_id if hasattr(span, 'span_id') else None,
+                    'parent_span_id': span.parent_id if hasattr(span, 'parent_id') else None,
+                }
+                events.append(event)
+
+        # Sort chronologically
+        events.sort(key=lambda e: e['timestamp'])
+        return events
+
+    def _extract_messages_from_span(self, span) -> List[Dict]:
+        """Extract OpenAI-style messages from span attributes."""
+        attrs = span.attributes if hasattr(span, 'attributes') else {}
+
+        # Check for messages in attributes
+        if 'messages' in attrs:
+            return attrs['messages']
+
+        # Check for messages in inputs
+        if hasattr(span, 'inputs') and isinstance(span.inputs, dict):
+            if 'messages' in span.inputs:
+                return span.inputs['messages']
+
+        return []
+
+    def _extract_token_metrics_from_span(self, span):
+        """Extract token usage metrics from span attributes."""
+        attrs = span.attributes if hasattr(span, 'attributes') else {}
+
+        # MLflow DSPy autolog stores token usage in attributes
+        token_usage = attrs.get('token_usage', {})
+        if not token_usage and hasattr(span, 'outputs'):
+            # Sometimes in outputs
+            outputs = span.outputs if isinstance(span.outputs, dict) else {}
+            token_usage = outputs.get('token_usage', {})
+
+        if token_usage:
+            # Note: Use 'cost' not 'cost_usd' to match attribute expected by existing code
+            cost_value = attrs.get('cost_usd') or attrs.get('cost') or token_usage.get('cost_usd') or token_usage.get('cost') or 0.0
+            return type('TokenMetrics', (), {
+                'prompt_tokens': token_usage.get('prompt_tokens', 0),
+                'completion_tokens': token_usage.get('completion_tokens', 0),
+                'total_tokens': token_usage.get('total_tokens', 0),
+                'cost': cost_value,  # Use 'cost' attribute (not cost_usd) for consistency
+                'model': attrs.get('model') or token_usage.get('model'),
+            })()
+
+        return None
+
+    def _build_span_map(self, traces: List[Any]) -> Dict[str, Any]:
+        """
+        Build span lookup map from traces.
+
+        Args:
+            traces: All traces
+
+        Returns:
+            Dict mapping span_id to span object
+        """
+        span_map = {}
+        for trace in traces:
+            if hasattr(trace, 'data') and hasattr(trace.data, 'spans'):
+                for s in trace.data.spans:
+                    if hasattr(s, 'span_id'):
+                        span_map[s.span_id] = s
+        return span_map
+
+    def _calculate_span_depth(self, span, span_map: Dict[str, Any]) -> int:
+        """
+        Calculate depth of span in hierarchy by traversing parent_id chain.
+
+        Args:
+            span: Current span
+            span_map: Pre-built map of span_id to span objects
+
+        Returns:
+            Depth level (0 = root)
+        """
+        depth = 0
+        current_span = span
+
+        # Traverse parent chain
+        max_depth = 20  # Safety limit
+        while hasattr(current_span, 'parent_id') and current_span.parent_id and depth < max_depth:
+            parent_id = current_span.parent_id
+            if parent_id in span_map:
+                current_span = span_map[parent_id]
+                depth += 1
+            else:
+                break
+
+        return depth
+
+    def visualize_from_mlflow(self, execution_id: str) -> str:
+        """
+        Visualize execution using MLflow traces (most complete data from DSPy autolog).
+
+        This provides the richest visualization with full DSPy module execution traces,
+        including tool calls, reasoning chains, and hierarchical span relationships.
+
+        Args:
+            execution_id: Execution ID to visualize
+
+        Returns:
+            Rich-formatted visualization string (if fancy=True) or plain text
+
+        Raises:
+            ImportError: If mlflow not installed
+            ValueError: If no traces found for execution_id
+        """
+        try:
+            # Fetch traces from MLflow
+            traces = self._fetch_mlflow_traces(execution_id)
+
+            # Convert spans to events
+            events = self._mlflow_spans_to_events(traces)
+
+            if not events:
+                return f"No span data found in MLflow traces for execution {execution_id}"
+
+            task_model = self._build_mlflow_task_tree_model(traces)
+
+            # Use Rich task-tree if task metadata available, else fallback to span-tree
+            if self.fancy:
+                if task_model.get("tasks"):
+                    return self._format_mlflow_task_tree_rich(execution_id, traces, task_model)
+                return self._format_mlflow_traces_rich(execution_id, traces)
+            else:
+                # Plain text format
+                lines = []
+                lines.append(f"=== LLM Trace (MLflow) for Execution: {execution_id} ===\n")
+
+                for event in events:
+                    module_result = event.get('module_result')
+                    if not module_result:
+                        continue
+
+                    indent = "  " * event.get('depth', 0)
+                    lines.append(f"{indent}[{event['module_name']}]")
+
+                    if self.show_metrics and module_result.token_metrics:
+                        tm = module_result.token_metrics
+                        lines.append(
+                            f"{indent}  Tokens: {tm.total_tokens} "
+                            f"(prompt: {tm.prompt_tokens}, completion: {tm.completion_tokens})"
+                        )
+                        if tm.cost and tm.cost > 0:
+                            lines.append(f"{indent}  Cost: ${tm.cost:.6f}")
+
+                    if module_result.duration:
+                        lines.append(f"{indent}  Duration: {module_result.duration:.2f}s")
+
+                    lines.append("")
+
+                return "\n".join(lines)
+
+        except ImportError as e:
+            return f"MLflow not available: {e}\nInstall with: pip install mlflow>=2.18.0"
+        except Exception as e:
+            return f"Error fetching MLflow traces: {e}"
+
+    # ==================== END MLFLOW INTEGRATION ====================
+
+    def _format_mlflow_traces_rich(self, execution_id: str, traces: List[Any]) -> str:
+        """
+        Render MLflow spans in a hierarchical Rich tree preserving parent/child relationships.
+
+        Shows per-span metrics (duration, tokens, cost, model) and provides a
+        compact, CLI-friendly overview with a summary panel.
+        """
+        try:
+            from rich.tree import Tree
+            from rich.panel import Panel
+            from rich.table import Table
+
+            console = self._make_console()
+
+            # Build trees per trace
+            roots: List[Tree] = []
+            total_tokens = 0
+            total_cost = 0.0
+            total_spans = 0
+            total_duration = 0.0
+
+            for trace in traces:
+                info = getattr(trace, 'info', None)
+                trace_id = getattr(info, 'trace_id', 'unknown')
+                span_list = getattr(getattr(trace, 'data', None), 'spans', []) or []
+                total_spans += len(span_list)
+
+                # Map spans by id and by parent
+                span_map = {getattr(s, 'span_id', None): s for s in span_list}
+                children: Dict[str, List[Any]] = defaultdict(list)
+                for s in span_list:
+                    pid = getattr(s, 'parent_id', None)
+                    if pid:
+                        children[pid].append(s)
+
+                # Identify root spans (no parent or parent missing)
+                roots_spans = [s for s in span_list if not getattr(s, 'parent_id', None) or getattr(s, 'parent_id') not in span_map]
+
+                # Trace label
+                # Try to compute a simple wall duration from root span(s)
+                def span_duration(s):
+                    return ((getattr(s, 'end_time_ns', 0) or 0) - (getattr(s, 'start_time_ns', 0) or 0)) / 1e9
+                root_durations = [span_duration(s) for s in roots_spans if span_duration(s) > 0]
+                root_total = sum(root_durations) if root_durations else 0.0
+
+                trace_label = (
+                    f"🧵 [bold cyan]Trace[/bold cyan] [dim]{trace_id[:8]}[/dim]  "
+                    f"([yellow]{len(span_list)} spans[/yellow] • {root_total:.2f}s)"
+                )
+                trace_tree = Tree(trace_label)
+
+                # Recursively add spans
+                def add_span(node: Tree, span: Any):
+                    nonlocal total_tokens, total_cost, total_duration
+
+                    # Duration
+                    if hasattr(span, 'start_time_ns') and getattr(span, 'end_time_ns', None):
+                        duration = (span.end_time_ns - span.start_time_ns) / 1e9
+                    else:
+                        duration = 0.0
+                    total_duration += max(0.0, duration)
+
+                    # Tokens / cost / model
+                    tm = self._extract_token_metrics_from_span(span)
+                    tok_str = ""
+                    if tm:
+                        total_tokens += tm.total_tokens
+                        total_cost += tm.cost or 0.0
+                        tok_items = []
+                        if tm.total_tokens:
+                            tok_items.append(f"tokens: {tm.total_tokens}")
+                        if tm.prompt_tokens or tm.completion_tokens:
+                            tok_items.append(f"p:{tm.prompt_tokens}/c:{tm.completion_tokens}")
+                        if tm.model:
+                            tok_items.append(f"model: {tm.model}")
+                        if tm.cost:
+                            tok_items.append(f"cost: ${tm.cost:.6f}")
+                        tok_str = " | ".join(tok_items)
+
+                    # Reasoning (snippet)
+                    attrs = getattr(span, 'attributes', {}) or {}
+                    reasoning = attrs.get('reasoning') if isinstance(attrs, dict) else None
+
+                    name = getattr(span, 'name', 'span')
+                    emoji = self._get_module_emoji(name)
+                    label = f"• {emoji} [bold magenta]{name}[/bold magenta]  [dim]{duration:.2f}s[/dim]"
+                    if tok_str:
+                        label += f"  —  {tok_str}"
+                    span_node = node.add(label)
+
+                    # Tool calls (if any)
+                    tool_calls = self._extract_tool_calls_from_span(span)
+                    if tool_calls:
+                        tbl = Table(box=None, show_header=True, header_style="bold blue")
+                        tbl.add_column("Tool", style="cyan")
+                        tbl.add_column("Args", style="yellow")
+                        tbl.add_column("Result", style="green")
+                        preview_len = 80 if not self.verbose else 160
+                        for call in tool_calls[:8] if not self.verbose else tool_calls:
+                            tool_name = call.get('tool') or call.get('tool_name') or call.get('name') or 'tool'
+                            # Prefer toolkit.tool format if available
+                            if call.get('toolkit') and tool_name:
+                                tool_name = f"{call['toolkit']}.{tool_name}"
+                            args_v = call.get('arguments') or call.get('args') or call.get('input')
+                            out_v = call.get('output') or call.get('result')
+                            def pv(v):
+                                s = str(v)
+                                return (s[:preview_len] + '…') if len(s) > preview_len and not self.verbose else s
+                            tbl.add_row(str(tool_name), pv(args_v), pv(out_v))
+                        span_node.add(Panel(tbl, title="🛠 Tool Calls", border_style="blue", padding=(0,1)))
+
+                    # Inputs/Outputs compact preview (trim unless verbose)
+                    inputs = getattr(span, 'inputs', None)
+                    outputs = getattr(span, 'outputs', None)
+                    def preview(val: Any) -> str:
+                        s = str(val)
+                        limit = 140 if not self.verbose else 400
+                        return (s[:limit] + '…') if len(s) > limit else s
+
+                    if inputs and (self.verbose or self.show_io):
+                        span_node.add(Panel(f"[bold]📥 Input[/bold]\n{preview(inputs)}", border_style="blue", padding=(0,1)))
+                    if reasoning:
+                        span_node.add(Panel(f"[bold yellow]💭 Reasoning[/bold yellow]\n[dim]{preview(reasoning)}[/dim]", border_style="yellow", padding=(0,1)))
+                    if outputs is not None and (self.verbose or self.show_io):
+                        span_node.add(Panel(f"[bold]📤 Output[/bold]\n{preview(outputs)}", border_style="green", padding=(0,1)))
+
+                    # Children
+                    for child in children.get(getattr(span, 'span_id', None), []):
+                        add_span(span_node, child)
+
+                for root in roots_spans:
+                    add_span(trace_tree, root)
+
+                roots.append(trace_tree)
+
+            # Build summary
+            summary = Table(show_header=False, box=None)
+            summary.add_row("Total Traces", str(len(traces)))
+            summary.add_row("Total Spans", str(total_spans))
+            summary.add_row("Total Duration", f"{total_duration:.2f}s")
+            if total_tokens:
+                summary.add_row("Total Tokens", f"{total_tokens:,}")
+            if total_cost:
+                summary.add_row("Total Cost", f"${total_cost:.6f}")
+
+            # Render
+            with console.capture() as cap:
+                exp = f" [dim](exp: {self.mlflow_experiment_name})[/dim]" if getattr(self, 'mlflow_experiment_name', None) else ""
+                header = f"📊 [bold green]LLM Traces (MLflow) for Execution[/bold green]: [cyan]{execution_id}[/cyan]{exp}"
+                console.print(header)
+                for t in roots:
+                    console.print(t)
+                    console.print()
+                console.print(Panel(summary, title="Summary", border_style="green"))
+            return cap.get()
+        except Exception as e:
+            return f"Failed to render MLflow span tree: {e}"
+
+    def build_mlflow_trace_data(self, execution_id: str) -> Dict[str, Any]:
+        """Return structured MLflow data suitable for interactive UI consumption."""
+        traces = self._fetch_mlflow_traces(execution_id)
+        if not traces:
+            return {
+                "execution_id": execution_id,
+                "experiment": self.mlflow_experiment_name,
+                "tasks": [],
+                "summary": {},
+                "traces": [],
+                "fallback_spans": [],
+            }
+
+        task_model = self._build_mlflow_task_tree_model(traces)
+
+        trace_infos = []
+        for tr in traces:
+            info = getattr(tr, 'info', None)
+            trace_infos.append({
+                "trace_id": getattr(info, 'trace_id', None),
+                "run_id": getattr(info, 'run_id', None),
+                "span_count": len(getattr(getattr(tr, 'data', None), 'spans', []) or []),
+            })
+
+        return {
+            "execution_id": execution_id,
+            "experiment": self.mlflow_experiment_name,
+            "tasks": task_model.get("tasks", []),
+            "summary": task_model.get("summary", {}),
+            "traces": trace_infos,
+            "fallback_spans": task_model.get("fallback_spans", []),
+        }
+
+    def _format_mlflow_task_tree_rich(self, execution_id: str, traces: List[Any], task_model: Dict[str, Any]) -> str:
+        from rich.tree import Tree
+        from rich.panel import Panel
+        from rich.table import Table
+
+        tasks = task_model.get("tasks", [])
+        if not tasks:
+            return self._format_mlflow_traces_rich(execution_id, traces)
+
+        console = self._make_console()
+        root_label = f"🌳 [bold cyan]Task Execution Tree[/bold cyan] [dim]{execution_id}[/dim]"
+        if self.mlflow_experiment_name:
+            root_label += f" [dim](exp: {self.mlflow_experiment_name})[/dim]"
+        tree = Tree(root_label)
+
+        children_map: Dict[str, List[Dict[str, Any]]] = {}
+        lookup: Dict[str, Dict[str, Any]] = {}
+        roots: List[Dict[str, Any]] = []
+
+        for task in tasks:
+            lookup[task["task_id"]] = task
+        for task in tasks:
+            parent = task.get("parent_task_id")
+            if parent and parent in lookup:
+                children_map.setdefault(parent, []).append(task)
+            else:
+                roots.append(task)
+
+        def render_task(node: Tree, task: Dict[str, Any]):
+            goal = task.get("goal") or f"Task {task['task_id'][:8]}"
+            metrics = task.get("metrics", {})
+            badge = []
+            if metrics.get("duration"):
+                badge.append(f"{metrics['duration']:.2f}s")
+            if metrics.get("tokens"):
+                badge.append(f"{metrics['tokens']} tok")
+            if metrics.get("cost"):
+                badge.append(f"${metrics['cost']:.4f}")
+            meta_tags = []
+            if task.get('module'):
+                meta_tags.append(str(task['module']))
+            if task.get('task_type') or task.get('node_type'):
+                meta_tags.append("/".join([
+                    str(task.get('task_type', '?')),
+                    str(task.get('node_type', '?')),
+                ]))
+
+            label = f"🧩 [bold]{goal[:80]}[/bold]"
+            if badge:
+                label += "  [dim]" + " • ".join(badge) + "[/dim]"
+            if meta_tags:
+                label += "  [dim](" + ", ".join(meta_tags) + ")[/dim]"
+            task_node = node.add(label)
+
+            for span in task.get('spans', [])[:8] if not self.verbose else task.get('spans', []):
+                extras = []
+                if span.get('duration'):
+                    extras.append(f"{span['duration']:.2f}s")
+                if span.get('tokens'):
+                    extras.append(f"{span['tokens']} tok")
+                if span.get('model'):
+                    extras.append(str(span['model']))
+                if span.get('cost'):
+                    extras.append(f"${span['cost']:.4f}")
+                suffix = "  [dim]" + " • ".join(extras) + "[/dim]" if extras else ""
+                task_node.add(f"• {self._get_module_emoji(span.get('name', 'span'))} [magenta]{span.get('name', 'span')}[/magenta]{suffix}")
+
+            for child in children_map.get(task['task_id'], []):
+                render_task(task_node, child)
+
+        for root in roots:
+            render_task(tree, root)
+
+        summary = task_model.get('summary', {})
+        with console.capture() as cap:
+            console.print(tree)
+            table = Table(show_header=False, box=None)
+            if summary.get('total_tasks') is not None:
+                table.add_row("Tasks", str(summary['total_tasks']))
+            if summary.get('total_spans') is not None:
+                table.add_row("Spans", str(summary['total_spans']))
+            if summary.get('total_duration') is not None:
+                table.add_row("Duration", f"{summary['total_duration']:.2f}s")
+            if summary.get('total_tokens'):
+                table.add_row("Tokens", f"{summary['total_tokens']:,}")
+            if summary.get('total_cost'):
+                table.add_row("Cost", f"${summary['total_cost']:.4f}")
+            console.print(Panel(table, title="Summary", border_style="green"))
+        return cap.get()
+
+    def _build_mlflow_task_tree_model(self, traces: List[Any]) -> Dict[str, Any]:
+        """Build structured task + span model from MLflow traces."""
+        all_spans: List[Any] = []
+        for tr in traces:
+            spans = getattr(getattr(tr, 'data', None), 'spans', []) or []
+            all_spans.extend(spans)
+
+        def _attr(span, *names):
+            attrs = getattr(span, 'attributes', {}) or {}
+            if not isinstance(attrs, dict):
+                return None
+            for name in names:
+                if name in attrs:
+                    return attrs[name]
+            return None
+
+        tasks: Dict[str, Dict[str, Any]] = {}
+        span_map = {getattr(s, 'span_id', None): s for s in all_spans if getattr(s, 'span_id', None)}
+        fallback_spans = []
+
+        for span in all_spans:
+            span_type = _attr(span, 'roma.span_type', 'span_type')
+            task_id = _attr(span, 'roma.task_id', 'task_id')
+            start_ns = getattr(span, 'start_time_ns', 0) or 0
+            end_ns = getattr(span, 'end_time_ns', 0) or 0
+            duration = max(0.0, (end_ns - start_ns) / 1e9)
+            tm = self._extract_token_metrics_from_span(span)
+
+            if not task_id:
+                tool_calls = self._extract_tool_calls_from_span(span)
+                fallback_spans.append({
+                    'span_id': getattr(span, 'span_id', None),
+                    'name': getattr(span, 'name', 'span'),
+                    'module': _attr(span, 'roma.module', 'module'),
+                    'task_id': _attr(span, 'roma.task_id', 'task_id'),
+                    'parent_span_id': getattr(span, 'parent_id', None),
+                    'parent_id': getattr(span, 'parent_id', None),
+                    'start_time': datetime.fromtimestamp(start_ns / 1e9, tz=timezone.utc).isoformat() if start_ns else None,
+                    'start_ts': (start_ns / 1e9) if start_ns else None,
+                    'duration': duration,
+                    'tokens': tm.total_tokens if tm else None,
+                    'cost': tm.cost if tm else None,
+                    'model': tm.model if tm else None,
+                    'tool_calls': tool_calls,
+                    'inputs': getattr(span, 'inputs', None),
+                    'outputs': getattr(span, 'outputs', None),
+                    'reasoning': _attr(span, 'reasoning'),
+                })
+                continue
+
+            entry = tasks.setdefault(task_id, {
+                'task_id': task_id,
+                'parent_task_id': None,
+                'goal': None,
+                'module': _attr(span, 'roma.module', 'module'),
+                'task_type': _attr(span, 'roma.task_type', 'task_type'),
+                'node_type': _attr(span, 'roma.node_type', 'node_type'),
+                'status': _attr(span, 'roma.status', 'status'),
+                'depth': _attr(span, 'roma.depth', 'depth') or 0,
+                'metrics': {
+                    'duration': 0.0,
+                    'tokens': 0,
+                    'cost': 0.0,
+                },
+                'spans': [],
+                '_first_span_id': None,
+                '_first_start_ns': None,
+            })
+
+            if entry['_first_span_id'] is None or (entry['_first_start_ns'] is not None and start_ns < entry['_first_start_ns']):
+                entry['_first_span_id'] = getattr(span, 'span_id', None)
+                entry['_first_start_ns'] = start_ns
+
+            if entry['goal'] is None:
+                goal = _attr(span, 'goal', 'roma.goal', 'task_goal')
+                if not goal:
+                    inputs = getattr(span, 'inputs', {}) or {}
+                    if isinstance(inputs, dict):
+                        goal = inputs.get('goal') or inputs.get('original_goal')
+                if goal:
+                    entry['goal'] = str(goal)
+
+            if span_type != "module_wrapper":
+                entry['metrics']['duration'] += duration
+                if tm:
+                    entry['metrics']['tokens'] += tm.total_tokens or 0
+                    entry['metrics']['cost'] += tm.cost or 0.0
+
+                entry['spans'].append({
+                    'span_id': getattr(span, 'span_id', None),
+                    'parent_id': getattr(span, 'parent_id', None),
+                    'name': getattr(span, 'name', 'span'),
+                    'start_ns': start_ns,
+                    'start_time': datetime.fromtimestamp(start_ns / 1e9, tz=timezone.utc).isoformat() if start_ns else None,
+                    'duration': duration,
+                    'tokens': tm.total_tokens if tm else None,
+                    'cost': tm.cost if tm else None,
+                    'model': tm.model if tm else None,
+                    'tool_calls': self._extract_tool_calls_from_span(span),
+                    'inputs': getattr(span, 'inputs', None),
+                    'outputs': getattr(span, 'outputs', None),
+                    'reasoning': _attr(span, 'reasoning'),
+                })
+
+        # Determine task parents
+        for task_id, entry in tasks.items():
+            first_span = span_map.get(entry['_first_span_id']) if entry['_first_span_id'] else None
+            parent_tid = None
+            if first_span:
+                parent_tid = _attr(first_span, 'roma.parent_task_id', 'parent_task_id')
+                if parent_tid == task_id:
+                    parent_tid = None
+                if not parent_tid:
+                    current = first_span
+                    visited = 0
+                    while current and getattr(current, 'parent_id', None) and visited < 50:
+                        parent_span = span_map.get(current.parent_id)
+                        if not parent_span:
+                            break
+                        maybe_parent = _attr(parent_span, 'roma.task_id', 'task_id')
+                        if maybe_parent and maybe_parent != task_id:
+                            parent_tid = maybe_parent
+                            break
+                        current = parent_span
+                        visited += 1
+            if parent_tid and parent_tid in tasks:
+                entry['parent_task_id'] = parent_tid
+
+        # Prepare output list
+        task_list = []
+        for entry in tasks.values():
+            entry['spans'].sort(key=lambda sp: sp['start_ns'])
+            for sp in entry['spans']:
+                start_ns = sp.pop('start_ns', None)
+                if start_ns:
+                    sp['start_ts'] = start_ns / 1e9
+            entry.pop('_first_span_id', None)
+            entry.pop('_first_start_ns', None)
+            task_list.append(entry)
+
+        summary = {
+            'total_tasks': len(task_list),
+            'total_spans': sum(len(entry['spans']) for entry in task_list),
+            'total_duration': 0.0,
+            'total_tokens': 0,
+            'total_cost': 0.0,
+        }
+        for entry in task_list:
+            summary['total_duration'] += entry['metrics']['duration']
+            summary['total_tokens'] += entry['metrics']['tokens']
+            summary['total_cost'] += entry['metrics']['cost']
+
+        return {
+            'tasks': task_list,
+            'summary': summary,
+            'fallback_spans': fallback_spans,
+        }
+    def _extract_tool_calls_from_span(self, span: Any) -> List[Dict[str, Any]]:
+        """Heuristically extract tool call records from an MLflow span.
+
+        Looks in attributes, outputs, inputs, and OpenAI-style assistant messages.
+        Each returned item is a dict with keys like: tool/tool_name, toolkit, arguments, output.
+        """
+        calls: List[Dict[str, Any]] = []
+        attrs = getattr(span, 'attributes', {}) or {}
+        inputs = getattr(span, 'inputs', {}) or {}
+        outputs = getattr(span, 'outputs', {}) or {}
+
+        # 1) Direct metadata field
+        if isinstance(attrs, dict) and isinstance(attrs.get('tool_calls'), list):
+            for c in attrs['tool_calls']:
+                if isinstance(c, dict):
+                    calls.append(c)
+
+        # 2) Structured attributes (single tool)
+        single = {}
+        for key in ('tool', 'tool_name', 'name'):
+            if key in attrs:
+                single['tool'] = attrs[key]
+                break
+        for key in ('toolkit', 'tool_class', 'toolkit_class'):
+            if key in attrs:
+                single['toolkit'] = attrs[key]
+                break
+        for key in ('arguments', 'args', 'input'):
+            if key in attrs:
+                single['arguments'] = attrs[key]
+                break
+        for key in ('output', 'result', 'return'):
+            if key in attrs:
+                single['output'] = attrs[key]
+                break
+        if single:
+            calls.append(single)
+
+        # 3) Outputs or inputs include tool_calls
+        for container in (outputs, inputs):
+            if isinstance(container, dict) and isinstance(container.get('tool_calls'), list):
+                for c in container['tool_calls']:
+                    if isinstance(c, dict):
+                        calls.append(c)
+
+        # 4) OpenAI-style assistant messages with tool_calls
+        msgs = []
+        if isinstance(inputs, dict) and isinstance(inputs.get('messages'), list):
+            msgs.extend(inputs['messages'])
+        if isinstance(outputs, dict) and isinstance(outputs.get('messages'), list):
+            msgs.extend(outputs['messages'])
+        for m in msgs:
+            if isinstance(m, dict) and m.get('role') == 'assistant':
+                tc = m.get('tool_calls')
+                if isinstance(tc, list):
+                    for c in tc:
+                        if isinstance(c, dict):
+                            # OpenAI format may nest function/name/arguments
+                            name = c.get('function', {}).get('name') if isinstance(c.get('function'), dict) else c.get('name')
+                            args = c.get('function', {}).get('arguments') if isinstance(c.get('function'), dict) else c.get('arguments')
+                            calls.append({'tool': name, 'arguments': args})
+
+        return calls
 
     def visualize_from_snapshot(self, snapshot: Dict[str, Any]) -> str:
         """

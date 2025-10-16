@@ -173,6 +173,10 @@ def lm_trace_to_response(trace: LMTrace) -> LMTraceResponse:
         total_tokens=trace.total_tokens,
         cost_usd=float(trace.cost_usd) if trace.cost_usd else None,
         latency_ms=trace.latency_ms,
+        prompt=trace.prompt,
+        response=trace.response,
+        error=trace.error,
+        metadata=trace.lm_metadata or {},
     )
 
 

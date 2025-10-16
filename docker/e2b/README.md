@@ -125,16 +125,52 @@ rm -rf /tmp/e2b-secrets
 
 ## Verification
 
-### 1. Verify Credentials Not in Image
-```bash
-# Get the Docker image ID
-docker images | grep e2b
+ROMA-DSPy includes a comprehensive integration test suite for E2B template validation.
 
-# Check history - credentials should NOT appear
-docker history <image-id>
+### Run Validation Tests
+
+```bash
+# Via justfile (recommended)
+just e2b-validate
+
+# Or directly with pytest
+pytest tests/integration/test_e2b_template_validation.py -v
 ```
 
-### 2. Test Sandbox with S3
+### What the Tests Validate
+
+The integration test suite (`tests/integration/test_e2b_template_validation.py`) checks:
+
+1. **Prerequisites**
+   - ✅ E2B CLI installed
+   - ✅ E2B authentication configured
+
+2. **Template Status**
+   - ✅ Template exists in E2B
+   - ✅ AWS credentials NOT visible in Docker image layers (security check)
+
+3. **Sandbox Functionality**
+   - ✅ Sandbox creation succeeds
+   - ✅ S3 storage mounted at `/opt/sentient`
+   - ✅ Write access to S3 works
+   - ✅ Read-back from S3 works
+   - ✅ Cleanup works
+
+### Quick Manual Checks
+
+```bash
+# List templates
+e2b template list
+
+# Get template info
+e2b template info roma-dspy-sandbox
+
+# Quick sandbox test
+just e2b-test
+```
+
+### Manual Testing (if needed)
+
 ```python
 from e2b import Sandbox
 
@@ -156,15 +192,6 @@ print(f'Written to {test_file}')
 print(result.stdout)
 
 sandbox.close()
-```
-
-### 3. Check Template Status
-```bash
-# List templates
-e2b template list
-
-# Get template info
-e2b template info roma-dspy-sandbox
 ```
 
 ## Build Logs

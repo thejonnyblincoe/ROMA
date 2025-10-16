@@ -420,17 +420,61 @@ class ModuleRuntime:
         # PHASE 3: Add ROMA span attributes for MLflow observability
         add_span_attribute(task, agent_type)
 
-        # 3. Execute with timing and tracing
+        # 3. Execute with timing and explicit MLflow span context (if available)
         try:
             start_time = time.time()
 
             # Prepare module-specific kwargs
             module_kwargs = prepare_module_kwargs(task, context)
 
-            # Execute module
-            result, duration, token_metrics, messages = await self._async_execute_module(
-                agent, **module_kwargs
-            )
+            # If MLflow tracing is available, start a wrapper span so DSPy spans nest under it
+            _span_ctx = None
+            try:
+                from mlflow.tracing.fluent import start_span as _mlflow_start_span
+
+                # Name spans like Planner.forward, Executor.forward, etc.
+                span_name = agent_type.value
+                _span_ctx = _mlflow_start_span(span_name)
+            except Exception:
+                _span_ctx = None
+
+            if _span_ctx is not None:
+                async def _run_with_span():
+                    with _span_ctx as span:
+                        # Attach ROMA attributes so the visualizer can reconstruct hierarchy
+                        attrs = {
+                            "roma.execution_id": task.execution_id or "unknown",
+                            "roma.task_id": task.task_id,
+                            "roma.parent_task_id": task.parent_id or "root",
+                            "roma.depth": task.depth,
+                            "roma.max_depth": task.max_depth,
+                            "roma.status": task.status.value,
+                            "roma.module": agent_type.value,
+                            "roma.span_type": "module_wrapper",
+                            "roma.goal": task.goal,
+                        }
+                        if getattr(task, 'task_type', None):
+                            attrs["roma.task_type"] = getattr(task.task_type, 'value', task.task_type)
+                        if getattr(task, 'node_type', None):
+                            attrs["roma.node_type"] = getattr(task.node_type, 'value', task.node_type)
+                        if hasattr(task, 'is_atomic'):
+                            attrs["roma.is_atomic"] = task.is_atomic
+
+                        try:
+                            span.set_attributes(attrs)
+                            # Minimal input context to aid goal discovery in MLflow viz
+                            span.set_inputs({"goal": task.goal})
+                        except Exception:
+                            pass
+
+                        return await self._async_execute_module(agent, **module_kwargs)
+
+                result, duration, token_metrics, messages = await _run_with_span()
+            else:
+                # Fallback: run without explicit span (DSPy autolog may still create spans)
+                result, duration, token_metrics, messages = await self._async_execute_module(
+                    agent, **module_kwargs
+                )
 
             # 4. Persist LM trace to Postgres (common pattern)
             execution_id, postgres = self.context_store.get_execution_context()

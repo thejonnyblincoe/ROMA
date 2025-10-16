@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 
 from roma_dspy.api.schemas import VisualizationRequest, VisualizationResponse
-from roma_dspy.api.dependencies import get_storage, verify_execution_exists
+from roma_dspy.api.dependencies import get_storage, get_config_manager, verify_execution_exists
 from roma_dspy.core.storage.postgres_storage import PostgresStorage
+from roma_dspy.config.manager import ConfigManager
 from roma_dspy.core.engine.dag import TaskDAG
 from roma_dspy.types import ExecutionStatus
 from roma_dspy.visualizer import (
@@ -25,7 +26,8 @@ router = APIRouter()
 async def visualize_execution(
     viz_request: VisualizationRequest,
     execution_id: str = Depends(verify_execution_exists),
-    storage: PostgresStorage = Depends(get_storage)
+    storage: PostgresStorage = Depends(get_storage),
+    config_manager: ConfigManager = Depends(get_config_manager)
 ) -> VisualizationResponse:
     """
     Generate visualization for an execution.
@@ -111,7 +113,29 @@ async def visualize_execution(
         elif visualizer_type == "context_flow":
             visualizer = ContextFlowVisualizer()
         elif visualizer_type == "llm_trace":
-            visualizer = LLMTraceVisualizer(verbose=opts.verbose)
+            # Get MLflow tracking URI from config with defensive checks
+            config = config_manager.load_config(profile=viz_request.profile)
+
+            # Safely extract MLflow tracking URI with fallback to default
+            mlflow_tracking_uri = "http://127.0.0.1:5000"  # Default
+            if hasattr(config, 'observability') and config.observability is not None:
+                if hasattr(config.observability, 'mlflow') and config.observability.mlflow is not None:
+                    mlflow_tracking_uri = getattr(config.observability.mlflow, 'tracking_uri', mlflow_tracking_uri)
+
+            # Pull experiment name from config profile
+            exp_name = None
+            if hasattr(config, 'observability') and config.observability is not None:
+                if hasattr(config.observability, 'mlflow') and config.observability.mlflow is not None:
+                    exp_name = getattr(config.observability.mlflow, 'experiment_name', None)
+
+            visualizer = LLMTraceVisualizer(
+                verbose=opts.verbose,
+                fancy=opts.fancy,
+                mlflow_tracking_uri=mlflow_tracking_uri,
+                mlflow_experiment_name=exp_name,
+                show_io=opts.show_io,
+                console_width=getattr(opts, 'width', None),
+            )
         else:
             raise HTTPException(
                 status_code=400,
@@ -119,14 +143,31 @@ async def visualize_execution(
                        f"Valid options: tree, timeline, statistics, context_flow, llm_trace"
             )
 
-        # Generate visualization
+        # Generate visualization based on data source
         if viz_request.format == "text":
-            # Use snapshot visualization method
-            content = visualizer.visualize_from_snapshot(snapshot_dict)
+            # Route based on data source
+            if viz_request.data_source == "mlflow" and visualizer_type == "llm_trace":
+                # Use MLflow traces for rich DSPy trace visualization
+                try:
+                    content = visualizer.visualize_from_mlflow(execution_id)
+                except Exception as e:
+                    logger.warning(f"MLflow visualization failed, falling back to checkpoint: {e}")
+                    content = visualizer.visualize_from_snapshot(snapshot_dict)
+            else:
+                # Use checkpoint snapshot visualization (default)
+                content = visualizer.visualize_from_snapshot(snapshot_dict)
         elif viz_request.format == "json":
-            # For JSON format, return the snapshot structure
             import json
-            content = json.dumps(snapshot_dict, indent=2, default=str)
+            if viz_request.data_source == "mlflow" and visualizer_type == "llm_trace":
+                try:
+                    data = visualizer.build_mlflow_trace_data(execution_id)
+                except Exception as e:
+                    logger.warning(f"MLflow JSON visualization failed: {e}. Falling back to checkpoint data.")
+                    data = {"warning": str(e), "snapshot": snapshot_dict}
+                content = json.dumps(data, indent=2, default=str)
+            else:
+                # Return checkpoint snapshot structure by default
+                content = json.dumps(snapshot_dict, indent=2, default=str)
         else:
             raise HTTPException(
                 status_code=400,

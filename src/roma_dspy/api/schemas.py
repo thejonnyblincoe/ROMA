@@ -156,6 +156,10 @@ class LMTraceResponse(BaseModel):
     total_tokens: int
     cost_usd: Optional[float] = None
     latency_ms: Optional[int] = None
+    prompt: Optional[str] = None
+    response: Optional[str] = None
+    error: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
@@ -187,6 +191,9 @@ class VisualizationOptions(BaseModel):
     show_tokens: bool = Field(default=True, description="Show token usage and costs")
     max_goal_length: int = Field(default=60, ge=0, description="Maximum goal text length (0 = unlimited)")
     verbose: bool = Field(default=False, description="Enable all details (overrides other flags)")
+    fancy: bool = Field(default=True, description="Use Rich library for fancy CLI visualization (default) or plain text")
+    show_io: bool = Field(default=False, description="Show full Input/Output panels (off by default)")
+    width: Optional[int] = Field(default=None, description="Force console width for rendering (e.g., 180)")
 
 
 class VisualizationRequest(BaseModel):
@@ -196,8 +203,13 @@ class VisualizationRequest(BaseModel):
         ...,
         description="Type of visualizer: tree, timeline, statistics, context_flow, llm_trace"
     )
+    profile: Optional[str] = Field(default=None, description="Configuration profile name to load")
     include_subgraphs: bool = Field(default=True, description="Include subgraph tasks")
     format: str = Field(default="text", description="Output format: text, json")
+    data_source: str = Field(
+        default="checkpoint",
+        description="Data source: 'checkpoint' (DAG snapshots from PostgreSQL) or 'mlflow' (DSPy traces from MLflow)"
+    )
     options: Optional[VisualizationOptions] = Field(
         default=None,
         description="Visualization detail options (uses defaults if not provided)"

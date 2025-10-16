@@ -13,6 +13,8 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.tree import Tree
 
+from roma_dspy.tui import run_viz_app
+
 # Optional dependency for API client commands
 try:
     import httpx
@@ -875,11 +877,21 @@ def visualize(
     ),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="Save to file"),
     url: str = typer.Option("http://localhost:8000", "--url", "-u", help="API server URL"),
+    data_source: str = typer.Option(
+        "mlflow",
+        "--data-source",
+        "-d",
+        help="Data source: checkpoint (DAG snapshots) or mlflow (DSPy traces, default for llm_trace)"
+    ),
     show_ids: bool = typer.Option(False, "--show-ids", help="Show full task IDs"),
     show_timing: bool = typer.Option(True, "--show-timing/--no-timing", help="Show execution times"),
     show_tokens: bool = typer.Option(True, "--show-tokens/--no-tokens", help="Show token usage and costs"),
     max_goal_length: int = typer.Option(60, "--max-goal-length", help="Max goal text length (0 = unlimited)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable all details"),
+    fancy: bool = typer.Option(True, "--fancy/--plain", help="Use Rich fancy visualization (default) or plain text"),
+    show_io: bool = typer.Option(False, "--show-io/--hide-io", help="Show full Input/Output panels"),
+    width: Optional[int] = typer.Option(None, "--width", help="Force console width for rendering (e.g., 180)"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Config profile to load for visualization (controls MLflow experiment)"),
 ):
     """Generate visualization for an execution.
 
@@ -889,18 +901,26 @@ def visualize(
         roma-dspy visualize abc123 --verbose --show-ids
         roma-dspy visualize abc123 --max-goal-length 0  # No truncation
         roma-dspy visualize abc123 --type statistics --output viz.txt
+        roma-dspy visualize abc123 --type llm_trace --fancy  # Beautiful Rich output with MLflow traces
+        roma-dspy visualize abc123 --type llm_trace --plain  # Plain text output
+        roma-dspy visualize abc123 --type llm_trace --data-source checkpoint  # Use checkpoint snapshots instead
     """
     try:
 
         payload = {
             "visualizer_type": viz_type,
             "format": "text",
+            "data_source": data_source,
+            "profile": profile,
             "options": {
                 "show_ids": show_ids,
                 "show_timing": show_timing,
                 "show_tokens": show_tokens,
                 "max_goal_length": max_goal_length,
-                "verbose": verbose
+                "verbose": verbose,
+                "fancy": fancy,
+                "show_io": show_io,
+                "width": width,
             }
         }
 
@@ -927,6 +947,20 @@ def visualize(
 
     except ImportError:
         console_err.print("[bold red]Error:[/bold red] httpx not installed")
+        raise typer.Exit(code=1)
+
+
+@app.command("viz-interactive")
+def viz_interactive(
+    execution_id: str = typer.Argument(..., help="Execution ID to explore"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Config profile to load"),
+    api_url: str = typer.Option("http://localhost:8000", "--url", "-u", help="API server URL"),
+):
+    """Launch interactive TUI visualizer for an execution."""
+    try:
+        run_viz_app(execution_id=execution_id, profile=profile, base_url=api_url)
+    except Exception as e:  # pragma: no cover - CLI runtime
+        console_err.print(f"[bold red]Failed to launch TUI:[/bold red] {e}")
         raise typer.Exit(code=1)
     except Exception as e:
         console_err.print(f"[bold red]Error:[/bold red] {e}")
