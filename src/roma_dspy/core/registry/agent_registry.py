@@ -237,6 +237,21 @@ class AgentRegistry:
             f"Available: {list(self._registry.keys())}"
         )
 
+    def iter_agents(self):
+        """
+        Iterate over all registered agents.
+
+        Yields:
+            Tuples of (AgentType, Optional[TaskType], BaseModule).
+
+        Notes:
+            - Provides a read-only view of the registry; modifications should still
+              go through register_agent().
+            - Ordering mirrors the underlying registration order (insertion-ordered dict).
+        """
+        for (agent_type, task_type), module in self._registry.items():
+            yield agent_type, task_type, module
+
     def has_agent(
         self,
         agent_type: AgentType,

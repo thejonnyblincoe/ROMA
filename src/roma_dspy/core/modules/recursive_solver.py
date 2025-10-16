@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Tuple, Any
 
 import dspy
 
@@ -10,6 +10,8 @@ from roma_dspy.core.engine.solve import RecursiveSolver
 from roma_dspy.core.engine.dag import TaskDAG
 from roma_dspy.core.signatures import TaskNode
 from roma_dspy.visualizer import LLMTraceVisualizer
+from roma_dspy.types import AgentType, TaskType
+from loguru import logger
 
 
 class RecursiveSolverModule(dspy.Module):
@@ -56,6 +58,65 @@ class RecursiveSolverModule(dspy.Module):
             result_text=str(completed_task.result) if completed_task.result is not None else None,
             output_trace=trace,
         )
+
+    def named_predictors(self) -> List[Tuple[str, Any]]:
+        """
+        Surface all predictors exposed by the recursive solver's agents.
+
+        GEPA inspects DSPy modules via named_predictors(); exposing the agents'
+        predictors here allows the optimizer to mutate individual instructions.
+        """
+        predictors = list(super().named_predictors())
+
+        if not hasattr(self._solver, "registry"):
+            return predictors
+
+        seen_ids = {id(pred) for _, pred in predictors}
+
+        for agent_type, task_type, module in self._solver.registry.iter_agents():
+            if not hasattr(module, "named_predictors"):
+                continue
+
+            agent_predictors = module.named_predictors()
+            if not agent_predictors:
+                logger.debug(
+                    "Agent %s (task=%s) has no named predictors (type=%s)",
+                    getattr(agent_type, "value", agent_type),
+                    getattr(task_type, "value", task_type) if task_type is not None else "default",
+                    type(module).__name__
+                )
+                continue
+
+            agent_label = agent_type.value.lower() if isinstance(agent_type, AgentType) else str(agent_type).lower()
+            task_label = (
+                task_type.value.lower()
+                if isinstance(task_type, TaskType)
+                else ("default" if task_type is None else str(task_type).lower())
+            )
+
+            for predictor_name, predictor in agent_predictors:
+                if predictor is None:
+                    logger.debug(
+                        "Skipping None predictor from agent %s (task=%s)",
+                        getattr(agent_type, "value", agent_type),
+                        getattr(task_type, "value", task_type) if task_type is not None else "default",
+                    )
+                    continue
+
+                predictor_id = id(predictor)
+                if predictor_id in seen_ids:
+                    continue
+
+                composite_name = f"{agent_label}__{task_label}__{predictor_name}"
+                predictors.append((composite_name, predictor))
+                seen_ids.add(predictor_id)
+
+        exported_names = [name for name, _ in predictors]
+        logger.debug(
+            f"RecursiveSolverModule.named_predictors exported {len(exported_names)} predictors: {exported_names}"
+        )
+
+        return predictors
 
     async def aforward(
         self,
