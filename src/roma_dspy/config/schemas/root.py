@@ -66,7 +66,7 @@ class ROMAConfig:
             self.runtime = RuntimeConfig()
         if self.storage is None:
             # Get base_path from environment or use default
-            base_path = os.getenv("STORAGE_BASE_PATH", "/opt/sentient")
+            base_path = os.getenv("STORAGE_BASE_PATH", "~/.tmp/sentient")
             self.storage = StorageConfig(base_path=base_path)
         if self.observability is None:
             self.observability = ObservabilityConfig()

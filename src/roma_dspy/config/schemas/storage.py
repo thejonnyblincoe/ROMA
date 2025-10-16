@@ -69,7 +69,7 @@ class StorageConfig:
             "This path must be identical across host and E2B for file sharing. "
             "Set via STORAGE_BASE_PATH environment variable."
         ),
-        examples=["/opt/sentient", "${HOME}/roma_storage"]
+        examples=["~/.tmp/sentient", "${HOME}/roma_storage"]
     )
 
     max_file_size: int = Field(

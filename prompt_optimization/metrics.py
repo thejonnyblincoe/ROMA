@@ -91,6 +91,7 @@ class MetricWithFeedback:
                     component_trace=pred_trace,
                     prediction_trace=prediction_trace if prediction_trace is not None else ""
                 )
+                feedback = feedback_response
             except Exception as e:
                 feedback = f"Judge error: {str(e)}"
 
@@ -138,6 +139,7 @@ class MetricWithFeedback:
                     component_trace=pred_trace,
                     prediction_trace=prediction_trace if prediction_trace is not None else ""
                 )
+                feedback = feedback_response
             except Exception as e:
                 feedback = f"Judge error: {str(e)}"
 

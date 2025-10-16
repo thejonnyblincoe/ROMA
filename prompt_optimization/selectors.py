@@ -116,6 +116,36 @@ def aggregator_only_selector(
     return components[0]
 
 
+def round_robin_selector(
+    state: Any,
+    trajectories: Any,
+    subsample_scores: Any,
+    candidate_idx: int,
+    candidate: Dict[str, Any]
+) -> str:
+    """
+    Selector that cycles through all available components.
+
+    Args mirror other selectors. Falls back to candidate index if state
+    does not expose a usable counter.
+    """
+    components: List[str] = list(candidate.keys())
+    if not components:
+        raise ValueError("Candidate prompt dictionary is empty")
+
+    # GEPA's state may expose `step` or `iteration`. Fall back to candidate_idx.
+    if hasattr(state, "step"):
+        idx = getattr(state, "step") % len(components)
+    elif isinstance(state, dict) and "step" in state:
+        idx = int(state["step"]) % len(components)
+    elif hasattr(state, "iteration"):
+        idx = getattr(state, "iteration") % len(components)
+    else:
+        idx = candidate_idx % len(components)
+
+    return components[idx]
+
+
 
 
 # Map string names to selector functions for CLI
@@ -123,5 +153,6 @@ SELECTORS = {
     "planner_only": planner_only_selector,
     "atomizer_only": atomizer_only_selector,
     "executor_only": executor_only_selector,
-    "aggregator_only": aggregator_only_selector
+    "aggregator_only": aggregator_only_selector,
+    "round_robin": round_robin_selector,
 }

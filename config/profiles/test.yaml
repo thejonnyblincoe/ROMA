@@ -1,0 +1,59 @@
+# Test profile - Custom configuration for prompt optimization testing
+# High-performance models with extended token limits
+
+agents:
+  atomizer:
+    llm:
+      model: "openrouter/google/gemini-2.5-flash"
+      max_tokens: 4000
+    # Instructions are applied via seed_prompts when using create_solver_module()
+
+  planner:
+    llm:
+      model: "openrouter/google/gemini-2.5-flash"
+      temperature: 0.4
+      max_tokens: 32000
+    # Instructions are applied via seed_prompts when using create_solver_module()
+
+  executor:
+    llm:
+      model: "cerebras/gpt-oss-120b"
+      temperature: 0.75
+      max_tokens: 128000
+
+  aggregator:
+    llm:
+      model: "cerebras/gpt-oss-120b"
+      temperature: 0.75
+      max_tokens: 128000
+    # Instructions are applied via seed_prompts when using create_solver_module()
+
+  verifier:
+    llm:
+      model: "gpt-4o-mini"  # Default verifier model
+      temperature: 0.1
+      max_tokens: 2000
+
+# Runtime configuration for testing
+runtime:
+  max_depth: 1
+  enable_logging: true
+  log_level: INFO
+  max_concurrency: 8
+
+# Resilience configuration (optional - uncomment to customize)
+resilience:
+  # Retry configuration
+  max_retries: 3  # Set to 0 to disable retries
+  retry_strategy: "exponential_backoff"
+  base_delay: 1.0
+  max_delay: 60.0
+
+  # Circuit breaker configuration
+  failure_threshold: 5
+  recovery_timeout: 60.0
+
+  # Checkpoint configuration
+  checkpoint:
+    enabled: false  # Set to false to disable checkpointing
+    periodic_checkpoints_enabled: false  # Disable periodic checkpoints

@@ -43,7 +43,7 @@ resilience:
 
 # Storage configuration
 storage:
-  base_path: ${oc.env:STORAGE_BASE_PATH,/opt/sentient}
+  base_path: ${oc.env:STORAGE_BASE_PATH,.tmp/sentient}
   max_file_size: 104857600  # 100MB
   buffer_size: 1048576      # 1MB
 

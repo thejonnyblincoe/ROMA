@@ -72,8 +72,8 @@ class LLMConfig:
     @classmethod
     def validate_max_tokens(cls, v: int) -> int:
         """Validate max_tokens is within valid range."""
-        if not (0 < v <= 100000):
-            raise ValueError(f"Max tokens must be between 1 and 100000, got {v}")
+        if not (0 < v <= 200000):
+            raise ValueError(f"Max tokens must be between 1 and 200000, got {v}")
         return v
 
     @field_validator("timeout")

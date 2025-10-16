@@ -117,7 +117,7 @@ def main():
 
     # Create judge and metric
     logger.info("Initializing LLM judge and metric...")
-    judge = ComponentJudge(config.judge_lm)
+    judge = ComponentJudge(lm_config=config.judge_lm)
     metric = MetricWithFeedback(judge)
     logger.info("✓ Judge and metric initialized")
 

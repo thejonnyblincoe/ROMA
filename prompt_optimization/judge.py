@@ -23,7 +23,7 @@ class ComponentJudge:
     component performance within the recursive solver system.
     """
 
-    def __init__(self, prompt: str = GRADER_PROMPT, lm_config: LMConfig = judge_config):
+    def __init__(self, *, prompt: str = GRADER_PROMPT, lm_config: LMConfig = judge_config):
         """
         Initialize component judge.
 
@@ -37,11 +37,12 @@ class ComponentJudge:
             max_tokens=lm_config.max_tokens,
             cache=lm_config.cache
         )
-        self.predictor = dspy.ChainOfThought(
-            JudgeSignature,
-            instructions=GRADER_PROMPT
-        )
         self.prompt = prompt
+        with dspy.context(lm=self.lm):
+            self.predictor = dspy.ChainOfThought(
+                JudgeSignature,
+                instructions=self.prompt
+            )
 
     def __call__(
         self,

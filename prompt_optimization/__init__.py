@@ -1,6 +1,6 @@
 """Prompt optimization utilities for ROMA-DSPy."""
 
-from .config import OptimizationConfig, get_default_config, LMConfig
+from .config import OptimizationConfig, get_default_config, LMConfig, patch_romaconfig
 from .datasets import load_aimo_datasets
 from .solver_setup import create_solver_module
 from .judge import ComponentJudge, JudgeSignature
@@ -11,6 +11,7 @@ from .selectors import (
     atomizer_only_selector,
     executor_only_selector,
     aggregator_only_selector,
+    round_robin_selector,
 )
 from .optimizer import create_optimizer
 
@@ -19,6 +20,7 @@ __all__ = [
     "OptimizationConfig",
     "get_default_config",
     "LMConfig",
+    "patch_romaconfig",
     # Dataset
     "load_aimo_datasets",
     # Solver
