@@ -40,6 +40,21 @@ class ContextStore:
         self._execution_id: Optional[str] = None
         self._postgres_storage: Optional[Any] = None
 
+    def __getstate__(self) -> dict:
+        """
+        Customize pickling/deepcopy behaviour.
+
+        asyncio.Lock instances hold a thread lock that isn't pickleable. During
+        deepcopy(), we drop the lock and recreate it in __setstate__.
+        """
+        state = self.__dict__.copy()
+        state.pop("_lock", None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = asyncio.Lock()
+
     async def store_result(self, task_id: str, result: str) -> None:
         """
         Store task result in a thread-safe manner.

@@ -1,6 +1,7 @@
 """Factory for creating agent instances with signature fallback."""
 
 from typing import Type, Optional, Dict
+import itertools
 import dspy
 
 from loguru import logger
@@ -44,6 +45,8 @@ class AgentFactory:
         AgentType.AGGREGATOR: Aggregator,
         AgentType.VERIFIER: Verifier,
     }
+
+    _signature_counter = itertools.count()
 
     def create_agent(
         self,
@@ -109,8 +112,12 @@ class AgentFactory:
 
         # No custom signature - use default
         if not agent_config.signature:
+            signature = self._clone_signature(
+                default_signature,
+                agent_config.signature_instructions
+            )
             logger.debug(f"Using default signature for {agent_type.value}")
-            return default_signature
+            return signature
 
         # Try parsing custom signature
         try:
@@ -187,3 +194,18 @@ class AgentFactory:
     def get_default_signature(cls, agent_type: AgentType) -> Type[dspy.Signature]:
         """Get default signature for agent type (utility method)."""
         return cls.DEFAULT_SIGNATURES[agent_type]
+
+    @classmethod
+    def _clone_signature(
+        cls,
+        base_signature: Type[dspy.Signature],
+        instructions: Optional[str]
+    ) -> Type[dspy.Signature]:
+        """
+        Create a unique Signature subclass so each agent can mutate instructions independently.
+        """
+        attrs: Dict[str, object] = {"__module__": base_signature.__module__}
+        if instructions:
+            attrs["__doc__"] = instructions
+        name = f"{base_signature.__name__}Instance{next(cls._signature_counter)}"
+        return type(name, (base_signature,), attrs)

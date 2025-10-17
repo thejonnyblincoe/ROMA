@@ -90,6 +90,16 @@ class ToolkitManager:
             except Exception as e:
                 logger.warning(f"Failed to register {class_name}: {e}")
 
+    def __deepcopy__(self, memo: dict) -> "ToolkitManager":
+        """
+        Preserve singleton semantics during deepcopy().
+
+        GEPA clones DSPy modules via copy.deepcopy(). Returning `self`
+        prevents attempts to pickle threading.Lock instances (which would fail)
+        and ensures all solvers continue to share the same toolkit manager.
+        """
+        return self
+
     def _register_toolkit_class(self, class_name: str, module_path: str) -> None:
         """
         Register a toolkit class for dynamic loading.
