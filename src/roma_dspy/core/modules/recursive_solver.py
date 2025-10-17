@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional, Callable, List, Tuple, Any
+import copy
 
 import dspy
 
@@ -25,6 +26,7 @@ class RecursiveSolverModule(dspy.Module):
     def __init__(self, *, solver: RecursiveSolver) -> None:
         super().__init__()
         self._solver = solver
+        self._last_solver: Optional[RecursiveSolver] = None  # Snapshot from most recent run
 
         # Expose solver's core attributes (these actually exist on RecursiveSolver)
         self.runtime = solver.runtime
@@ -40,7 +42,9 @@ class RecursiveSolverModule(dspy.Module):
         priority_fn: Optional[Callable[[TaskNode], int]] = None,
         concurrency: int = 1,
     ) -> dspy.Prediction:
-        completed_task = self._solver.event_solve(
+        solver_instance = self._spawn_solver()
+
+        completed_task = solver_instance.event_solve(
             task=goal,
             dag=dag,
             depth=depth,
@@ -49,7 +53,8 @@ class RecursiveSolverModule(dspy.Module):
         )
 
         viz = LLMTraceVisualizer(show_metrics=False, show_summary=False, verbose=True)
-        trace = viz.visualize(self._solver)
+        trace = viz.visualize(solver_instance)
+        self._last_solver = solver_instance
 
         return dspy.Prediction(
             goal=goal,
@@ -127,7 +132,9 @@ class RecursiveSolverModule(dspy.Module):
         priority_fn: Optional[Callable[[TaskNode], int]] = None,
         concurrency: int = 8,
     ) -> dspy.Prediction:
-        completed_task = await self._solver.async_event_solve(
+        solver_instance = self._spawn_solver()
+
+        completed_task = await solver_instance.async_event_solve(
             task=goal,
             dag=dag,
             depth=depth,
@@ -136,7 +143,8 @@ class RecursiveSolverModule(dspy.Module):
         )
 
         viz = LLMTraceVisualizer(show_metrics=False, show_summary=False, verbose=True)
-        trace = viz.visualize(self._solver)
+        trace = viz.visualize(solver_instance)
+        self._last_solver = solver_instance
 
         return dspy.Prediction(
             goal=goal,
@@ -145,3 +153,16 @@ class RecursiveSolverModule(dspy.Module):
             result_text=str(completed_task.result) if completed_task.result is not None else None,
             output_trace=trace,
         )
+
+    def _spawn_solver(self) -> RecursiveSolver:
+        """
+        Create an isolated solver instance for a single call.
+
+        DSPy optimizers (e.g., GEPA) run multiple rollouts concurrently. The
+        underlying RecursiveSolver mutates execution state (overall objective,
+        DAG, context), so sharing the same instance across concurrent calls can
+        mix traces/goals between rollouts. Deep copying ensures each execution
+        has isolated state while preserving any prompt/LM edits applied to the
+        template solver.
+        """
+        return copy.deepcopy(self._solver)
