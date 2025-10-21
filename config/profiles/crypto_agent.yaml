@@ -14,8 +14,8 @@ agents:
       temperature: 0.0
       max_tokens: 1000
     # Load atomizer seed prompt and demos for improved task classification
-    signature_instructions: "prompt_optimization.seed_prompts.atomizer_seed:ATOMIZER_PROMPT"
-    demos: "prompt_optimization.seed_prompts.atomizer_seed:ATOMIZER_DEMOS"
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.atomizer_seed:ATOMIZER_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.atomizer_seed:ATOMIZER_DEMOS"
 
   # Planner: Strategic planning with Gemini Flash
   planner:
@@ -24,8 +24,8 @@ agents:
       temperature: 0.1
       max_tokens: 4000
     # Load planner seed prompt and demos for improved task decomposition
-    signature_instructions: "prompt_optimization.seed_prompts.planner_seed:PLANNER_PROMPT"
-    demos: "prompt_optimization.seed_prompts.planner_seed:PLANNER_DEMOS"
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.planner_seed:PLANNER_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.planner_seed:PLANNER_DEMOS"
     agent_config:
       max_subtasks: 12
 
@@ -37,8 +37,8 @@ agents:
       max_tokens: 16000
     prediction_strategy: react
     # Load executor seed prompt and demos for improved task execution
-    signature_instructions: "prompt_optimization.seed_prompts.executor_seed:EXECUTOR_PROMPT"
-    demos: "prompt_optimization.seed_prompts.executor_seed:EXECUTOR_DEMOS"
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_seed:EXECUTOR_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.executor_seed:EXECUTOR_DEMOS"
     agent_config:
       max_executions: 10
 
@@ -146,8 +146,8 @@ agents:
       temperature: 0.0
       max_tokens: 5000
     # Load aggregator seed prompt for improved result synthesis
-    signature_instructions: "prompt_optimization.seed_prompts.aggregator_seed:AGGREGATOR_PROMPT"
-    demos: "prompt_optimization.seed_prompts.aggregator_seed:AGGREGATOR_DEMOS"
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.aggregator_seed:AGGREGATOR_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.aggregator_seed:AGGREGATOR_DEMOS"
 
   # Verifier: Validation with Gemini Flash
   verifier:
@@ -156,8 +156,8 @@ agents:
       temperature: 0.0
       max_tokens: 3000
     # Load verifier seed prompt and demos for improved output validation
-    signature_instructions: "prompt_optimization.seed_prompts.verifier_seed:VERIFIER_PROMPT"
-    demos: "prompt_optimization.seed_prompts.verifier_seed:VERIFIER_DEMOS"
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.verifier_seed:VERIFIER_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.verifier_seed:VERIFIER_DEMOS"
 
 # Task-aware agent mapping for executor
 agent_mapping:
@@ -171,8 +171,8 @@ agent_mapping:
         max_tokens: 4000  # Sufficient for data responses
       prediction_strategy: react
       # Load RETRIEVE-specific seed prompt and demos
-      signature_instructions: "prompt_optimization.seed_prompts.executor_retrieve_seed:EXECUTOR_RETRIEVE_PROMPT"
-      demos: "prompt_optimization.seed_prompts.executor_retrieve_seed:EXECUTOR_RETRIEVE_DEMOS"
+      signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_retrieve_seed:EXECUTOR_RETRIEVE_PROMPT"
+      demos: "prompt_optimization.prompts.seed_prompts.executor_retrieve_seed:EXECUTOR_RETRIEVE_DEMOS"
       agent_config:
         max_executions: 6  # Fewer iterations for simple retrievals
 
@@ -273,8 +273,8 @@ agent_mapping:
         max_tokens: 16000  # Large context for complex code
       prediction_strategy: react
       # Load CODE_INTERPRET-specific seed prompt and demos
-      signature_instructions: "prompt_optimization.seed_prompts.executor_code_seed:EXECUTOR_CODE_PROMPT"
-      demos: "prompt_optimization.seed_prompts.executor_code_seed:EXECUTOR_CODE_DEMOS"
+      signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_code_seed:EXECUTOR_CODE_PROMPT"
+      demos: "prompt_optimization.prompts.seed_prompts.executor_code_seed:EXECUTOR_CODE_DEMOS"
       agent_config:
         max_executions: 15  # More iterations for debugging code
 
@@ -362,8 +362,8 @@ agent_mapping:
         max_tokens: 16000  # Large context for complex reasoning
       prediction_strategy: react
       # Load THINK-specific seed prompt and demos
-      signature_instructions: "prompt_optimization.seed_prompts.executor_think_seed:EXECUTOR_THINK_PROMPT"
-      demos: "prompt_optimization.seed_prompts.executor_think_seed:EXECUTOR_THINK_DEMOS"
+      signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_think_seed:EXECUTOR_THINK_PROMPT"
+      demos: "prompt_optimization.prompts.seed_prompts.executor_think_seed:EXECUTOR_THINK_DEMOS"
       agent_config:
         max_executions: 12  # Multiple iterations for deep analysis
 
@@ -477,8 +477,8 @@ agent_mapping:
         max_tokens: 16000  # Long-form content
       prediction_strategy: react
       # Load WRITE-specific seed prompt and demos
-      signature_instructions: "prompt_optimization.seed_prompts.executor_write_seed:EXECUTOR_WRITE_PROMPT"
-      demos: "prompt_optimization.seed_prompts.executor_write_seed:EXECUTOR_WRITE_DEMOS"
+      signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_write_seed:EXECUTOR_WRITE_PROMPT"
+      demos: "prompt_optimization.prompts.seed_prompts.executor_write_seed:EXECUTOR_WRITE_DEMOS"
       agent_config:
         max_executions: 8  # Moderate iterations for refinement
 

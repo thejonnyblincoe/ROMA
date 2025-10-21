@@ -24,7 +24,7 @@ from roma_dspy.types.checkpoint_types import CheckpointTrigger
 from roma_dspy.types.checkpoint_models import CheckpointConfig
 from roma_dspy.resilience.checkpoint_manager import CheckpointManager
 from roma_dspy.config.schemas.root import ROMAConfig
-from roma_dspy.core.observability import MLflowManager
+from roma_dspy.core.observability import MLflowManager, ObservabilityManager
 from roma_dspy.tools.base.manager import ToolkitManager
 
 if TYPE_CHECKING:
@@ -142,6 +142,83 @@ class RecursiveSolver:
     def last_dag(self, value: Optional[TaskDAG]) -> None:
         """Set last DAG for current thread (thread-safe)."""
         self._local.last_dag = value
+
+    def __getstate__(self):
+        """
+        Custom pickle serialization to handle unpicklable objects.
+
+        GEPA (and other DSPy optimizers) use multiprocessing which requires
+        pickling the solver. We exclude unpicklable objects like threading.local,
+        database connections, locks, and singleton managers.
+
+        The config and registry are preserved since they're needed to recreate
+        the solver in the new process.
+        """
+        state = self.__dict__.copy()
+
+        # Remove ALL unpicklable objects
+        state.pop('_local', None)  # threading.local
+        state.pop('postgres_storage', None)  # Has _ThreadLocalState
+        state.pop('checkpoint_manager', None)  # Has _ThreadLocalState
+        state.pop('mlflow_manager', None)  # Has module object
+        state.pop('observability', None)  # Has _ThreadLocalState
+        state.pop('runtime', None)  # Has _thread.lock
+        state.pop('toolkit_manager', None)  # Has _thread.lock
+        state.pop('registry', None)  # Has _thread.lock
+
+        return state
+
+    def __setstate__(self, state):
+        """
+        Custom pickle deserialization to restore unpicklable objects.
+
+        After unpickling, we recreate the excluded objects. Since GEPA runs
+        in separate processes, each process will have its own instances of
+        these objects. This matches the initialization logic in __init__.
+        """
+        self.__dict__.update(state)
+
+        # Recreate threading.local
+        self._local = threading.local()
+
+        # Recreate registry from config
+        self.registry = AgentRegistry()
+        if self.config:
+            factory = AgentFactory()
+            self.registry.initialize_from_config(self.config, factory)
+
+        # Recreate PostgresStorage if it was enabled
+        if self.config and self.config.storage and self.config.storage.postgres and self.config.storage.postgres.enabled:
+            self.postgres_storage = PostgresStorage(self.config.storage.postgres)
+        else:
+            self.postgres_storage = None
+
+        # Recreate checkpoint system
+        checkpoint_cfg = self.config.resilience.checkpoint if self.config else CheckpointConfig()
+        self.checkpoint_manager = (
+            CheckpointManager(checkpoint_cfg, postgres_storage=self.postgres_storage)
+            if self.checkpoint_enabled else None
+        )
+
+        # Recreate MLflow tracing
+        if self.config and self.config.observability and self.config.observability.mlflow and self.config.observability.mlflow.enabled:
+            self.mlflow_manager = MLflowManager(self.config.observability.mlflow)
+            self.mlflow_manager.initialize()
+        else:
+            self.mlflow_manager = None
+
+        # Recreate runtime with registry
+        self.runtime = ModuleRuntime(registry=self.registry)
+
+        # Recreate observability manager
+        self.observability = ObservabilityManager(
+            postgres_storage=self.postgres_storage,
+            mlflow_manager=self.mlflow_manager,
+            runtime=self.runtime
+        )
+
+        # Recreate ToolkitManager (singleton pattern will return same instance in this process)
+        self.toolkit_manager = ToolkitManager.get_instance()
 
     def _configure_dspy_cache(self, cache_config: "CacheConfig") -> None:
         """
