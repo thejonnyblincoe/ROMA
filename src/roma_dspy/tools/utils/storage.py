@@ -210,10 +210,13 @@ class DataStorage:
 
         parquet_bytes = await asyncio.to_thread(_serialize)
 
-        # Generate key with timestamp and date folder
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # BUG FIX #8: Generate key with timestamp, microseconds, and hex suffix
+        # Prevents race conditions when multiple tools execute concurrently
+        import uuid
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # Include microseconds
+        hex_suffix = uuid.uuid4().hex[:8]  # 8-char random hex for uniqueness
         date_str = datetime.now().strftime("%Y-%m-%d")
-        filename = f"{prefix}_{timestamp}.parquet"
+        filename = f"{prefix}_{timestamp}_{hex_suffix}.parquet"
 
         # Build storage key
         key = f"toolkits/{self.toolkit_name}/{data_type}/{date_str}/{filename}"

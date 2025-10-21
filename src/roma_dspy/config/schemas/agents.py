@@ -25,7 +25,8 @@ class AgentConfig:
 
     # NEW: Inline signature support (OPTIONAL)
     signature: Optional[str] = None  # e.g., "goal -> is_atomic: bool, node_type: NodeType"
-    signature_instructions: Optional[str] = None  # Custom instructions for signature
+    signature_instructions: Optional[str] = None  # Custom instructions (inline, Jinja file, or Python module)
+    demos: Optional[str] = None  # Python module path to demo list (e.g., "module.path:VARIABLE")
 
     # Separate agent-specific and strategy-specific configurations
     agent_config: Optional[Dict[str, Any]] = None      # Agent business logic parameters
@@ -84,6 +85,63 @@ class AgentConfig:
         # Just normalize whitespace, don't validate format
         # Let the factory handle invalid signatures with fallback
         return v.strip()
+
+    @field_validator("signature_instructions")
+    @classmethod
+    def validate_signature_instructions(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Normalize signature instructions string.
+
+        Supports three formats:
+        1. Inline string: Direct instruction text
+           Example: "Classify the goal as ATOMIC or NOT"
+
+        2. Jinja template file: Path to .jinja or .jinja2 file
+           Example: "config/prompts/atomizer.jinja"
+
+        3. Python module variable: Import variable from module
+           Example: "prompt_optimization.seed_prompts.atomizer_seed:ATOMIZER_PROMPT"
+
+        Behavior when combined with signature:
+        - Only signature_instructions: Keep codebase signature + inject instructions
+        - Only signature: Override codebase signature with no instructions
+        - Both: Override codebase signature + inject instructions
+
+        Note: Actual loading/validation happens in AgentFactory for graceful fallback.
+        """
+        if v is None or v.strip() == "":
+            return None
+
+        # Just normalize, don't validate format
+        # Let factory handle validation with fallback
+        return v.strip()
+
+    @field_validator("demos")
+    @classmethod
+    def validate_demos(cls, v: Optional[str]) -> Optional[str]:
+        """
+        Normalize demos path string.
+
+        Supports format:
+        - Python module variable: Import variable from module
+          Example: "prompt_optimization.seed_prompts.executor_seed:EXECUTOR_DEMOS"
+
+        The variable must be a list of dspy.Example objects.
+
+        Note: Actual loading/validation happens in AgentFactory for graceful fallback.
+        """
+        if v is None or v.strip() == "":
+            return None
+
+        # Basic format check: must contain ':'
+        v_stripped = v.strip()
+        if ":" not in v_stripped:
+            raise ValueError(
+                f"Invalid demos path format: '{v_stripped}'. "
+                f"Expected format: 'module.path:VARIABLE_NAME'"
+            )
+
+        return v_stripped
 
     @field_validator("prediction_strategy")
     @classmethod

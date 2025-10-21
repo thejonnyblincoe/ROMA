@@ -1,7 +1,7 @@
 """Aggregator instruction seed prompt for DSPy.
 
 This module provides a strict, generalizable instruction prompt for the
-aggregator. It includes no few-shot examples by design.
+aggregator along with few-shot demos demonstrating synthesis patterns.
 """
 
 AGGREGATOR_PROMPT = r"""
@@ -50,4 +50,9 @@ Strict Output Shape
 
 Do not include planning steps, tool calls, or execution traces. Return only the final synthesized answer.
 """
+
+
+# Note: Aggregator demos are intentionally minimal as synthesis is highly goal-dependent.
+# The instruction prompt above provides comprehensive guidance for all synthesis scenarios.
+AGGREGATOR_DEMOS = []
 

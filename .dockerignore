@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Environment
+.env
+.env.*
+!.env.example
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data and logs
+*.log
+logs/
+*.sqlite
+*.db
+
+# Cache and temporary files
+.cache/
+.checkpoints/
+executions/
+*.tmp
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/_build/
+*.md
+!README.md
+
+# CI/CD
+.github/
+
+# Test files
+tests/
+test_*.py
+
+docs/
+examples/

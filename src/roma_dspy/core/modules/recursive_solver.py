@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Optional, Callable, List, Tuple, Any
 
 import dspy
@@ -9,7 +10,7 @@ import dspy
 from roma_dspy.core.engine.solve import RecursiveSolver
 from roma_dspy.core.engine.dag import TaskDAG
 from roma_dspy.core.signatures import TaskNode
-from roma_dspy.visualizer import LLMTraceVisualizer
+from roma_dspy.core.utils.trace_formatter import format_solver_trace
 from roma_dspy.types import AgentType, TaskType
 from loguru import logger
 
@@ -48,8 +49,8 @@ class RecursiveSolverModule(dspy.Module):
             concurrency=concurrency,
         )
 
-        viz = LLMTraceVisualizer(show_metrics=False, show_summary=False, verbose=True)
-        trace = viz.visualize(self._solver)
+        # Format trace using lightweight formatter
+        trace = format_solver_trace(self._solver)
 
         return dspy.Prediction(
             goal=goal,
@@ -118,6 +119,48 @@ class RecursiveSolverModule(dspy.Module):
 
         return predictors
 
+    def __deepcopy__(self, memo):
+        """
+        Custom deep copy for RecursiveSolverModule.
+
+        RecursiveSolver contains non-copyable objects (locks, database connections, singletons).
+        Instead of deep copying the solver, we reuse the same instance (shallow copy).
+        This is safe because:
+        1. RecursiveSolver is thread-safe (fixed with thread-local storage)
+        2. Solver config/registry are read-only after initialization
+        3. GEPA only needs to copy module parameters (predictors), not infrastructure
+
+        Args:
+            memo: Deep copy memo dict
+
+        Returns:
+            New RecursiveSolverModule instance sharing the same solver
+        """
+        # Create new instance without calling __init__
+        new_instance = self.__class__.__new__(self.__class__)
+
+        # Register in memo to handle circular references
+        memo[id(self)] = new_instance
+
+        # Copy DSPy base attributes (history, callbacks, etc.)
+        if hasattr(self, '__dict__'):
+            for key, value in self.__dict__.items():
+                if key == '_solver':
+                    # Shallow copy solver (share same instance - it's thread-safe)
+                    setattr(new_instance, key, value)
+                elif key in ('runtime', 'registry', 'max_depth'):
+                    # Shallow copy infrastructure attributes (read-only, shared)
+                    setattr(new_instance, key, value)
+                else:
+                    # Deep copy other attributes (history, callbacks, etc.)
+                    try:
+                        setattr(new_instance, key, copy.deepcopy(value, memo))
+                    except Exception:
+                        # Fallback to shallow copy if deep copy fails
+                        setattr(new_instance, key, value)
+
+        return new_instance
+
     async def aforward(
         self,
         goal: str,
@@ -135,8 +178,8 @@ class RecursiveSolverModule(dspy.Module):
             concurrency=concurrency,
         )
 
-        viz = LLMTraceVisualizer(show_metrics=False, show_summary=False, verbose=True)
-        trace = viz.visualize(self._solver)
+        # Format trace using lightweight formatter
+        trace = format_solver_trace(self._solver)
 
         return dspy.Prediction(
             goal=goal,

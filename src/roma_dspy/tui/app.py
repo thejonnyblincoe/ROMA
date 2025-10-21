@@ -4,38 +4,80 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, List, Optional, Set, Tuple
-from collections import defaultdict
+import logging
 import re
+import textwrap
+from collections import defaultdict
 from datetime import datetime
-from textwrap import shorten
+from typing import Any, Dict, List, Optional, Set, Tuple
+from pathlib import Path
+
+# Setup file logging for debugging crashes
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler('/tmp/roma_tui_app.log'),
+    ]
+)
+logger = logging.getLogger(__name__)
 
 from textual import events
 from rich.markup import escape
 from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.cache import LRUCache
 from textual.containers import Container
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header, Static, TabPane, TabbedContent, Tree
-
-try:  # pragma: no cover - textual compatibility shim
-    from textual.widgets import ScrollView  # type: ignore
-except ImportError:  # pragma: no cover
-    try:
-        from textual.widgets.scroll_view import ScrollView  # type: ignore
-    except ImportError:
-        try:
-            from textual.widgets._scrollview import ScrollView  # type: ignore
-        except ImportError:
-            class ScrollView(Static):  # type: ignore
-                """Fallback ScrollView that behaves like Static when unavailable."""
-
-                def scroll_home(self, animate: bool = False) -> None:
-                    return
+from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.message import Message
 
 from .client import VizApiClient
+from .models import AgentGroupViewModel, ExecutionViewModel, TaskViewModel, TraceViewModel
+from .transformer import DataTransformer
+from .widgets.tree_table import TreeTable
+from .detail_view import (
+    GenericDetailModal,
+    LMCallDetailParser,
+    SpanDetailParser,
+    ToolCallDetailParser,
+)
+
+
+# ROMA Logo ASCII Art (from file)
+DEBUG_LOG_PATH = Path("/tmp/tui_watermark_debug.log")
+
+
+def _debug_log(message: str) -> None:
+    """Write verbose debugging information to a temp log file."""
+    try:
+        with DEBUG_LOG_PATH.open("a", encoding="utf-8") as debug_file:
+            debug_file.write(f"{datetime.utcnow().isoformat()}Z {message}\n")
+    except Exception:
+        # Avoid crashing the TUI if the debug log can't be written
+        pass
+
+
+def _load_ascii_art(asset_name: str) -> str:
+    """Load ASCII art asset by name from the project assets directory."""
+    try:
+        asset_path = Path(__file__).parent.parent.parent.parent / "assets" / asset_name
+        if asset_path.exists():
+            content = asset_path.read_text(encoding="utf-8").strip()
+            _debug_log(f"Loaded asset '{asset_name}' ({len(content)} chars) from {asset_path}")
+            return content
+        _debug_log(f"Asset '{asset_name}' missing at {asset_path}")
+    except Exception as exc:
+        # Textual UI should continue rendering even if the logo is unavailable
+        _debug_log(f"Failed loading asset '{asset_name}': {exc}")
+        return ""
+    return ""
+
+
+SENTIENT_LOGO = _load_ascii_art("sentient_logo_text_ascii.txt")
+ROMA_LOGO = _load_ascii_art("roma_logo_simple_visible.txt")
 
 
 class DataLoaded(Message):
@@ -47,10 +89,90 @@ class DataLoaded(Message):
         super().__init__()
 
 
+class WelcomeScreen(ModalScreen[None]):
+    """Welcome/splash screen shown while data loads."""
+
+    CSS = """
+    WelcomeScreen {
+        align: center middle;
+        background: $surface;
+    }
+
+    #welcome-container {
+        width: auto;
+        height: auto;
+        padding: 2 4;
+        background: $surface;
+        border: tall $accent;
+    }
+
+    #welcome-logo {
+        color: $accent;
+        text-style: bold;
+        text-align: center;
+    }
+
+    #welcome-message {
+        color: $text-muted;
+        text-align: center;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, execution_id: str) -> None:
+        super().__init__()
+        self.execution_id = execution_id
+        self.data_loaded = False
+
+    def compose(self) -> ComposeResult:
+        """Compose the welcome screen with Sentient and ROMA logos."""
+        # Show Sentient logo, then ROMA logo underneath
+        sentient_logo = SENTIENT_LOGO if SENTIENT_LOGO else "SENTIENT"
+        roma_logo = ROMA_LOGO if ROMA_LOGO else "ROMA-DSPy"
+
+        combined_logo = f"{sentient_logo}\n\n{roma_logo}"
+
+        with Container(id="welcome-container"):
+            yield Static(combined_logo, id="welcome-logo")
+            yield Static(
+                f"Loading execution {self.execution_id[:8]}...",
+                id="welcome-message"
+            )
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle key press - dismiss on Enter after data loads, quit on Q."""
+        if event.key == "enter" and self.data_loaded:
+            self.dismiss()
+        elif event.key == "q":
+            # Allow quitting from welcome screen
+            self.app.exit()
+
+    def mark_data_loaded(self) -> None:
+        """Update message to prompt for user input."""
+        self.data_loaded = True
+        message_widget = self.query_one("#welcome-message", Static)
+        message_widget.update("Press [bold]Enter[/bold] to continue or [bold]Q[/bold] to quit")
+
+
 class RomaVizApp(App[None]):
+    """Sentient ROMA-DSPy Interactive Visualizer - Hierarchical Task Execution Explorer"""
+
+    TITLE = "🔷 Sentient ROMA-DSPy Visualizer"
+    SUB_TITLE = "Hierarchical Task Execution Explorer"
+
     CSS = """
     Screen {
         layout: vertical;
+    }
+
+    Header {
+        background: $accent;
+        color: $text;
+    }
+
+    Header .header--title {
+        color: $text;
+        text-style: bold;
     }
 
     #body {
@@ -62,49 +184,95 @@ class RomaVizApp(App[None]):
         width: 40%;
         min-width: 30;
         border: tall $accent;
+        background: $surface;
+    }
+
+    #detail-tabs-wrapper {
+        width: 1fr;
+        height: 100%;
     }
 
     #detail-tabs {
         border: tall $accent-darken-1;
-        width: 1fr;
+        width: 100%;
+        height: 100%;
+    }
+
+    #spans-wrapper {
+        height: 100%;
+        layout: vertical;
     }
 
     DataTable {
         height: 1fr;
     }
 
-    #trace-container {
+    #spans-container {
         layout: vertical;
-        height: 1fr;
+        height: 100%;
+        min-height: 30;
     }
 
-    #trace-heading {
-        padding: 0 1;
+    #spans-heading {
         height: auto;
+        padding: 0 1;
     }
 
-    #trace-detail {
-        border-top: wide $surface-lighten-2;
-        padding: 1 1;
-        min-height: 10;
-        height: 1fr;
+    #spans-table {
+        height: 50%;
+        min-height: 15;
         overflow-y: auto;
-    }
-
-    #timeline-table {
-        height: 60%;
     }
 
     #timeline-graph {
+        height: 50%;
+        min-height: 15;
         border-top: wide $surface-lighten-2;
-        padding: 1 0 0 0;
-        height: 1fr;
-        overflow: hidden;
+        padding: 1 1;
+        overflow-y: auto;
+        overflow-x: auto;
+        scrollbar-gutter: stable;
     }
 
     #task-info {
-        overflow-y: auto;
+        width: 100%;
         padding: 1 1;
+    }
+
+    #summary-info {
+        width: 100%;
+        padding: 1 1;
+    }
+
+    Footer {
+        background: $accent-darken-2;
+    }
+
+    .footer--highlight {
+        color: $accent;
+    }
+
+    .footer--key {
+        background: $accent;
+    }
+
+    #logo-footer {
+        color: $accent 40%;
+        text-style: bold;
+    }
+
+    #welcome-screen {
+        align: center middle;
+        background: $surface;
+    }
+
+    #welcome-logo {
+        width: auto;
+        height: auto;
+        color: $accent;
+        text-style: bold;
+        text-align: center;
+        padding: 2 4;
     }
     """
 
@@ -112,887 +280,792 @@ class RomaVizApp(App[None]):
         ("q", "quit", "Quit"),
         ("r", "reload", "Reload"),
         ("t", "toggle_io", "Toggle I/O"),
+        ("l", "toggle_live", "Toggle Live"),
         ("enter", "open_span_modal", "Span Detail"),
     ]
 
     show_io = reactive(False)
+    live_mode = reactive(False)
 
     def __init__(
         self,
         execution_id: str,
-        profile: Optional[str] = None,
         base_url: str = "http://localhost:8000",
+        live: bool = False,
+        poll_interval: float = 2.0,
     ) -> None:
         super().__init__()
         self.execution_id = execution_id
-        self.profile = profile
-        self.client = VizApiClient(base_url=base_url, profile=profile)
+        self.client = VizApiClient(base_url=base_url)
+        self.live_mode = live
+        self.poll_interval = poll_interval
 
-        self.mlflow_data: Dict[str, any] = {}
-        self.snapshot: Dict[str, any] = {}
-        self.metrics: Dict[str, any] = {}
-        self.lm_traces: List[Dict[str, any]] = []
+        # NEW: Clean view model (no messy lookups!)
+        self.execution: Optional[ExecutionViewModel] = None
+        self.transformer = DataTransformer()
 
-        self.task_lookup: Dict[str, Dict[str, any]] = {}
-        self.children_map: Dict[str, List[Dict[str, any]]] = {}
-        self.selected_task: Optional[Dict[str, any]] = None
-        self.current_spans: List[Dict[str, any]] = []
-        self.selected_span_index: Optional[int] = None
-        self.available_sources: Dict[str, bool] = {
-            "mlflow": False,
-            "checkpoint": False,
-            "lm_traces": False,
-        }
-        self.mlflow_warning: Optional[str] = None
-        self.execution_summary_entry: Dict[str, Any] = {}
-        self.fallback_spans: List[Dict[str, Any]] = []
-        self.fallback_by_task: Dict[str, List[Dict[str, Any]]] = {}
-        self.span_children_map: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        # UI state
+        self.selected_task: Optional[TaskViewModel] = None
+        # Note: current_spans and selected_span_index removed - TreeTable stores spans in node.data["span_obj"]
+
+        # LM table row mapping (row_key -> trace object)
+        self._lm_table_row_map: Dict[Any, TraceViewModel] = {}
+
+        # Tool calls table row mapping (row_key -> tool call dict)
+        self._tool_table_row_map: Dict[Any, Dict[str, Any]] = {}
+
+        # Live mode state
+        self._poll_task: Optional[asyncio.Task] = None
+        self._last_update: Optional[datetime] = None
+
+        # Performance optimizations
+        self._span_tree_cache: LRUCache[str, List[Tuple[TraceViewModel, int]]] = LRUCache(maxsize=20)
+        self._active_render_task: Optional[asyncio.Task] = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Container(id="body"):
             yield Tree("Loading…", id="task-tree")
-            with TabbedContent(id="detail-tabs"):
-                with TabPane("Trace", id="tab-trace"):
-                    with Container(id="trace-container"):
-                        yield Static("", id="trace-heading")
-                        trace_table = DataTable(id="trace-table")
-                        trace_table.cursor_type = "row"
-                        trace_table.show_cursor = True
-                        trace_table.add_columns("Span", "Duration", "Tokens", "Cost", "Model", "Tools")
-                        yield trace_table
-                        detail = ScrollView(id="trace-detail")
-                        detail.can_focus = True
-                        detail.update("[dim]Select a span to see details.[/dim]")
-                        yield detail
-                with TabPane("Timeline", id="tab-timeline"):
-                    timeline = DataTable(id="timeline-table")
-                    timeline.add_columns("Span", "Start", "Duration", "Tokens", "Cost", "Model")
-                    yield timeline
-                    graph_view = ScrollView(id="timeline-graph")
-                    graph_view.can_focus = True
-                    graph_view.update("[dim](no timeline data)[/dim]")
-                    yield graph_view
-                with TabPane("Task Info", id="tab-info"):
-                    yield Static("Select a task to view details", id="task-info")
-                with TabPane("Run Summary", id="tab-summary"):
-                    yield Static("Loading run summary…", id="summary-info")
-                with TabPane("LM Calls", id="tab-lm"):
-                    lm_table = DataTable(id="lm-table")
-                    lm_table.add_columns("Module", "Model", "Tokens", "Cost", "Latency (ms)", "Preview")
-                    yield lm_table
+
+            # Wrapper container for tabs
+            with Container(id="detail-tabs-wrapper"):
+                # Content with tabs
+                with TabbedContent(id="detail-tabs"):
+                    with TabPane("Spans", id="tab-spans"):
+                        with Container(id="spans-container"):
+                            yield Static("", id="spans-heading")
+                            yield Static("", id="spans-summary")  # Summary row (TOTAL)
+
+                            spans_table = TreeTable(
+                                columns=["Start Time", "Duration", "Model", "Tools"],
+                                id="spans-table",
+                            )
+                            # Note: "Span" is the tree column (implicit)
+                            # show_header=True and zebra_stripes=True are defaults in TreeTable
+                            yield spans_table
+
+                            with VerticalScroll(id="timeline-graph"):
+                                yield Static("[dim](no timeline data)[/dim]", id="timeline-graph-content")
+                    with TabPane("Task Info", id="tab-info"):
+                        with VerticalScroll():
+                            yield Static("Select a task to view details", id="task-info")
+                    with TabPane("Run Summary", id="tab-summary"):
+                        with VerticalScroll():
+                            yield Static("Loading run summary…", id="summary-info")
+                    with TabPane("LM Calls", id="tab-lm"):
+                        lm_table = DataTable(id="lm-table", cursor_type="row")
+                        lm_table.add_columns("Module", "Model", "Tokens", "Latency (ms)", "Preview")
+                        yield lm_table
+                    with TabPane("Tool Calls", id="tab-tools"):
+                        tool_table = DataTable(id="tool-table", cursor_type="row")
+                        tool_table.add_columns("Tool", "Toolkit", "Duration (ms)", "Status", "Preview")
+                        yield tool_table
         yield Footer()
 
     async def on_mount(self) -> None:
-        await self._load_data()
+        # Show welcome screen with loading task running in background
+        welcome_screen = WelcomeScreen(self.execution_id)
+
+        async def load_and_prompt() -> None:
+            """Load data then prompt user to continue."""
+            await self._load_data()
+            # Update welcome screen to show "Press Enter to continue"
+            welcome_screen.mark_data_loaded()
+            # Start live polling if enabled (but don't dismiss screen yet)
+            if self.live_mode:
+                await self._start_live_polling()
+
+        # Push welcome screen and start loading in background
+        self.push_screen(welcome_screen)
+        # Schedule data loading
+        asyncio.create_task(load_and_prompt())
+
+    async def on_unmount(self) -> None:
+        """Stop live polling when app closes."""
+        await self._stop_live_polling()
 
     async def action_reload(self) -> None:
         await self._load_data()
 
-    def action_toggle_io(self) -> None:
-        self.show_io = not self.show_io
-        selected = self.get_selected_task()
-        if selected:
-            self._render_task_views(selected)
-        # Update context panels that mention data sources or toggles
-        if getattr(self, "is_mounted", False):
-            try:
-                self._render_summary_tab()
-            except Exception:  # pragma: no cover - UI refresh guard
-                self.log("Failed to refresh summary tab after toggle.")
+    async def action_toggle_live(self) -> None:
+        """Toggle live mode on/off."""
+        self.live_mode = not self.live_mode
+        if self.live_mode:
+            await self._start_live_polling()
+        else:
+            await self._stop_live_polling()
+        # Update header to show live mode status
+        self._update_live_mode_indicator()
+
+    async def action_toggle_io(self) -> None:
+        try:
+            self.show_io = not self.show_io
+            self.log(f"Toggle I/O: show_io = {self.show_io}")
+            logger.info(f"TOGGLE: show_io={self.show_io}")
+
+            # Cancel any in-progress render to prevent race conditions
+            if self._active_render_task and not self._active_render_task.done():
+                self._active_render_task.cancel()
+                try:
+                    await self._active_render_task
+                except asyncio.CancelledError:
+                    pass  # Expected
+                except Exception:
+                    pass  # Ignore errors from cancelled task
+
+            selected = self.get_selected_task()
+            if selected:
+                logger.info(f"TOGGLE: Rendering task views for task {selected.task_id[:8]}")
+                await self._render_task_views_async(selected)
+                logger.info(f"TOGGLE: Task views rendered successfully")
+            else:
+                # Only update execution info when no task is selected
+                if getattr(self, "is_mounted", False):
+                    try:
+                        logger.info("TOGGLE: Rendering execution info")
+                        self._render_execution_info()
+                    except Exception as exc:  # pragma: no cover - UI refresh guard
+                        self.log(f"Failed to refresh execution info after toggle: {exc}")
+                        logger.error(f"TOGGLE ERROR: Execution info render failed: {exc}")
+
+            # Always update summary tab
+            if getattr(self, "is_mounted", False):
+                try:
+                    logger.info("TOGGLE: Rendering summary tab")
+                    self._render_summary_tab()
+                except Exception as exc:  # pragma: no cover - UI refresh guard
+                    self.log(f"Failed to refresh summary tab after toggle: {exc}")
+                    logger.error(f"TOGGLE ERROR: Summary tab render failed: {exc}")
+
+            logger.info("TOGGLE: Completed successfully")
+        except asyncio.CancelledError:
+            # Gracefully handle cancellation from rapid toggling - DO NOT re-raise or app will exit
+            self.log("Toggle I/O was cancelled (rapid toggle detected)")
+            logger.warning("TOGGLE: Cancelled (rapid toggle)")
+            return  # Just return, don't crash the app
+        except Exception as exc:
+            self.log(f"Critical error in action_toggle_io: {exc}")
+            logger.error(f"TOGGLE CRITICAL ERROR: {exc}", exc_info=True)
+            import traceback
+            self.log(traceback.format_exc())
+            # Don't crash the app, just log the error
 
     def _data_sources_summary(self) -> str:
+        """Generate summary of available data sources."""
+        if not self.execution:
+            return "none"
+
         labels: List[str] = []
-        if self.available_sources.get("mlflow"):
+        sources = self.execution.data_sources
+
+        if sources.get("mlflow"):
             labels.append("MLflow spans")
-        elif self.mlflow_warning:
-            labels.append("MLflow spans unavailable (fallback active)")
-        if self.available_sources.get("checkpoint"):
+        if sources.get("checkpoint"):
             label = "Checkpoint snapshot"
-            if not self.available_sources.get("mlflow"):
+            if not sources.get("mlflow"):
                 label += " (primary)"
             labels.append(label)
-        if self.available_sources.get("lm_traces"):
-            labels.append("MLflow LM traces (tracking server)")
+        if sources.get("lm_traces") and not sources.get("mlflow"):
+            labels.append("LM traces (fallback)")
+
+        if self.execution.warnings:
+            labels.append(f"({len(self.execution.warnings)} warnings)")
+
         return ", ".join(labels) if labels else "none"
 
     async def _load_data(self) -> None:
+        """
+        Simplified data loading - transformer handles all complexity!
+
+        OLD: 100+ lines of manual merging
+        NEW: 30 lines, transformer does the work
+        """
         tree = self.query_one("#task-tree", Tree)
         tree.root.label = f"Execution {self.execution_id} (loading…)"
         try:
-            self.current_spans = []
-            summary: Dict[str, Any] = {}
+            # 1. Fetch raw data (parallel)
+            # FIXED: Using new /data endpoint which includes task hierarchy
+            # This preserves all agent executions instead of losing them
             results = await asyncio.gather(
-                self.client.fetch_mlflow_tree(self.execution_id),
-                self.client.fetch_snapshot(self.execution_id),
-                self.client.fetch_metrics(self.execution_id),
+                self.client.fetch_execution_data(self.execution_id),
                 self.client.fetch_lm_traces(self.execution_id),
+                self.client.fetch_metrics(self.execution_id),
                 return_exceptions=True,
             )
-            mlflow_data, snapshot, metrics, lm_traces = results
+            mlflow_data, lm_traces, metrics = results
 
-            mlflow_error = None
-            snapshot_error = None
-            metrics_error = None
-            traces_error = None
-
+            # Handle errors
             if isinstance(mlflow_data, Exception):
-                mlflow_error = str(mlflow_data)
-                self.log(f"MLflow trace fetch failed: {mlflow_error}")
+                self.log(f"MLflow fetch failed: {mlflow_data}")
                 mlflow_data = {}
-            if isinstance(snapshot, Exception):
-                snapshot_error = str(snapshot)
-                self.log(f"Checkpoint snapshot fetch failed: {snapshot_error}")
-                snapshot = {}
-            if isinstance(metrics, Exception):
-                metrics_error = str(metrics)
-                self.log(f"Metrics fetch failed: {metrics_error}")
-                metrics = {}
             if isinstance(lm_traces, Exception):
-                traces_error = str(lm_traces)
-                self.log(f"LM trace fetch failed: {traces_error}")
+                self.log(f"LM traces fetch failed: {lm_traces}")
                 lm_traces = []
+            if isinstance(metrics, Exception):
+                self.log(f"Metrics fetch failed: {metrics}")
+                metrics = {}
 
+            # Parse JSON if needed
             if isinstance(mlflow_data, str):
                 try:
                     mlflow_data = json.loads(mlflow_data)
                 except json.JSONDecodeError:
                     mlflow_data = {}
 
-            if isinstance(snapshot, str):
-                try:
-                    snapshot = json.loads(snapshot)
-                except json.JSONDecodeError:
-                    snapshot = {}
-
-            fallback_snapshot = {}
-            if isinstance(mlflow_data, dict):
-                fallback_snapshot = mlflow_data.get("snapshot") if isinstance(mlflow_data.get("snapshot"), dict) else {}
-
-            if not snapshot and fallback_snapshot:
-                snapshot = fallback_snapshot
-            elif fallback_snapshot:
-                # Merge snapshot fields without overriding existing ones
-                snapshot.setdefault("tasks", snapshot.get("tasks") or {})
-                snapshot.setdefault("subgraphs", snapshot.get("subgraphs") or {})
-                snapshot.setdefault("statistics", snapshot.get("statistics") or {})
-                fb_tasks = fallback_snapshot.get("tasks")
-                if isinstance(snapshot.get("tasks"), dict) and isinstance(fb_tasks, dict):
-                    for tid, task in fb_tasks.items():
-                        snapshot["tasks"].setdefault(tid, task)
-                fb_subgraphs = fallback_snapshot.get("subgraphs")
-                if isinstance(snapshot.get("subgraphs"), dict) and isinstance(fb_subgraphs, dict):
-                    for sid, subgraph in fb_subgraphs.items():
-                        snapshot["subgraphs"].setdefault(sid, subgraph)
-
-            self.mlflow_data = mlflow_data if isinstance(mlflow_data, dict) else {}
-            self.snapshot = snapshot if isinstance(snapshot, dict) else {}
-            self.metrics = metrics if isinstance(metrics, dict) else {}
-            self.lm_traces = lm_traces if isinstance(lm_traces, list) else []
-            self.fallback_spans = []
-            self.span_children_map = defaultdict(list)
-            self.fallback_by_task = {}
-            summary = self.mlflow_data.get("summary") if isinstance(self.mlflow_data, dict) else {}
-            if not isinstance(summary, dict):
-                summary = {}
-            if isinstance(self.mlflow_data, dict):
-                raw_fallback = self.mlflow_data.get("fallback_spans")
-                if isinstance(raw_fallback, list):
-                    self.fallback_spans = [span for span in raw_fallback if isinstance(span, dict)]
-
-            warning = self.mlflow_data.get("warning")
-            self.mlflow_warning = warning or mlflow_error
-            if traces_error and not self.mlflow_warning:
-                self.mlflow_warning = traces_error
-            self.available_sources = {
-                "mlflow": bool(self.mlflow_data.get("tasks")) or bool(self.fallback_spans),
-                "checkpoint": bool(self.snapshot.get("tasks")),
-                "lm_traces": bool(self.lm_traces),
+            # Build checkpoint_data (empty since we don't have checkpoint data)
+            # Transformer will use mlflow_data for task structure and spans
+            checkpoint_data = {
+                "execution_id": self.execution_id,
+                "tasks": {},  # Empty - let transformer extract from mlflow_data
+                "root_goal": mlflow_data.get("summary", {}).get("root_goal", "") if isinstance(mlflow_data, dict) else "",
+                "status": "unknown",
+                "checkpoints": []
             }
-            if self.available_sources["mlflow"] and mlflow_error:
-                # MLflow returned data but earlier error was captured; treat as warning.
-                self.mlflow_warning = mlflow_error
 
-            self._build_task_maps()
+            # 2. Transform to clean view model (MAGIC HAPPENS HERE!)
+            self.execution = self.transformer.transform(
+                mlflow_data=mlflow_data if isinstance(mlflow_data, dict) else {},
+                checkpoint_data=checkpoint_data,
+                lm_traces=lm_traces if isinstance(lm_traces, list) else [],
+                metrics=metrics if isinstance(metrics, dict) else {},
+            )
+
+            # DEBUG
+            debug_file = "/tmp/tui_debug.log"
+            with open(debug_file, "w") as f:
+                f.write(f"=== DATA LOADED ===\n")
+                f.write(f"Execution has {len(self.execution.tasks)} tasks\n")
+                for task_id, task in self.execution.tasks.items():
+                    f.write(f"  Task {task_id[:8]}: {len(task.traces)} traces\n")
+
+            # 3. Render UI
             self._populate_tree()
             self._render_summary_tab()
             self.post_message(DataLoaded(True))
+
         except Exception as exc:  # pragma: no cover - CLI diagnostic
             tree.root.label = f"Execution {self.execution_id} (load failed)"
             tree.root.set_label(f"⚠️ {exc}")
             self.post_message(DataLoaded(False, str(exc)))
 
-    def _build_task_maps(self) -> None:
-        tasks = self.mlflow_data.get("tasks") or []
-        if isinstance(tasks, dict):
-            tasks = list(tasks.values())
-        elif not isinstance(tasks, list):
-            tasks = []
+    async def _start_live_polling(self) -> None:
+        """Start the live polling background task."""
+        if self._poll_task and not self._poll_task.done():
+            return  # Already polling
 
-        self.task_lookup = {}
+        self.log("Starting live polling...")
+        self._poll_task = asyncio.create_task(self._poll_loop())
 
-        def normalize_metrics(metrics: Optional[Dict[str, Any]]) -> Dict[str, float]:
-            metrics = metrics or {}
-            result = {
-                "duration": 0.0,
-                "tokens": 0,
-                "cost": 0.0,
-            }
-            for key in ("duration", "tokens", "cost"):
-                value = metrics.get(key)
-                if value in (None, ""):
-                    continue
-                try:
-                    if key == "tokens":
-                        result[key] = int(value)
-                    else:
-                        result[key] = float(value)
-                except (TypeError, ValueError):
-                    continue
-            return result
-
-        def normalize_spans(spans: Any) -> List[Dict[str, Any]]:
-            if not isinstance(spans, list):
-                return []
-            normalized: List[Dict[str, Any]] = []
-            for span in spans:
-                if isinstance(span, dict):
-                    normalized.append(dict(span))
-            return normalized
-
-        # Load MLflow tasks first
-        for task in tasks:
-            if not isinstance(task, dict):
-                continue
-            tid = task.get("task_id")
-            if not tid:
-                continue
-            entry = dict(task)
-            entry["metrics"] = normalize_metrics(task.get("metrics"))
-            entry["spans"] = normalize_spans(task.get("spans"))
-            self.task_lookup[tid] = entry
-
-        snapshot_tasks = {}
-        snapshot_subgraphs = {}
-        if isinstance(self.snapshot, dict):
-            raw_tasks = self.snapshot.get("tasks")
-            if isinstance(raw_tasks, dict):
-                snapshot_tasks = raw_tasks
-            raw_subgraphs = self.snapshot.get("subgraphs")
-            if isinstance(raw_subgraphs, dict):
-                snapshot_subgraphs = raw_subgraphs
-
-        visited_snapshot: Set[str] = set()
-
-        def merge_snapshot_task(task_data: Dict[str, Any], parent_id: Optional[str]) -> None:
-            tid = task_data.get("task_id")
-            if not tid or tid in visited_snapshot:
-                return
-            visited_snapshot.add(tid)
-
-            entry = self.task_lookup.get(tid)
-            if entry is None:
-                entry = {
-                    "task_id": tid,
-                    "goal": task_data.get("goal"),
-                    "module": task_data.get("module"),
-                    "task_type": task_data.get("task_type"),
-                    "node_type": task_data.get("node_type"),
-                    "status": task_data.get("status"),
-                    "result": task_data.get("result"),
-                    "parent_task_id": parent_id,
-                    "metrics": normalize_metrics(task_data.get("metrics")),
-                    "spans": normalize_spans(task_data.get("spans")),
-                    "depth": task_data.get("depth"),
-                }
-                self.task_lookup[tid] = entry
-            else:
-                # Merge snapshot info into existing MLflow entry
-                for key in ("goal", "module", "task_type", "node_type", "status"):
-                    if not entry.get(key) and task_data.get(key):
-                        entry[key] = task_data[key]
-                if task_data.get("result") and not entry.get("result"):
-                    entry["result"] = task_data["result"]
-                if parent_id and not entry.get("parent_task_id"):
-                    entry["parent_task_id"] = parent_id
-                entry.setdefault("metrics", normalize_metrics(None))
-                snap_metrics = normalize_metrics(task_data.get("metrics"))
-                for metric_key in ("duration", "tokens", "cost"):
-                    metric_val = snap_metrics.get(metric_key)
-                    if metric_val and not entry["metrics"].get(metric_key):
-                        entry["metrics"][metric_key] = metric_val
-                if not entry.get("spans"):
-                    entry["spans"] = normalize_spans(task_data.get("spans"))
-                if entry.get("depth") is None and task_data.get("depth") is not None:
-                    entry["depth"] = task_data.get("depth")
-
-            subgraph_id = task_data.get("subgraph_id")
-            if subgraph_id and subgraph_id in snapshot_subgraphs:
-                subgraph = snapshot_subgraphs[subgraph_id] or {}
-                subgraph_tasks = subgraph.get("tasks")
-                if isinstance(subgraph_tasks, dict):
-                    for child in subgraph_tasks.values():
-                        if isinstance(child, dict):
-                            merge_snapshot_task(child, tid)
-
-        for task in snapshot_tasks.values():
-            if isinstance(task, dict):
-                merge_snapshot_task(task, task.get("parent_task_id"))
-
-        # Merge LM trace records as pseudo spans / metrics
-        if self.lm_traces:
-            for call in self.lm_traces:
-                if not isinstance(call, dict):
-                    continue
-                tid = call.get("task_id")
-                if not tid:
-                    continue
-                entry = self.task_lookup.get(tid)
-                if entry is None:
-                    entry = {
-                        "task_id": tid,
-                        "goal": None,
-                        "module": call.get("module_name"),
-                        "task_type": None,
-                        "node_type": None,
-                        "status": None,
-                        "result": None,
-                        "parent_task_id": None,
-                        "metrics": {"duration": 0.0, "tokens": 0, "cost": 0.0},
-                        "spans": [],
-                    }
-                    self.task_lookup[tid] = entry
-                entry.setdefault("metrics", {"duration": 0.0, "tokens": 0, "cost": 0.0})
-                entry.setdefault("spans", [])
-
-                try:
-                    duration = float(call.get("latency_ms") or 0.0) / 1000.0
-                except (TypeError, ValueError):
-                    duration = 0.0
-                tokens = call.get("total_tokens")
-                try:
-                    tokens = int(tokens) if tokens not in (None, "") else 0
-                except (TypeError, ValueError):
-                    tokens = 0
-                try:
-                    cost = float(call.get("cost_usd") or 0.0)
-                except (TypeError, ValueError):
-                    cost = 0.0
-
-                entry["metrics"]["duration"] = (entry["metrics"].get("duration") or 0.0) + duration
-                entry["metrics"]["tokens"] = (entry["metrics"].get("tokens") or 0) + tokens
-                entry["metrics"]["cost"] = (entry["metrics"].get("cost") or 0.0) + cost
-
-                metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
-                tool_calls: List[Dict[str, Any]] = []
-                seen_calls: Set[str] = set()
-                self._collect_tool_calls_from_obj(metadata, tool_calls, seen_calls)
-                self._collect_tool_calls_from_obj(call.get("response"), tool_calls, seen_calls)
-                self._collect_tool_calls_from_obj(call, tool_calls, seen_calls)
-
-                entry["spans"].append(
-                    {
-                        "span_id": f"lmtrace-{call.get('trace_id')}",
-                        "name": call.get("module_name") or "LM Call",
-                        "duration": duration,
-                        "tokens": tokens,
-                        "cost": cost,
-                        "model": call.get("model"),
-                        "tool_calls": tool_calls,
-                        "inputs": call.get("prompt"),
-                        "outputs": call.get("response"),
-                        "reasoning": metadata.get("reasoning") if isinstance(metadata, dict) else None,
-                        "start_time": call.get("created_at"),
-                        "start_ts": call.get("start_ts") or call.get("created_at_ts"),
-                    }
-                )
-
-        summary = self.mlflow_data.get("summary") if isinstance(self.mlflow_data, dict) else {}
-        if not isinstance(summary, dict):
-            summary = {}
-
-        span_owner: Dict[str, str] = {}
-        for tid, task in self.task_lookup.items():
-            for span in task.get("spans") or []:
-                sid = span.get("span_id")
-                if sid:
-                    span_owner[sid] = tid
-
-        goal_to_task: Dict[str, str] = {}
-        for tid, task in self.task_lookup.items():
-            goal = task.get("goal")
-            if isinstance(goal, str) and goal.strip():
-                key = goal.strip().lower()
-                goal_to_task.setdefault(key, tid)
-                if "current number of" in key:
-                    goal_to_task.setdefault(
-                        key.replace("current number of", "find the current number of").strip(),
-                        tid,
-                    )
-
-        self.span_children_map = defaultdict(list)
-        fallback_records: Dict[str, Dict[str, Any]] = {}
-        for idx, raw_span in enumerate(self.fallback_spans):
-            if not isinstance(raw_span, dict):
-                continue
-            span = dict(raw_span)
-            span_id = span.get("span_id") or f"__fallback_span_{idx}"
-            span.setdefault("span_id", span_id)
-
-            parent_span_id = span.get("parent_span_id") or span.get("parent_id")
-            if parent_span_id:
-                self.span_children_map[parent_span_id].append(span)
-
-            candidate_task_id = span.get("task_id")
-            if candidate_task_id == "__execution__":
-                candidate_task_id = None
-            if candidate_task_id not in self.task_lookup:
-                candidate_task_id = None
-
-            if not candidate_task_id and parent_span_id:
-                parent_record = fallback_records.get(parent_span_id)
-                if parent_record:
-                    candidate_task_id = parent_record["entry"]["task_id"]
-                else:
-                    owner_tid = span_owner.get(parent_span_id)
-                    if owner_tid and owner_tid in self.task_lookup:
-                        candidate_task_id = owner_tid
-
-            if not candidate_task_id:
-                candidates: List[str] = []
-                inputs = span.get("inputs")
-                if isinstance(inputs, dict):
-                    for key in ("goal", "original_goal", "task_goal"):
-                        value = inputs.get(key)
-                        if isinstance(value, str) and value.strip():
-                            candidates.append(value.strip())
-                    sub_results = inputs.get("subtasks_results")
-                    if isinstance(sub_results, list):
-                        for item in sub_results:
-                            if isinstance(item, dict):
-                                value = item.get("goal")
-                                if isinstance(value, str) and value.strip():
-                                    candidates.append(value.strip())
-                outputs = span.get("outputs")
-                if isinstance(outputs, dict):
-                    value = outputs.get("goal")
-                    if isinstance(value, str) and value.strip():
-                        candidates.append(value.strip())
-
-                for goal_text in candidates:
-                    match_tid = goal_to_task.get(goal_text.lower())
-                    if match_tid:
-                        candidate_task_id = match_tid
-                        break
-
-            newly_created = False
-            if candidate_task_id and candidate_task_id in self.task_lookup:
-                entry = self.task_lookup[candidate_task_id]
-            else:
-                assigned_id = candidate_task_id or f"__fallback__{idx}"
-                entry = self.task_lookup.get(assigned_id)
-                if entry is None:
-                    newly_created = True
-                    entry = {
-                        "task_id": assigned_id,
-                        "goal": span.get("name") or f"Span {span_id[:8]}",
-                        "module": span.get("module"),
-                        "task_type": "span",
-                        "node_type": "span",
-                        "status": span.get("status") or "unknown",
-                        "result": None,
-                        "parent_task_id": None,
-                        "metrics": {"duration": 0.0, "tokens": 0, "cost": 0.0},
-                        "spans": [],
-                        "is_fallback": True,
-                    }
-                    self.task_lookup[assigned_id] = entry
-                entry.setdefault("is_fallback", True)
-                entry.setdefault("goal", entry.get("goal") or span.get("name") or f"Span {span_id[:8]}")
-                if not entry.get("module") and span.get("module"):
-                    entry["module"] = span.get("module")
-                candidate_task_id = entry["task_id"]
-
-            span.setdefault("task_id", candidate_task_id)
-            if entry.get("goal") and not span.get("task_goal"):
-                span["task_goal"] = entry["goal"]
-
-            existing_ids = {
-                sp.get("span_id")
-                for sp in (entry.get("spans") or [])
-                if isinstance(sp, dict) and sp.get("span_id")
-            }
-            if span_id not in existing_ids:
-                entry.setdefault("spans", []).append(span)
-                metrics_entry = entry.setdefault("metrics", {"duration": 0.0, "tokens": 0, "cost": 0.0})
-                duration_val = span.get("duration")
-                if duration_val not in (None, ""):
-                    try:
-                        metrics_entry["duration"] += float(duration_val)
-                    except (TypeError, ValueError):
-                        pass
-                token_val = span.get("tokens")
-                if token_val not in (None, ""):
-                    try:
-                        metrics_entry["tokens"] += int(token_val)
-                    except (TypeError, ValueError):
-                        pass
-                cost_val = span.get("cost")
-                if cost_val not in (None, ""):
-                    try:
-                        metrics_entry["cost"] += float(cost_val)
-                    except (TypeError, ValueError):
-                        pass
-
-            self.fallback_by_task.setdefault(candidate_task_id, []).append(span)
-            span_owner.setdefault(span_id, candidate_task_id)
-            fallback_records[span_id] = {
-                "entry": entry,
-                "span": span,
-                "is_new": newly_created,
-            }
-
-        for record in fallback_records.values():
-            if not record.get("is_new"):
-                continue
-            span = record["span"]
-            entry = record["entry"]
-            parent_span_id = span.get("parent_span_id") or span.get("parent_id")
-            parent_task_id = None
-            if parent_span_id:
-                parent_record = fallback_records.get(parent_span_id)
-                if parent_record:
-                    parent_task_id = parent_record["entry"]["task_id"]
-                else:
-                    parent_task_id = span_owner.get(parent_span_id)
-            if parent_task_id == entry["task_id"]:
-                parent_task_id = None
-            entry["parent_task_id"] = parent_task_id or "__execution__"
-
-        for entry in self.task_lookup.values():
-            spans_list = entry.get("spans") or []
+    async def _stop_live_polling(self) -> None:
+        """Stop the live polling background task."""
+        if self._poll_task and not self._poll_task.done():
+            self.log("Stopping live polling...")
+            self._poll_task.cancel()
             try:
-                spans_list.sort(key=lambda sp: self._get_span_start(sp) or 0.0)
-            except Exception:
+                await self._poll_task
+            except asyncio.CancelledError:
                 pass
+            self._poll_task = None
 
-        aggregated_spans: List[Dict[str, Any]] = []
-        for tid, task in self.task_lookup.items():
-            for span in task.get("spans") or []:
-                if not isinstance(span, dict):
-                    continue
-                span_copy = dict(span)
-                span_copy.setdefault("task_id", tid)
-                span_copy.setdefault("task_goal", task.get("goal"))
-                aggregated_spans.append(span_copy)
+    async def _poll_loop(self) -> None:
+        """Background polling loop for live updates."""
+        while True:
+            try:
+                await asyncio.sleep(self.poll_interval)
+                await self._load_data()
+                self._last_update = datetime.now()
+                self._update_live_mode_indicator()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.log(f"Polling error: {e}")
+                # Continue polling even on errors
 
-        self.children_map = defaultdict(list)
-        for task in self.task_lookup.values():
-            parent = task.get("parent_task_id")
-            if parent:
-                self.children_map[parent].append(task)
-
-        status = None
-        if isinstance(self.snapshot, dict):
-            status = self.snapshot.get("status")
-        if not status and isinstance(self.mlflow_data, dict):
-            status = self.mlflow_data.get("status")
-
-        self.execution_summary_entry = {
-            "task_id": "__execution__",
-            "goal": summary.get("root_goal") or f"Execution {self.execution_id}",
-            "module": None,
-            "task_type": "execution",
-            "node_type": "root",
-            "status": status or "unknown",
-            "result": None,
-            "parent_task_id": None,
-            "metrics": {
-                "duration": summary.get("total_duration", 0.0) or 0.0,
-                "tokens": summary.get("total_tokens", 0) or 0,
-                "cost": summary.get("total_cost", 0.0) or 0.0,
-            },
-            "spans": aggregated_spans,
-            "is_execution_summary": True,
-        }
-
-        root_candidates: List[Tuple[int, str, str]] = []
-        for tid, task in self.task_lookup.items():
-            parent = task.get("parent_task_id")
-            if parent == "__execution__":
-                continue
-            depth = task.get("depth", 0) or 0
-            goal = task.get("goal") or ""
-            if not parent or parent not in self.task_lookup:
-                root_candidates.append((depth, goal, tid))
-        root_candidates.sort()
-        if root_candidates:
-            self.root_task_ids = [tid for _, _, tid in root_candidates]
-        else:
-            self.root_task_ids = list(self.task_lookup.keys())
-
-        # Update summary with latest metrics (including fallback tasks)
-        summary = summary or {}
-        summary["total_tasks"] = len(self.task_lookup)
-        summary["total_spans"] = sum(len(task.get("spans") or []) for task in self.task_lookup.values())
-        summary["total_duration"] = sum(
-            task.get("metrics", {}).get("duration", 0.0) or 0.0 for task in self.task_lookup.values()
-        )
-        summary["total_tokens"] = sum(
-            task.get("metrics", {}).get("tokens", 0) or 0 for task in self.task_lookup.values()
-        )
-        summary["total_cost"] = sum(
-            task.get("metrics", {}).get("cost", 0.0) or 0.0 for task in self.task_lookup.values()
-        )
-        self.mlflow_data["summary"] = summary
+    def _update_live_mode_indicator(self) -> None:
+        """Update the tree label to show live mode status."""
+        try:
+            tree = self.query_one("#task-tree", Tree)
+            status = "🔴 LIVE" if self.live_mode else ""
+            last_update = f" (updated {self._last_update:%H:%M:%S})" if self._last_update else ""
+            tree.root.label = f"{status} Execution {self.execution_id[:8]}...{last_update}"
+        except Exception:
+            pass  # UI not ready yet
 
     def _populate_tree(self) -> None:
+        """
+        Simplified tree population - uses clean view models.
+
+        OLD: Complex lookups in task_lookup, children_map, etc.
+        NEW: Simple iteration over self.execution.tasks
+        """
         tree = self.query_one("#task-tree", Tree)
         tree.clear()
-        tree.root.label = f"Execution {self.execution_id}"
-        tree.root.data = self.execution_summary_entry or None
-        if not self.task_lookup:
-            tree.root.add("No task hierarchy available (using MLflow)")
+        self._update_live_mode_indicator()  # Set label with live status
+
+        if not self.execution or not self.execution.tasks:
+            tree.root.add("No tasks available")
             tree.root.expand()
-            if tree.root.data:
-                self._render_task_views(tree.root.data)
             return
 
-        for root_id in sorted(self.root_task_ids):
-            root_task = self.task_lookup[root_id]
-            node = tree.root.add(self._task_label(root_task), data=root_task)
-            self._populate_children(node, root_task)
-        for child in sorted(self.children_map.get("__execution__", []), key=lambda t: t.get("goal", "")):
-            node = tree.root.add(self._task_label(child), data=child)
-            self._populate_children(node, child)
+        # Create execution summary as root data
+        tree.root.data = self.execution
+
+        # Sort root tasks chronologically by earliest trace
+        def get_task_start_time(task_id: str) -> float:
+            """Get the earliest start time for a task's traces."""
+            task = self.execution.tasks.get(task_id)
+            if not task or not task.traces:
+                return 0.0
+            return min((tr.start_ts for tr in task.traces if tr.start_ts), default=0.0)
+
+        sorted_root_task_ids = sorted(
+            self.execution.root_task_ids,
+            key=get_task_start_time
+        )
+
+        # Render root tasks
+        for root_task_id in sorted_root_task_ids:
+            task = self.execution.tasks.get(root_task_id)
+            if task:
+                node = tree.root.add(self._task_label(task), data=task)
+                self._populate_children(node, task)
+
         tree.root.expand()
-        if tree.root.data:
-            tree.focus()
-            tree.select_node(tree.root)
-            self._render_task_views(tree.root.data)
-        elif tree.root.children:
+
+        # Select first task
+        if tree.root.children:
             first = tree.root.children[0]
             first.expand()
             tree.focus()
             tree.select_node(first)
-            if first.data:
-                self._render_task_views(first.data)
+            # Don't render task views immediately - let the tree render first
+            # Task views will be rendered when user actually selects the node
+        else:
+            tree.focus()
+            tree.select_node(tree.root)
 
-    def _populate_children(self, node, task: Dict[str, any]) -> None:
-        children = self.children_map.get(task["task_id"], [])
-        for child in sorted(children, key=lambda t: (t.get("depth", 0), t.get("goal", ""))):
-            child_node = node.add(self._task_label(child), data=child)
-            self._populate_children(child_node, child)
+    def _populate_children(self, node, task: TaskViewModel) -> None:
+        """Recursively populate children and agent groups."""
+        if not self.execution:
+            return
 
-    def _task_label(self, task: Dict[str, any]) -> str:
-        goal = task.get("goal") or f"Task {task['task_id'][:8]}"
-        status_bits = []
-        metrics = task.get("metrics", {})
-        duration = metrics.get("duration")
-        if duration:
-            status_bits.append(f"{duration:.2f}s")
-        tokens = metrics.get("tokens")
-        if tokens:
-            status_bits.append(f"{tokens} tok")
-        module = task.get("module")
-        tag = f"[{module}] " if module else ""
-        info = f" ({', '.join(status_bits)})" if status_bits else ""
-        return f"{tag}{goal[:60]}{info}"
+        # Add agent groups for this task (if any)
+        agent_groups = self._extract_agent_groups(task)
+        for agent_type, agent_metrics in agent_groups.items():
+            agent_label = f"🔧 {agent_type} ({agent_metrics['tokens']} tokens)"
+            # Create AgentGroupViewModel with filtered traces
+            agent_group = AgentGroupViewModel(
+                task=task,
+                agent_type=agent_type,
+                traces=agent_metrics['traces'],
+                tokens=agent_metrics['tokens'],
+                duration=agent_metrics['duration']
+            )
+            node.add_leaf(agent_label, data=agent_group)
 
-    def get_selected_task(self) -> Optional[Dict[str, any]]:
+        # Add subtasks (sorted chronologically by earliest trace)
+        def get_subtask_start_time(subtask_id: str) -> float:
+            """Get the earliest start time for a subtask's traces."""
+            subtask = self.execution.tasks.get(subtask_id)
+            if not subtask or not subtask.traces:
+                return 0.0
+            return min((tr.start_ts for tr in subtask.traces if tr.start_ts), default=0.0)
+
+        sorted_subtask_ids = sorted(task.subtask_ids, key=get_subtask_start_time)
+
+        for child_id in sorted_subtask_ids:
+            child = self.execution.tasks.get(child_id)
+            if child:
+                child_node = node.add(self._task_label(child), data=child)
+                self._populate_children(child_node, child)
+
+    def _extract_agent_groups(self, task: TaskViewModel) -> Dict[str, Dict[str, Any]]:
+        """Extract agent execution groups from task traces.
+
+        Returns dict mapping agent_type to metrics (tokens, duration, span_count).
+
+        Strategy to avoid double-counting:
+        - Duration: Use ONLY root wrapper spans (avoids double-counting nested spans)
+        - Tokens: Use ONLY LM/tool spans (wrapper spans have 0 tokens)
+        - Traces: Include ALL spans for display purposes
+        """
+        agent_groups: Dict[str, Dict[str, Any]] = {}
+
+        # Group traces by module (which contains agent_type)
+        for trace in task.traces:
+            agent_type = trace.module
+            if not agent_type:
+                continue
+
+            # Filter to only known agent types
+            if agent_type not in ['atomizer', 'planner', 'executor', 'aggregator', 'verifier']:
+                continue
+
+            if agent_type not in agent_groups:
+                agent_groups[agent_type] = {
+                    'tokens': 0,
+                    'duration': 0.0,
+                    'span_count': 0,
+                    'traces': [],
+                }
+
+            # Determine if this is a wrapper span or nested span
+            is_wrapper = self._is_wrapper_span_for_metrics(trace)
+
+            # Duration: Only count wrapper spans to avoid double-counting
+            if is_wrapper:
+                agent_groups[agent_type]['duration'] += trace.duration
+
+            # Tokens: Only count LM/tool spans (wrapper spans have 0 tokens anyway)
+            if not is_wrapper:
+                agent_groups[agent_type]['tokens'] += trace.tokens
+
+            # Always include in span count and traces list
+            agent_groups[agent_type]['span_count'] += 1
+            agent_groups[agent_type]['traces'].append(trace)
+
+        # Sort by agent execution order
+        agent_order = {'atomizer': 0, 'planner': 1, 'executor': 2, 'aggregator': 3, 'verifier': 4}
+        return dict(sorted(agent_groups.items(), key=lambda x: agent_order.get(x[0], 999)))
+
+    def _task_label(self, task: TaskViewModel) -> str:
+        """Generate tree label for task."""
+        goal = task.goal or f"Task {task.task_id[:8]}"
+
+        # Status icon
+        status_icon = {
+            "completed": "✅",
+            "failed": "❌",
+            "running": "⚡",
+            "pending": "⏳",
+        }.get(task.status, "❓")
+
+        # Metrics
+        metrics_parts = []
+        if task.total_duration > 0:
+            metrics_parts.append(f"{task.total_duration:.1f}s")
+        if task.total_tokens > 0:
+            metrics_parts.append(f"{task.total_tokens} tok")
+
+        # Add trace count (number of agent executions)
+        trace_count = len(task.traces)
+        if trace_count > 0:
+            metrics_parts.append(f"{trace_count} traces")
+
+        metrics_str = f" ({', '.join(metrics_parts)})" if metrics_parts else ""
+
+        # Module tag
+        module_tag = f"[{task.module}] " if task.module else ""
+
+        # Error indicator
+        error_icon = " ⚠️" if task.error else ""
+
+        return f"{status_icon} {module_tag}{goal[:60]}{metrics_str}{error_icon}"
+
+    def get_selected_task(self) -> Optional[TaskViewModel]:
         tree = self.query_one("#task-tree", Tree)
         if tree.cursor_node and tree.cursor_node.data:
-            return tree.cursor_node.data
+            data = tree.cursor_node.data
+            if isinstance(data, TaskViewModel):
+                return data
         return None
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
-        task = event.node.data
-        if task:
-            self._render_task_views(task)
+        data = event.node.data
 
-    def _render_task_views(self, task: Dict[str, any]) -> None:
-        self.selected_task = task
-        self._render_trace_tab(task)
-        self._render_timeline(task)
-        self._render_task_info(task)
-        self._render_lm_table(task)
+        # Cancel any in-progress render BEFORE starting new one (prevent race condition)
+        if self._active_render_task and not self._active_render_task.done():
+            self._active_render_task.cancel()
 
-    def _resolve_event_index(self, row_key: Any, event: Any, default: int = 0) -> int:
-        if row_key is not None:
-            if isinstance(row_key, int):
-                return row_key
-            if hasattr(row_key, "value"):
-                try:
-                    return int(row_key.value)
-                except (TypeError, ValueError):
-                    value = getattr(row_key, "value", None)
-                    if isinstance(value, str) and value.isdigit():
-                        return int(value)
-            if isinstance(row_key, str):
-                try:
-                    return int(row_key)
-                except (TypeError, ValueError):
-                    pass
-        candidate = getattr(event, "row_index", None)
-        if candidate is None:
-            candidate = getattr(event, "cursor_row", None)
-        if candidate is None:
-            candidate = getattr(event, "row", None)
-        if candidate is None:
-            return default
+        # Defer rendering to avoid blocking the UI thread
+        # This allows the tree selection to complete before heavy rendering starts
+        if isinstance(data, TaskViewModel):
+            # Store task reference immediately to prevent race condition
+            self._active_render_task = asyncio.create_task(self._render_task_views_async(data))
+        elif isinstance(data, AgentGroupViewModel):
+            self._active_render_task = asyncio.create_task(self._render_agent_group_views_async(data))
+        elif isinstance(data, ExecutionViewModel):
+            self._active_render_task = asyncio.create_task(self._render_execution_summary_async())
+
+    async def _render_task_views_async(self, task: TaskViewModel) -> None:
+        """Async version with chunked rendering for large datasets."""
+        # Cancellation is now handled by caller (on_tree_node_selected, action_toggle_io)
+        # Just execute the render operations
         try:
-            return int(candidate)
-        except (TypeError, ValueError):
+            self.selected_task = task
+
+            # Render async components
             try:
-                return int(str(candidate))
-            except (TypeError, ValueError):
-                return default
+                await self._render_spans_tab_async(task)
+            except Exception as exc:
+                logger.error(f"Spans tab render failed: {exc}", exc_info=True)
+
+            # Render sync components with individual error handling
+            try:
+                self._render_task_info(task)
+            except Exception as exc:
+                logger.error(f"Task info render failed: {exc}", exc_info=True)
+
+            try:
+                self._render_lm_table(task)
+            except Exception as exc:
+                logger.error(f"LM table render failed: {exc}", exc_info=True)
+
+            try:
+                self._render_tool_calls_table(task)
+            except Exception as exc:
+                logger.error(f"Tool calls table render failed: {exc}", exc_info=True)
+
+        except asyncio.CancelledError:
+            # User toggled or clicked another task, clean up gracefully - DO NOT re-raise or app will exit
+            self.log(f"Render task views cancelled (task switch or rapid toggle)")
+            logger.info("Render task views cancelled")
+            return  # Just return, don't crash the app
+        except Exception as exc:
+            self.log(f"Critical error rendering task views: {exc}")
+            logger.error(f"CRITICAL render task views error: {exc}", exc_info=True)
+            import traceback
+            self.log(traceback.format_exc())
+            # Don't re-raise - log and continue
+
+    async def _render_agent_group_views_async(self, agent_group: AgentGroupViewModel) -> None:
+        """Async version with chunked rendering for agent groups."""
+        # Cancellation is now handled by caller (on_tree_node_selected)
+        # Just execute the render operations
+        try:
+            self.selected_task = agent_group.task
+
+            # Render async components
+            try:
+                await self._render_trace_tab_for_traces_async(
+                    agent_group.traces,
+                    title=f"{agent_group.agent_type.title()} Agent - {agent_group.task.goal[:50]}"
+                )
+            except Exception as exc:
+                logger.error(f"Trace tab render failed: {exc}", exc_info=True)
+
+            # Render sync components with individual error handling
+            try:
+                self._render_task_info(agent_group.task)
+            except Exception as exc:
+                logger.error(f"Task info render failed: {exc}", exc_info=True)
+
+            try:
+                self._render_lm_table_for_agent(agent_group)
+            except Exception as exc:
+                logger.error(f"LM table render failed: {exc}", exc_info=True)
+
+            try:
+                self._render_tool_calls_table_for_agent(agent_group)
+            except Exception as exc:
+                logger.error(f"Tool calls table render failed: {exc}", exc_info=True)
+
+        except asyncio.CancelledError:
+            # User switched to another view, clean up gracefully
+            logger.info("Render agent group views cancelled")
+            return  # Don't re-raise, just return
+        except Exception as exc:
+            logger.error(f"CRITICAL render agent group error: {exc}", exc_info=True)
+            # Don't re-raise - log and continue
+
+    async def _render_execution_summary_async(self) -> None:
+        """Async version for rendering execution summary."""
+        if not self.execution:
+            return
+
+        # Cancellation is now handled by caller (on_tree_node_selected)
+        # Just execute the render operations
+        try:
+            self.selected_task = None
+
+            # Render async components
+            try:
+                await self._render_trace_tab_by_tasks_async(title=f"Execution: {self.execution.root_goal}")
+            except Exception as exc:
+                logger.error(f"Trace tab by tasks render failed: {exc}", exc_info=True)
+
+            # Render sync components with individual error handling
+            try:
+                self._render_execution_info()
+            except Exception as exc:
+                logger.error(f"Execution info render failed: {exc}", exc_info=True)
+
+            try:
+                self._render_lm_table_all()
+            except Exception as exc:
+                logger.error(f"LM table all render failed: {exc}", exc_info=True)
+
+            try:
+                self._render_tool_calls_table_all()
+            except Exception as exc:
+                logger.error(f"Tool calls table all render failed: {exc}", exc_info=True)
+
+        except asyncio.CancelledError:
+            # User switched to another view, clean up gracefully
+            logger.info("Render execution summary cancelled")
+            return  # Don't re-raise, just return
+        except Exception as exc:
+            logger.error(f"CRITICAL render execution summary error: {exc}", exc_info=True)
+            # Don't re-raise - log and continue
 
     def action_open_span_modal(self) -> None:
-        if not self.current_spans:
+        """Open span detail modal for currently selected TreeTable node."""
+        table = self.query_one("#spans-table", TreeTable)
+        node = table.get_selected_node()
+        if node:
+            span = node.data.get("span_obj")
+            if span:
+                self._show_span_detail(span)
+
+    def _get_task_spans(self, task: TaskViewModel) -> List[TraceViewModel]:
+        """Get traces for a task. Traces are already deduplicated by transformer."""
+        return task.traces
+
+    def _render_timeline_graph(self, spans: List[TraceViewModel]) -> None:
+        """Render timeline bar graph for given spans.
+
+        Limited to 50 bars for performance - too many bars are hard to read anyway.
+        """
+        from textual.css.query import NoMatches
+
+        try:
+            graph = self.query_one("#timeline-graph-content", Static)
+        except NoMatches:
+            # Widget doesn't exist - user is on a different tab - skip rendering
+            logger.debug("Timeline graph widget not found (on different tab), skipping render")
             return
-        index = self.selected_span_index or 0
-        if index < 0 or index >= len(self.current_spans):
-            index = 0
-        self._show_span_detail(self.current_spans[index])
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying timeline graph widget: {exc}", exc_info=True)
+            raise
 
-    def _get_task_spans(self, task: Dict[str, any]) -> List[Dict[str, any]]:
-        spans = task.get("spans") or []
-        if spans:
-            return self._attach_fallback_children(spans)
+        if not spans:
+            graph.update("[dim](no timeline data)[/dim]")
+            return
 
-        task_id = task.get("task_id")
-        if not task_id:
-            return []
+        # Filter out wrapper spans - only show actual execution spans
+        non_wrapper_spans = [sp for sp in spans if not self._is_wrapper_span(sp)]
 
-        if task_id in self.fallback_by_task:
-            return self._attach_fallback_children(self._format_fallback_spans(self.fallback_by_task[task_id]))
+        if not non_wrapper_spans:
+            graph.update("[dim](no spans to display)[/dim]")
+            return
 
-        fallback: List[Dict[str, any]] = []
-        for call in self.lm_traces:
-            if call.get("task_id") != task_id:
-                continue
+        # PERFORMANCE: Limit to 50 bars max (too many bars are unreadable anyway)
+        MAX_BARS = 50
+        was_truncated = len(non_wrapper_spans) > MAX_BARS
 
-            metadata = call.get("metadata") if isinstance(call.get("metadata"), dict) else {}
-            tool_calls: List[Dict[str, any]] = []
-            seen_calls: Set[str] = set()
-            self._collect_tool_calls_from_obj(metadata, tool_calls, seen_calls)
-            self._collect_tool_calls_from_obj(call.get("response"), tool_calls, seen_calls)
-            self._collect_tool_calls_from_obj(call, tool_calls, seen_calls)
+        # Sort spans by start time and take top 50 by duration if truncating
+        sorted_spans = sorted(non_wrapper_spans, key=lambda sp: self._get_span_start(sp) or 0)
+        if was_truncated:
+            # Keep the longest-running spans for better visualization
+            sorted_spans = sorted(sorted_spans, key=lambda sp: sp.duration, reverse=True)[:MAX_BARS]
+            # Re-sort by start time for timeline display
+            sorted_spans = sorted(sorted_spans, key=lambda sp: self._get_span_start(sp) or 0)
 
-            latency_ms = call.get("latency_ms") or 0
-            try:
-                duration = float(latency_ms) / 1000.0
-            except (TypeError, ValueError):
-                duration = 0.0
+        max_duration = max((span.duration for span in sorted_spans), default=1.0)
+        lines: List[str] = []
 
-            raw_cost = call.get("cost_usd")
-            try:
-                cost = float(raw_cost) if raw_cost not in (None, "") else None
-            except (TypeError, ValueError):
-                cost = None
+        # Build timeline graph
+        has_start = any(self._get_span_start(span) is not None for span in sorted_spans)
+        label_width = 30  # Increased from 22 to prevent truncation
+        graph_width = 60  # Increased from 48 for better visualization
 
-            raw_start_ts = call.get("start_ts") or call.get("created_at_ts")
-            try:
-                start_ts = float(raw_start_ts) if raw_start_ts not in (None, "") else None
-            except (TypeError, ValueError):
-                start_ts = None
-
-            fallback.append(
-                {
-                    "span_id": f"lmtrace-{call.get('trace_id')}",
-                    "name": call.get("module_name") or "LM Call",
-                    "duration": duration,
-                    "tokens": call.get("total_tokens"),
-                    "cost": cost,
-                    "model": call.get("model"),
-                    "tool_calls": tool_calls,
-                    "inputs": call.get("prompt"),
-                    "outputs": call.get("response"),
-                    "reasoning": metadata.get("reasoning") if isinstance(metadata, dict) else None,
-                    "start_time": call.get("created_at"),
-                    "start_ts": start_ts,
-                }
-            )
-        return self._attach_fallback_children(fallback)
-
-    def _format_fallback_spans(self, spans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        formatted: List[Dict[str, Any]] = []
-        for idx, span in enumerate(spans):
-            if not isinstance(span, dict):
-                continue
-            entry = dict(span)
-            entry.setdefault("span_id", f"fallback-{idx}")
-            formatted.append(entry)
-        return formatted
-
-    def _render_trace_tab(self, task: Dict[str, any]) -> None:
-        heading = self.query_one("#trace-heading", Static)
-        table = self.query_one("#trace-table", DataTable)
-        detail = self.query_one("#trace-detail", ScrollView)
-        if task.get("is_execution_summary"):
-            goal_text = task.get("goal") or f"Execution {self.execution_id}"
-            heading_text = f"Execution: {goal_text}"
+        if has_start:
+            starts = [self._get_span_start(span) for span in sorted_spans if self._get_span_start(span) is not None]
+            earliest = min(starts) if starts else 0.0
+            ends: List[float] = []
+            for span in sorted_spans:
+                start = self._get_span_start(span) or earliest
+                duration = span.duration
+                ends.append(start + duration)
+            max_end = max(ends) if ends else earliest + max_duration
+            total_span = max(max_end - earliest, max_duration)
+            if total_span <= 0:
+                total_span = max_duration or 1.0
+            total_label = f"{total_span:.2f}s"
+            spacer = max(0, graph_width - len(total_label) - 2)
+            lines.append(" " * (label_width + 1) + f"[dim]0s{' ' * spacer}{total_label}[/dim]")
+            missing_start = False
+            for span in sorted_spans:
+                # Use simple name for timeline (no icons, just module prefix)
+                simple_prefix = f"[{span.module}] " if span.module else ""
+                name = f"{simple_prefix}{self._escape_text(span.name)}"[:label_width - 1]
+                start = self._get_span_start(span)
+                if start is None:
+                    missing_start = True
+                offset_cols = 0
+                if start is not None:
+                    offset_cols = int(((start - earliest) / total_span) * graph_width)
+                offset_cols = max(0, min(offset_cols, graph_width - 1))
+                duration = span.duration
+                width_cols = max(1, int((duration / total_span) * graph_width)) if duration else 1
+                if offset_cols + width_cols > graph_width:
+                    width_cols = max(1, graph_width - offset_cols)
+                bar = (" " * offset_cols + "█" * width_cols).ljust(graph_width)
+                lines.append(f"{name:<{label_width}} {bar} {duration:.2f}s")
+            if missing_start:
+                lines.append("[dim]* spans without start time are aligned to 0s.[/dim]")
         else:
-            goal_text = task.get("goal") or task.get("task_id") or "(unknown task)"
-            heading_text = f"Task: {goal_text}"
-        heading.update(self._escape_text(heading_text))
-        table.clear()
-        spans = self._get_task_spans(task)
-        ordered_spans = self._ordered_span_tree(spans)
-        self.current_spans = []
-        self.selected_span_index = None
+            for span in sorted_spans:
+                duration = span.duration
+                width_cols = max(1, int((duration / max_duration) * graph_width)) if duration else 1
+                bar = ("█" * width_cols).ljust(graph_width)
+                name = self._span_label(span, width=label_width - 1)
+                lines.append(f"{name:<{label_width}} {bar} {duration:.2f}s")
+            lines.append("[dim]Start timestamps unavailable; bars scaled by duration only.[/dim]")
 
-        if not ordered_spans:
-            table.add_row("(no spans)", "", "", "", "", "", key="0")
-            detail.update("[dim]No spans available for this task.[/dim]")
-            try:
-                detail.scroll_home(animate=False)
-            except Exception:
-                pass
-            return
+        # Add note if truncated
+        if was_truncated:
+            lines.append(f"[dim]Showing top {MAX_BARS} longest spans (out of {len(non_wrapper_spans)} total)[/dim]")
 
-        rows: List[Dict[str, any]] = []
-        for idx, (span, depth) in enumerate(ordered_spans):
-            tool_count = len(span.get("tool_calls") or [])
-            duration = span.get("duration")
-            duration_display = f"{duration:.2f}s" if isinstance(duration, (int, float)) and duration else ""
-            cost = span.get("cost")
-            cost_display = ""
-            if cost not in (None, ""):
-                try:
-                    cost_display = f"${float(cost):.4f}"
-                except (TypeError, ValueError):
-                    cost_display = str(cost)
-
-            rows.append(span)
-            base_label = self._span_label(task, span, width=max(12, 40 - depth * 2))
-            indent = "  " * depth
-            label = f"{indent}{base_label}"
-            table.add_row(
-                label,
-                duration_display,
-                str(span.get("tokens") or "") if span.get("tokens") not in (None, "") else "",
-                cost_display,
-                span.get("model") or "",
-                str(tool_count) if tool_count else "",
-                key=str(idx),
-            )
-
-        self.current_spans = rows
-        self.selected_span_index = 0
-        self._update_trace_detail(rows[0])
+        graph.update("\n".join(lines) if lines else "[dim](no timeline data)[/dim]")
 
     def _escape_text(self, value: Any) -> str:
         if value is None:
             return ""
         return escape(str(value))
 
-    def _stringify_raw(self, value: Any) -> str:
+    def _stringify_raw(self, value: Any, max_width: int = 80) -> str:
+        """Convert value to string with text wrapping for long lines."""
         if isinstance(value, (dict, list)):
             try:
-                text = json.dumps(value, indent=2)
+                # Create JSON with indentation
+                text = json.dumps(value, indent=2, ensure_ascii=False)
+                # Wrap long lines to max_width (simple line-by-line wrapping)
+                lines = text.splitlines()
+                wrapped_lines = []
+                for line in lines:
+                    if len(line) <= max_width:
+                        wrapped_lines.append(line)
+                    else:
+                        # For lines that are too long, break them intelligently
+                        # Preserve leading whitespace
+                        leading_spaces = len(line) - len(line.lstrip())
+                        indent_str = ' ' * leading_spaces
+
+                        # Remove leading space for wrapping, add it back after
+                        line_content = line.lstrip()
+
+                        # Simple chunking - break at max_width
+                        while line_content:
+                            if len(line_content) <= max_width - leading_spaces:
+                                wrapped_lines.append(indent_str + line_content)
+                                break
+                            else:
+                                # Find a good break point (space, comma, etc.)
+                                break_at = max_width - leading_spaces
+                                for char in [', ', ' ', ',', ':', '=']:
+                                    last_break = line_content[:break_at].rfind(char)
+                                    if last_break > break_at // 2:  # Don't break too early
+                                        break_at = last_break + len(char)
+                                        break
+
+                                wrapped_lines.append(indent_str + line_content[:break_at])
+                                line_content = line_content[break_at:].lstrip()
+                                # Increase indent for continuation lines
+                                indent_str = ' ' * (leading_spaces + 2)
+
+                text = '\n'.join(wrapped_lines)
             except (TypeError, ValueError):
                 text = str(value)
         else:
@@ -1041,86 +1114,317 @@ class RomaVizApp(App[None]):
             for item in obj:
                 self._collect_tool_calls_from_obj(item, sink, seen)
 
-    def _attach_fallback_children(self, spans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        combined: List[Dict[str, Any]] = list(spans)
-        seen: Set[str] = set()
+    def _is_wrapper_span_for_metrics(self, trace: TraceViewModel) -> bool:
+        """
+        Determine if a trace is a root wrapper span for metrics calculation.
 
-        for span in spans:
-            sid = span.get("span_id")
-            if sid:
-                seen.add(sid)
+        This is used to prevent double-counting in agent group metrics.
+        Wrapper spans contain nested LM/tool spans, so we count:
+        - Wrapper duration (total execution time)
+        - Nested span tokens (actual LM usage)
 
-        def include_children(span_id: Optional[str]) -> None:
-            if not span_id:
-                return
-            for child in self.span_children_map.get(span_id, []):
-                child_id = child.get("span_id") or f"child-{id(child)}"
-                if child_id in seen:
-                    continue
-                seen.add(child_id)
-                combined.append(child)
-                include_children(child.get("span_id"))
+        Strategy:
+        - Wrapper spans have agent names and typically 0 tokens
+        - LM spans have agent names but non-zero tokens
+        - Alternatively, check parent_trace_id (wrapper = None, nested = has parent)
 
-        for span in spans:
-            include_children(span.get("span_id"))
-        return combined
+        Returns:
+            True if this is a wrapper span, False if it's a nested LM/tool span
+        """
+        name = trace.name.lower() if trace.name else ""
+        wrapper_names = {"atomizer", "planner", "executor", "aggregator", "verifier"}
 
-    def _is_wrapper_name(self, span: Dict[str, Any]) -> bool:
-        if not isinstance(span, dict):
+        if name not in wrapper_names:
             return False
-        span_type = str(span.get("span_type") or "").lower()
-        if span_type == "module_wrapper":
-            return True
-        name = str(span.get("name") or "").lower()
-        return name in {"executor", "agent executor"}
 
-    def _ordered_span_tree(self, spans: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], int]]:
+        # Wrapper spans have agent names and 0 tokens
+        # LM spans have agent names but non-zero tokens
+        return trace.tokens == 0
+
+    def _is_wrapper_name(self, span: TraceViewModel) -> bool:
+        """Check if span is a wrapper that should be hidden in the span table.
+
+        Note: We WANT to show agent wrappers (atomizer, planner, executor, aggregator, verifier)
+        Only hide old-style generic wrappers like "agent executor".
+        """
+        name = span.name.lower() if span.name else ""
+        # Don't hide agent-type wrappers - they should be visible!
+        agent_types = {"atomizer", "planner", "executor", "aggregator", "verifier"}
+        if name in agent_types:
+            return False
+        # Only hide generic wrapper names
+        return name in {"agent executor", "agent_wrapper", "module_wrapper"}
+
+    def _is_wrapper_span(self, span: TraceViewModel) -> bool:
+        """Check if span is a wrapper that should be hidden in the TIMELINE.
+
+        Different from _is_wrapper_name - this hides ALL wrapper spans including
+        agent-type wrappers (atomizer, planner, etc.) from the timeline to avoid
+        duplicating what's already shown in the table hierarchy.
+        """
+        # Check if this span has the is_wrapper flag from ExecutionDataService
+        # (not yet implemented in transformer, but will be)
+
+        # For now, identify wrappers by their names
+        name = span.name.lower() if span.name else ""
+        wrapper_names = {"atomizer", "planner", "executor", "aggregator", "verifier",
+                        "agent executor", "agent_wrapper", "module_wrapper"}
+        return name in wrapper_names
+
+    async def _build_tree_table_nodes_async(self, spans: List[TraceViewModel], progress_callback=None) -> List:
+        """Convert flat span list to TreeTableNode tree for TreeTable widget (ASYNC with progress).
+
+        Args:
+            spans: List of TraceViewModel objects
+            progress_callback: Optional callback(current, total, message) for progress updates
+
+        Returns:
+            List of root TreeTableNode objects (with children recursively added)
+        """
+        from roma_dspy.tui.widgets.tree_table import TreeTableNode
+
         if not spans:
             return []
-        by_id: Dict[str, Dict[str, Any]] = {}
-        for span in spans:
-            sid = span.get("span_id")
-            if sid:
-                by_id[sid] = span
-        children: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        roots: List[Dict[str, Any]] = []
 
-        def sort_key(span: Dict[str, Any]) -> Tuple[float, str]:
-            return (self._get_span_start(span) or 0.0, span.get("name", ""))
+        total_spans = len(spans)
+        processed = 0
 
-        for span in spans:
-            parent = span.get("parent_span_id") or span.get("parent_id")
-            if parent and parent in by_id:
-                children[parent].append(span)
+        # Two-pass approach to handle out-of-order spans
+        # Pass 1: Build id -> span mapping
+        by_id: Dict[str, TraceViewModel] = {}
+        for idx, span in enumerate(spans):
+            by_id[span.trace_id] = span
+            # Yield every 20 iterations to keep UI responsive
+            if idx % 20 == 0:
+                if progress_callback:
+                    progress_callback(idx, total_spans, "Indexing spans...")
+                await asyncio.sleep(0)
+
+        # Pass 2: Build parent-child relationships
+        children: Dict[str, List[TraceViewModel]] = defaultdict(list)
+        roots: List[TraceViewModel] = []
+
+        for idx, span in enumerate(spans):
+            # Check if this span has a valid parent in the span list
+            if span.parent_trace_id and span.parent_trace_id in by_id:
+                children[span.parent_trace_id].append(span)
             else:
                 roots.append(span)
+
+            # Yield every 20 iterations to keep UI responsive
+            if idx % 20 == 0:
+                if progress_callback:
+                    progress_callback(idx, total_spans, "Building hierarchy...")
+                await asyncio.sleep(0)
+
+        # Sort children and roots by start time
+        def sort_key(span: TraceViewModel) -> Tuple[float, str]:
+            return (self._get_span_start(span) or 0.0, span.name)
 
         for child_list in children.values():
             child_list.sort(key=sort_key)
         roots.sort(key=sort_key)
 
-        ordered: List[Tuple[Dict[str, Any], int]] = []
+        # Build TreeTableNode tree recursively with yielding
+        async def build_node_async(span: TraceViewModel, depth: int = 0):
+            """Build a TreeTableNode with all its children (async)."""
+            nonlocal processed
 
-        def visit(span: Dict[str, Any], depth: int) -> None:
-            sid = span.get("span_id")
-            has_children = bool(sid and children.get(sid))
-            is_wrapper = depth == 0 and has_children and self._is_wrapper_name(span)
+            # Format span data for columns
+            start_display = "-"
+            if span.start_time:
+                try:
+                    dt = datetime.fromisoformat(span.start_time.replace('Z', '+00:00'))
+                    start_display = dt.strftime("%H:%M:%S.%f")[:-3]
+                except:
+                    start_display = span.start_time or "-"
+
+            duration_display = f"{span.duration:.2f}s" if span.duration > 0 else "-"
+            model_display = span.model if span.model else "-"
+            tool_count = len(span.tool_calls) if span.tool_calls else 0
+            tools_display = str(tool_count) if tool_count > 0 else "-"
+
+            # Create node
+            node = TreeTableNode(
+                id=span.trace_id,
+                label=self._span_label(span, width=40),
+                data={
+                    "Start Time": start_display,
+                    "Duration": duration_display,
+                    "Model": model_display,
+                    "Tools": tools_display,
+                    "span_obj": span,  # Store full span for event handlers
+                },
+            )
+
+            # Add children recursively
+            for child_span in children.get(span.trace_id, []):
+                child_node = await build_node_async(child_span, depth + 1)
+                node.add_child(child_node)
+
+                processed += 1
+                # Yield every 20 nodes to keep UI responsive
+                if processed % 20 == 0:
+                    if progress_callback:
+                        progress_callback(processed, total_spans, "Building tree nodes...")
+                    await asyncio.sleep(0)
+
+            return node
+
+        # Build root nodes (filter out wrappers if needed)
+        root_nodes = []
+        for root_span in roots:
+            # Check if this is a wrapper that should be hidden
+            has_children = bool(children.get(root_span.trace_id))
+            is_wrapper = has_children and self._is_wrapper_name(root_span)
+
+            if is_wrapper:
+                # Skip wrapper, add its children as roots instead
+                for child_span in children.get(root_span.trace_id, []):
+                    root_nodes.append(await build_node_async(child_span))
+            else:
+                root_nodes.append(await build_node_async(root_span))
+
+        return root_nodes
+
+    def _add_tree_nodes_to_table(self, table, nodes: List) -> None:
+        """Add TreeTableNode tree to TreeTable widget.
+
+        This is a helper that recursively adds a tree structure to the TreeTable.
+
+        Args:
+            table: TreeTable widget
+            nodes: List of root TreeTableNode objects
+        """
+        from roma_dspy.tui.widgets.tree_table import TreeTableNode
+
+        for node in nodes:
+            # Add root with all data
+            root = table.add_root(node.label, node.data, node_id=node.id)
+
+            # Recursively add children
+            def add_children(parent_table_node, tree_node):
+                for child in tree_node.children:
+                    child_table_node = parent_table_node.add_child(TreeTableNode(
+                        id=child.id,
+                        label=child.label,
+                        data=child.data,
+                    ))
+                    # Recursively add grandchildren
+                    add_children(child_table_node, child)
+
+            add_children(root, node)
+
+        # Rebuild visible rows to ensure display is updated
+        table.rebuild_visible_rows()
+
+    async def _build_span_tree_internal(self, spans: List[TraceViewModel], hide_wrappers: bool = False) -> List[Tuple[TraceViewModel, int]]:
+        """Build hierarchical span tree with depth information (async with yielding).
+
+        Args:
+            spans: List of spans to build tree from
+            hide_wrappers: If True, hide wrapper spans from the output (used when showing module headers)
+        """
+        if not spans:
+            return []
+
+        by_id: Dict[str, TraceViewModel] = {}
+        for idx, span in enumerate(spans):
+            by_id[span.trace_id] = span
+            # Yield every 20 iterations to keep UI responsive
+            if idx % 20 == 0:
+                await asyncio.sleep(0)
+
+        children: Dict[str, List[TraceViewModel]] = defaultdict(list)
+        roots: List[TraceViewModel] = []
+
+        def sort_key(span: TraceViewModel) -> Tuple[float, str]:
+            return (self._get_span_start(span) or 0.0, span.name)
+
+        for idx, span in enumerate(spans):
+            parent = span.parent_trace_id
+            if parent and parent in by_id:
+                children[parent].append(span)
+            else:
+                roots.append(span)
+            # Yield every 20 iterations
+            if idx % 20 == 0:
+                await asyncio.sleep(0)
+
+        # Sort child lists (yield after each batch)
+        for idx, child_list in enumerate(children.values()):
+            child_list.sort(key=sort_key)
+            if idx % 20 == 0:
+                await asyncio.sleep(0)
+
+        roots.sort(key=sort_key)
+
+        ordered: List[Tuple[TraceViewModel, int]] = []
+        visit_count = 0
+
+        async def visit_async(span: TraceViewModel, depth: int) -> None:
+            nonlocal visit_count
+            # Yield periodically to keep UI responsive
+            visit_count += 1
+            if visit_count % 20 == 0:
+                await asyncio.sleep(0)
+
+            has_children = bool(children.get(span.trace_id))
+            # Check if this is a wrapper span that should be hidden
+            is_wrapper = depth == 0 and has_children and (
+                self._is_wrapper_name(span) if not hide_wrappers else self._is_wrapper_span(span)
+            )
             next_depth = depth if is_wrapper else depth + 1
+
             if not is_wrapper:
                 ordered.append((span, depth))
-            sid = span.get("span_id")
-            for child in children.get(sid, []):
-                visit(child, next_depth)
+
+            for child in children.get(span.trace_id, []):
+                await visit_async(child, next_depth)
 
         for root in roots:
-            visit(root, 0)
+            await visit_async(root, 0)
+
         return ordered
 
-    def _span_label(self, task: Dict[str, Any], span: Dict[str, Any], width: int = 36) -> str:
-        label = self._escape_text(span.get("name", "span"))
-        if task.get("is_execution_summary") and span.get("task_goal"):
-            goal = self._short_snippet(span["task_goal"], width=width)
-            label = f"{label} — {goal}"
+    async def _ordered_span_tree_async(self, spans: List[TraceViewModel], hide_wrappers: bool = False) -> List[Tuple[TraceViewModel, int]]:
+        """Cached async wrapper for tree building.
+
+        Args:
+            spans: List of spans to build tree from
+            hide_wrappers: If True, hide wrapper spans from the output
+        """
+        # Generate efficient cache key: hash of frozenset for order-independence
+        span_ids = frozenset(s.trace_id for s in spans)
+        cache_key = f"{hash(span_ids)}:{hide_wrappers}"
+
+        # Check cache
+        cached = self._span_tree_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Build tree
+        result = await self._build_span_tree_internal(spans, hide_wrappers)
+
+        # Store in cache
+        self._span_tree_cache[cache_key] = result
+
+        return result
+
+    def _span_label(self, span: TraceViewModel, width: int = 36, show_task: bool = False) -> str:
+        """Generate label for a span/trace.
+
+        Note: No module prefix needed since TreeTable shows module in hierarchy.
+        """
+        label = self._escape_text(span.name)
+
+        if show_task and span.task_id:
+            # For execution summary view, show which task this trace belongs to
+            if self.execution and span.task_id in self.execution.tasks:
+                task = self.execution.tasks[span.task_id]
+                goal = self._short_snippet(task.goal, width=width)
+                label = f"{label} — {goal}"
+
         return label
 
     def _summarize_tool_call(self, call: Any, width: int = 80) -> str:
@@ -1185,81 +1489,52 @@ class RomaVizApp(App[None]):
 
         return "\n".join(lines)
 
-    def _format_span_detail(self, span: Dict[str, any]) -> str:
+    def _format_span_detail(self, span: TraceViewModel) -> str:
+        """Format detailed information for a span/trace (respects show_io toggle)."""
         lines: List[str] = []
-        lines.append(f"[bold]Span:[/bold] {self._escape_text(span.get('name', 'span'))}")
-        if span.get("task_goal"):
-            lines.append(f"[bold]Task Goal:[/bold] {self._short_snippet(span['task_goal'], width=160)}")
-        if span.get("task_id") and (self.selected_task or {}).get("is_execution_summary"):
-            lines.append(f"[bold]Task ID:[/bold] {self._escape_text(span['task_id'])}")
-        if span.get("start_time"):
-            lines.append(f"[bold]Start:[/bold] {self._escape_text(span['start_time'])}")
-        duration = span.get("duration")
-        if duration not in (None, ""):
-            try:
-                lines.append(f"[bold]Duration:[/bold] {float(duration):.4f}s")
-            except (TypeError, ValueError):
-                lines.append(f"[bold]Duration:[/bold] {self._escape_text(duration)}")
-        if span.get("tokens") not in (None, ""):
-            lines.append(f"[bold]Tokens:[/bold] {self._escape_text(span['tokens'])}")
-        cost = span.get("cost")
-        if cost not in (None, ""):
-            try:
-                lines.append(f"[bold]Cost:[/bold] ${float(cost):.6f}")
-            except (TypeError, ValueError):
-                lines.append(f"[bold]Cost:[/bold] {self._escape_text(cost)}")
-        if span.get("model"):
-            lines.append(f"[bold]Model:[/bold] {self._escape_text(span['model'])}")
+        lines.append(f"[bold]Span:[/bold] {self._escape_text(span.name)}")
 
-        tool_calls = span.get("tool_calls") or []
-        if tool_calls:
+        # Show task info if in execution summary view
+        if self.selected_task is None and self.execution and span.task_id in self.execution.tasks:
+            task = self.execution.tasks[span.task_id]
+            lines.append(f"[bold]Task:[/bold] {self._short_snippet(task.goal, width=160)}")
+            lines.append(f"[bold]Task ID:[/bold] {self._escape_text(span.task_id)}")
+
+        if span.start_time:
+            lines.append(f"[bold]Start:[/bold] {self._escape_text(span.start_time)}")
+        if span.duration > 0:
+            lines.append(f"[bold]Duration:[/bold] {span.duration:.4f}s")
+        if span.tokens > 0:
+            lines.append(f"[bold]Tokens:[/bold] {span.tokens}")
+        if span.model:
+            lines.append(f"[bold]Model:[/bold] {self._escape_text(span.model)}")
+        if span.source:
+            lines.append(f"[bold]Source:[/bold] {span.source.value}")
+
+        if span.tool_calls:
             lines.append("")
             lines.append("[bold]Tool Calls:[/bold]")
-            for call in tool_calls:
+            for call in span.tool_calls:
                 formatted = self._format_tool_call(call)
                 if formatted:
                     lines.append(f"[dim]{formatted}[/dim]")
 
+        # Show Input/Output only if toggle is ON
         if self.show_io:
-            inputs = span.get("inputs")
-            if inputs not in (None, ""):
+            if span.inputs:
                 lines.append("")
                 lines.append("[bold]Input:[/bold]")
-                block = self._stringify_block(inputs)
-                lines.extend(block.splitlines())
-
-            outputs = span.get("outputs")
-            if outputs not in (None, ""):
+                lines.append(self._stringify_block(span.inputs))
+            if span.outputs:
                 lines.append("")
                 lines.append("[bold]Output:[/bold]")
-                block = self._stringify_block(outputs)
-                lines.extend(block.splitlines())
-
-            reasoning = span.get("reasoning")
-            if reasoning not in (None, ""):
-                lines.append("")
-                lines.append("[bold]Reasoning:[/bold]")
-                block = self._stringify_block(reasoning)
-                lines.extend(block.splitlines())
+                lines.append(self._stringify_block(span.outputs))
 
         return "\n".join(lines) if lines else "[dim]No details for this span.[/dim]"
 
-    def _update_trace_detail(self, span: Optional[Dict[str, any]]) -> None:
-        detail = self.query_one("#trace-detail", ScrollView)
-        if not span:
-            detail.update("[dim]Select a span to see its inputs, outputs, and tool calls.[/dim]")
-        else:
-            formatted = self._format_span_detail(span)
-            try:
-                detail.update(formatted)
-            except Exception as exc:
-                self.log(f"Trace detail markup error: {exc}")
-                plain = re.sub(r"\[(\/?)((?:bold|dim))\]", "", formatted)
-                detail.update(Text(plain))
-        try:
-            detail.scroll_home(animate=False)
-        except Exception:
-            pass
+    def _update_trace_detail(self, span: Optional[TraceViewModel]) -> None:
+        """No-op: Span details are now shown only in modal (via ENTER key)."""
+        pass
 
     def _parse_timestamp(self, value: Any) -> Optional[float]:
         if value in (None, ""):
@@ -1277,247 +1552,284 @@ class RomaVizApp(App[None]):
                     return None
         return None
 
-    def _get_span_start(self, span: Dict[str, any]) -> Optional[float]:
-        start_ts = self._parse_timestamp(span.get("start_ts"))
-        if start_ts is not None:
-            return start_ts
-        return self._parse_timestamp(span.get("start_time"))
+    def _get_span_start(self, span: TraceViewModel) -> Optional[float]:
+        """Get span start timestamp."""
+        if span.start_ts is not None:
+            return span.start_ts
+        return self._parse_timestamp(span.start_time)
 
-    def _get_span_duration(self, span: Dict[str, any]) -> float:
-        duration = span.get("duration")
-        if duration in (None, ""):
-            return 0.0
+    def _get_span_duration(self, span: TraceViewModel) -> float:
+        """Get span duration in seconds."""
+        return span.duration
+
+    def _render_timeline(self, task: TaskViewModel) -> None:
+        """Legacy method - timeline is now merged into Spans tab."""
+        pass  # Timeline graph is now rendered by _render_spans_tab_async()
+
+    def _render_task_info(self, task: TaskViewModel) -> None:
+        """Render task info tab for a selected task."""
         try:
-            return float(duration)
-        except (TypeError, ValueError):
-            return 0.0
-
-    def _render_timeline(self, task: Dict[str, any]) -> None:
-        table = self.query_one("#timeline-table", DataTable)
-        graph = self.query_one("#timeline-graph", ScrollView)
-        table.clear()
-        raw_spans = self._get_task_spans(task)
-        child_map: Dict[str, int] = defaultdict(int)
-        for span in raw_spans:
-            parent_sid = span.get("parent_span_id") or span.get("parent_id")
-            if parent_sid:
-                child_map[parent_sid] += 1
-        spans = []
-        for span in raw_spans:
-            sid = span.get("span_id")
-            has_children = bool(sid and child_map.get(sid))
-            if has_children and self._is_wrapper_name(span):
-                continue
-            spans.append(span)
-        spans.sort(key=lambda sp: self._get_span_start(sp) or 0)
-        lines: List[str] = []
-        if not spans:
-            table.add_row("(no spans)", "", "", "", "", "")
-            graph.update("[dim](no timeline data)[/dim]")
-            try:
-                graph.scroll_home(animate=False)
-            except Exception:
-                pass
+            info = self.query_one("#task-info", Static)
+        except Exception as exc:
+            self.log(f"Failed to query #task-info widget: {exc}")
             return
 
-        max_duration = max((self._get_span_duration(span) or 0) for span in spans) or 1.0
-        for span in spans:
-            name = self._span_label(task, span, width=40)
-            cost = span.get("cost")
-            if cost not in (None, ""):
-                try:
-                    cost_display = f"${float(cost):.4f}"
-                except (TypeError, ValueError):
-                    cost_display = str(cost)
-            else:
-                cost_display = ""
-            table.add_row(
-                name,
-                span.get("start_time") or "",
-                f"{self._get_span_duration(span):.2f}s" if self._get_span_duration(span) else "",
-                str(span.get('tokens') or ""),
-                cost_display,
-                span.get('model') or "",
-            )
-        has_start = any(self._get_span_start(span) is not None for span in spans)
-        label_width = 22
-        graph_width = 48
-        if has_start:
-            starts = [self._get_span_start(span) for span in spans if self._get_span_start(span) is not None]
-            earliest = min(starts) if starts else 0.0
-            ends: List[float] = []
-            for span in spans:
-                start = self._get_span_start(span) or earliest
-                duration = self._get_span_duration(span)
-                ends.append(start + duration)
-            max_end = max(ends) if ends else earliest + max_duration
-            total_span = max(max_end - earliest, max_duration)
-            if total_span <= 0:
-                total_span = max_duration or 1.0
-            total_label = f"{total_span:.2f}s"
-            spacer = max(0, graph_width - len(total_label) - 2)
-            lines.append(" " * (label_width + 1) + f"[dim]0s{' ' * spacer}{total_label}[/dim]")
-            missing_start = False
-            for span in spans:
-                name = self._span_label(task, span, width=label_width - 1)
-                start = self._get_span_start(span)
-                if start is None:
-                    missing_start = True
-                offset_cols = 0
-                if start is not None:
-                    offset_cols = int(((start - earliest) / total_span) * graph_width)
-                offset_cols = max(0, min(offset_cols, graph_width - 1))
-                duration = self._get_span_duration(span)
-                width_cols = max(1, int((duration / total_span) * graph_width)) if duration else 1
-                if offset_cols + width_cols > graph_width:
-                    width_cols = max(1, graph_width - offset_cols)
-                bar = (" " * offset_cols + "█" * width_cols).ljust(graph_width)
-                lines.append(f"{name:<{label_width}} {bar} {duration:.2f}s")
-            if missing_start:
-                lines.append("[dim]* spans without start time are aligned to 0s.[/dim]")
-        else:
-            for span in spans:
-                duration = self._get_span_duration(span)
-                width_cols = max(1, int((duration / max_duration) * graph_width)) if duration else 1
-                bar = ("█" * width_cols).ljust(graph_width)
-                name = self._span_label(task, span, width=label_width - 1)
-                lines.append(f"{name:<{label_width}} {bar} {duration:.2f}s")
-            lines.append("[dim]Start timestamps unavailable; bars scaled by duration only.[/dim]")
-        graph.update("\n".join(lines) if lines else "[dim](no timeline data)[/dim]")
-        try:
-            graph.scroll_home(animate=False)
-        except Exception:
-            pass
+        # Log current toggle state for debugging
+        self.log(f"Rendering task info with show_io={self.show_io}")
 
-    def _render_task_info(self, task: Dict[str, any]) -> None:
-        info = self.query_one("#task-info", Static)
-        metrics = task.get("metrics", {})
-        spans = self._get_task_spans(task)
-        modules = set()
-        if task.get("module"):
-            modules.add(task.get("module"))
-        for span in spans:
-            name = span.get("name")
-            if name:
-                modules.add(name.split('.')[0])
-        if task.get("is_execution_summary"):
-            id_line = f"[bold]Execution ID:[/bold] {self._escape_text(self.execution_id)}"
-            parent_text = "—"
-        else:
-            id_line = f"[bold]Task ID:[/bold] {self._escape_text(task['task_id'])}"
-            parent_text = task.get("parent_task_id") or "ROOT"
+        # Collect ROMA modules from task and traces
+        roma_modules = set()
+        if task.module:
+            roma_modules.add(task.module)
+
+        # Get modules from traces (prefer trace.module over span names)
+        for span in task.traces:
+            if span.module:  # Prefer explicit module from roma.module attribute
+                roma_modules.add(span.module)
+
+        # Build info lines
+        id_line = f"[bold]Task ID:[/bold] {self._escape_text(task.task_id)}"
+        parent_text = task.parent_task_id or "ROOT"
         parent_render = self._escape_text(parent_text)
-        module_render = self._escape_text(task.get("module") or "-")
-        goal_render = self._escape_text(task.get("goal") or "(unknown)")
+
+        # Use inferred ROMA modules if task.module not set
+        if task.module:
+            module_render = self._escape_text(task.module)
+        elif roma_modules:
+            module_render = self._escape_text(', '.join(sorted(roma_modules)))
+        else:
+            module_render = "-"
+
+        goal_render = self._escape_text(task.goal or "(unknown)")
 
         lines = [
             id_line,
             f"[bold]Parent:[/bold] {parent_render}",
-            f"[bold]Data Sources:[/bold] {self._escape_text(self._data_sources_summary())}",
-            f"[bold]Module:[/bold] {module_render}",
-            f"[bold]Task Type / Node Type:[/bold] {task.get('task_type') or '-'} / {task.get('node_type') or '-'}",
-            f"[bold]Status:[/bold] {task.get('status') or 'unknown'}",
-            f"[bold]Modules Seen:[/bold] {self._escape_text(', '.join(sorted(modules))) if modules else '-'}",
             f"[bold]Goal:[/bold] {goal_render}",
+            "",
+            f"[bold]Module:[/bold] {module_render}",
+            f"[bold]ROMA Modules:[/bold] {self._escape_text(', '.join(sorted(roma_modules))) if roma_modules else '-'}",
+            f"[bold]Task Type:[/bold] {self._escape_text(task.task_type) if task.task_type else '-'}",
+            f"[bold]Node Type:[/bold] {self._escape_text(task.node_type) if task.node_type else '-'}",
+            f"[bold]Status:[/bold] {self._escape_text(task.status) if task.status else 'unknown'}",
+            f"[bold]Depth:[/bold] {task.depth}",
+            "",
+            f"[bold]Duration:[/bold] {task.total_duration:.2f}s",
+            f"[bold]Tokens:[/bold] {task.total_tokens}",
+            f"[bold]Traces:[/bold] {len(task.traces)} spans",
+            "",
         ]
 
-        if task.get("is_execution_summary"):
-            lines.append(f"[bold]Root Tasks:[/bold] {len(self.root_task_ids)}")
-            lines.append(f"[bold]Tasks Loaded:[/bold] {len(self.task_lookup)}")
-
-        lines.extend([
-            "",
-            f"[bold]Duration:[/bold] {metrics.get('duration', 0.0):.2f}s",
-            f"[bold]Tokens:[/bold] {metrics.get('tokens', 0)}",
-            f"[bold]Cost:[/bold] ${metrics.get('cost', 0.0):.4f}",
-        ])
-
-        result_text = task.get("result")
-        if result_text:
+        # Add agent execution breakdown
+        agent_groups = self._extract_agent_groups(task)
+        if agent_groups:
+            lines.append("[bold]Agent Executions:[/bold]")
+            for agent_type, metrics in agent_groups.items():
+                lines.append(f"  🔧 {agent_type}:")
+                lines.append(f"     Tokens: {metrics['tokens']}")
+                lines.append(f"     Duration: {metrics['duration']:.2f}s")
+                lines.append(f"     Spans: {metrics['span_count']}")
             lines.append("")
-            lines.append("[bold]Result:[/bold]")
-            lines.append(self._short_snippet(result_text, width=200))
 
-        tool_summaries: List[str] = []
-        for span in spans:
-            for call in span.get("tool_calls") or []:
-                tool_summaries.append(self._summarize_tool_call(call, width=80))
+        lines.append(f"[bold]Data Sources:[/bold] {self._escape_text(self._data_sources_summary())}")
 
-        if tool_summaries:
-            lines.append("")
-            lines.append("[bold]Tool Calls:[/bold]")
-            for summary in tool_summaries[:5]:
-                lines.append(f"• {summary}")
-            if len(tool_summaries) > 5:
-                lines.append(f"… ({len(tool_summaries) - 5} more)")
+        if task.error:
+            lines.insert(9, f"[bold red]Error:[/bold red] {self._escape_text(task.error)}")  # Insert after status
 
+        # Show detailed result and tool calls only if toggle is ON
+        if self.show_io:
+            self.log(f"show_io=ON: Adding result and tool calls to task info")
+            if task.result:
+                lines.append("")
+                lines.append("[bold]Result:[/bold]")
+                lines.append(self._short_snippet(task.result, width=200))
+                self.log(f"Added result section (length: {len(task.result)})")
+
+            # Collect tool calls from traces
+            tool_summaries: List[str] = []
+            for span in task.traces:
+                for call in span.tool_calls:
+                    tool_summaries.append(self._summarize_tool_call(call, width=80))
+
+            if tool_summaries:
+                lines.append("")
+                lines.append(f"[bold]Tool Calls ({len(tool_summaries)} total):[/bold]")
+                # Show first 10 instead of 5
+                for summary in tool_summaries[:10]:
+                    lines.append(f"• {summary}")
+                if len(tool_summaries) > 10:
+                    lines.append(f"[dim]… and {len(tool_summaries) - 10} more[/dim]")
+                self.log(f"Added {len(tool_summaries)} tool calls")
+        else:
+            self.log(f"show_io=OFF: Skipping result and tool calls")
+
+        if self.execution and self.execution.warnings:
+            lines.append(f"[dim]Warnings: {self._escape_text('; '.join(self.execution.warnings))}[/dim]")
+
+        # Add toggle hint showing current state
         lines.append("")
         lines.append(
             f"[dim]Press 't' to toggle detailed span I/O (currently {'ON' if self.show_io else 'OFF'}). "
-            "Highlight spans in the Trace tab to inspect them below the table, or press Enter for a pop-out view.[/dim]"
+            "Highlight spans in the Spans tab to inspect them, or press Enter for a pop-out view.[/dim]"
         )
-        if self.mlflow_warning:
-            lines.append(f"[dim]MLflow note: {self._escape_text(self.mlflow_warning)}[/dim]")
 
-        content = "\n".join(lines)
         try:
+            content = "\n".join(lines)
             info.update(content)
         except Exception as exc:
-            self.log(f"Task info markup error: {exc}")
-            plain = re.sub(r"\[(\/?)((?:bold|dim))\]", "", content)
-            info.update(Text(plain))
+            self.log(f"Task info update error: {exc}")
+            import traceback
+            self.log(traceback.format_exc())
+            try:
+                # Fallback: strip markup and try plain text
+                plain = re.sub(r"\[(\/?)((?:bold|dim|red))\]", "", content)
+                info.update(Text(plain))
+            except Exception as exc2:
+                self.log(f"Task info fallback update failed: {exc2}")
+                info.update("[red]Error rendering task info[/red]")
 
-    def _render_lm_table(self, task: Dict[str, any]) -> None:
-        table = self.query_one("#lm-table", DataTable)
-        table.clear()
-        if task.get("is_execution_summary"):
-            traces = list(self.lm_traces)
-        else:
-            task_id = task.get("task_id")
-            traces = [lt for lt in self.lm_traces if lt.get("task_id") == task_id]
-        if not traces:
-            table.add_row("(none)", "", "", "", "", "")
+    def _render_lm_table(self, task: TaskViewModel) -> None:
+        """Render LM calls table for a selected task."""
+        from textual.css.query import NoMatches
+
+        try:
+            table = self.query_one("#lm-table", DataTable)
+        except NoMatches:
+            # Widget doesn't exist - user is on a different tab - skip rendering
+            logger.debug("LM table widget not found (on different tab), skipping render")
             return
-        for call in traces:
-            preview = self._short_snippet(call.get("prompt"), width=80) if call.get("prompt") else ""
-            if self.show_io and call.get("response"):
-                preview = self._short_snippet(call.get("response"), width=80)
-            table.add_row(
-                call.get("module_name") or "",
-                call.get("model") or "",
-                str(call.get("total_tokens") or ""),
-                f"${float(call.get('cost_usd') or 0.0):.4f}",
-                str(call.get("latency_ms") or ""),
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying LM table widget: {exc}", exc_info=True)
+            raise
+
+        # Clear rows only (default columns=False keeps column headers)
+        table.clear()
+        self._lm_table_row_map.clear()  # Clear row mapping
+
+        # Show traces for this task only - FILTER to only LM calls
+        traces = task.traces
+        # Filter to only LM call spans (those with tokens or model, typically named "LM.__call__")
+        lm_traces = [t for t in traces if (t.tokens > 0 or t.model) and ("lm" in (t.name or "").lower() or "call" in (t.name or "").lower())]
+
+        if not lm_traces:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Display each LM call trace
+        for trace in lm_traces:
+            # Build preview from inputs/outputs
+            preview = ""
+            if trace.inputs:
+                preview = self._short_snippet(trace.inputs, width=80)
+            if self.show_io and trace.outputs:
+                preview = self._short_snippet(trace.outputs, width=80)
+
+            # Calculate latency from duration
+            latency_ms = int(trace.duration * 1000) if trace.duration > 0 else 0
+
+            row_key = table.add_row(
+                trace.module or trace.name or "",
+                trace.model or "",
+                str(trace.tokens) if trace.tokens > 0 else "",
+                str(latency_ms) if latency_ms > 0 else "",
                 preview,
             )
+            # Map row key to trace object
+            self._lm_table_row_map[row_key] = trace
+
+    def _render_lm_table_for_agent(self, agent_group: AgentGroupViewModel) -> None:
+        """Render LM calls table filtered to a specific agent group."""
+        from textual.css.query import NoMatches
+
+        try:
+            table = self.query_one("#lm-table", DataTable)
+        except NoMatches:
+            # Widget doesn't exist - user is on a different tab - skip rendering
+            logger.debug("LM table widget not found (on different tab), skipping render")
+            return
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying LM table widget for agent: {exc}", exc_info=True)
+            raise
+
+        # Clear rows only (default columns=False keeps column headers)
+        table.clear()
+        self._lm_table_row_map.clear()  # Clear row mapping
+
+        if not agent_group.traces:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Filter to only LM call spans
+        lm_traces = [t for t in agent_group.traces if (t.tokens > 0 or t.model) and ("lm" in (t.name or "").lower() or "call" in (t.name or "").lower())]
+
+        if not lm_traces:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Display LM call traces for this agent only
+        for trace in lm_traces:
+            preview = ""
+            if trace.inputs:
+                preview = self._short_snippet(trace.inputs, width=80)
+            if self.show_io and trace.outputs:
+                preview = self._short_snippet(trace.outputs, width=80)
+
+            latency_ms = int(trace.duration * 1000) if trace.duration > 0 else 0
+
+            row_key = table.add_row(
+                trace.module or trace.name or "",
+                trace.model or "",
+                str(trace.tokens) if trace.tokens > 0 else "",
+                str(latency_ms) if latency_ms > 0 else "",
+                preview,
+            )
+            # Map row key to trace object
+            self._lm_table_row_map[row_key] = trace
 
     def _render_summary_tab(self) -> None:
-        summary = self.mlflow_data.get("summary", {})
+        """Render run summary tab."""
         info = self.query_one("#summary-info", Static)
+
+        if not self.execution:
+            info.update("[dim]No execution data available.[/dim]")
+            return
+
+        # Count total traces across all tasks
+        total_traces = sum(len(task.traces) for task in self.execution.tasks.values())
+
         lines = [
             f"[bold]Execution:[/bold] {self._escape_text(self.execution_id)}",
-            f"[bold]Experiment:[/bold] {self._escape_text(self.mlflow_data.get('experiment') or '-')}",
+            f"[bold]Root Goal:[/bold] {self._escape_text(self.execution.root_goal or '-')}",
             "",
-            f"[bold]Total Tasks:[/bold] {summary.get('total_tasks', '-')}",
-            f"[bold]Total Spans:[/bold] {summary.get('total_spans', '-')}",
-            f"[bold]Total Duration:[/bold] {summary.get('total_duration', 0.0):.2f}s",
-            f"[bold]Total Tokens:[/bold] {summary.get('total_tokens', 0)}",
-            f"[bold]Total Cost:[/bold] ${summary.get('total_cost', 0.0):.4f}",
+            f"[bold]Total Tasks:[/bold] {len(self.execution.tasks)}",
+            f"[bold]Total Traces:[/bold] {total_traces}",
+            f"[bold]Total LM Calls:[/bold] {self.execution.metrics.total_calls}",
+            f"[bold]Total Duration:[/bold] {self.execution.metrics.total_duration:.2f}s",
+            f"[bold]Total Tokens:[/bold] {self.execution.metrics.total_tokens}",
+            f"[bold]Total Cost:[/bold] ${self.execution.metrics.total_cost:.4f}",
             "",
             f"[bold]Data Sources:[/bold] {self._escape_text(self._data_sources_summary())}",
         ]
-        metrics = self.metrics or {}
-        if metrics:
-            lines.append("")
-            lines.append("[bold]Checkpoint Metrics[/bold]")
-            lines.append(f"Total LM Calls: {metrics.get('total_lm_calls', '-')}")
-            lines.append(f"Average Latency: {metrics.get('average_latency_ms', 0.0):.2f} ms")
-            lines.append(f"Total Tokens (DB): {metrics.get('total_tokens', 0)}")
-            lines.append(f"Total Cost (DB): ${metrics.get('total_cost_usd', 0.0):.4f}")
 
-        if self.mlflow_data.get("fallback_spans"):
+        # Module breakdown if available
+        if self.execution.metrics.by_module:
             lines.append("")
-            lines.append("[dim]Some tasks were reconstructed from checkpoints (no MLflow spans available).[/dim]")
+            lines.append("[bold]By Module:[/bold]")
+            for module_name, module_metrics in sorted(self.execution.metrics.by_module.items()):
+                calls = module_metrics.get("calls", 0)
+                tokens = module_metrics.get("tokens", 0)
+                cost = module_metrics.get("cost", 0.0)
+                lines.append(f"  • {module_name}: {calls} calls, {tokens} tokens, ${cost:.4f}")
+
+        # Warnings
+        if self.execution.warnings:
+            lines.append("")
+            lines.append("[bold]Warnings:[/bold]")
+            for warning in self.execution.warnings:
+                lines.append(f"  • {self._escape_text(warning)}")
+
         content = "\n".join(lines)
         try:
             info.update(content)
@@ -1526,88 +1838,857 @@ class RomaVizApp(App[None]):
             plain = re.sub(r"\[(\/?)((?:bold|dim))\]", "", content)
             info.update(Text(plain))
 
+    def _render_execution_info(self) -> None:
+        """Render task info tab for execution summary."""
+        info = self.query_one("#task-info", Static)
+
+        if not self.execution:
+            info.update("[dim]No execution data available.[/dim]")
+            return
+
+        # Collect all modules from all tasks
+        modules = set()
+        for task in self.execution.tasks.values():
+            if task.module:
+                modules.add(task.module)
+            for span in task.traces:
+                if span.name:
+                    modules.add(span.name.split('.')[0])
+
+        lines = [
+            f"[bold]Execution ID:[/bold] {self._escape_text(self.execution_id)}",
+            f"[bold]Root Goal:[/bold] {self._escape_text(self.execution.root_goal or '(unknown)')}",
+            f"[bold]Status:[/bold] {self._escape_text(self.execution.status or 'unknown')}",
+            f"[bold]Data Sources:[/bold] {self._escape_text(self._data_sources_summary())}",
+            "",
+            f"[bold]Total Tasks:[/bold] {len(self.execution.tasks)}",
+            f"[bold]Root Tasks:[/bold] {len(self.execution.root_task_ids)}",
+            f"[bold]Modules:[/bold] {self._escape_text(', '.join(sorted(modules))) if modules else '-'}",
+            "",
+            f"[bold]Total Duration:[/bold] {sum(task.total_duration for task in self.execution.tasks.values()):.2f}s",
+            f"[bold]Total Tokens:[/bold] {sum(task.total_tokens for task in self.execution.tasks.values())}",
+            f"[bold]Total Cost:[/bold] ${sum(task.total_cost for task in self.execution.tasks.values()):.4f}",
+        ]
+
+        lines.append("")
+        lines.append(
+            f"[dim]Press 't' to toggle detailed span I/O (currently {'ON' if self.show_io else 'OFF'}). "
+            "Highlight spans in the Trace tab to inspect them below the table, or press Enter for a pop-out view.[/dim]"
+        )
+
+        if self.execution.warnings:
+            lines.append(f"[dim]Warnings: {self._escape_text('; '.join(self.execution.warnings))}[/dim]")
+
+        content = "\n".join(lines)
+        try:
+            info.update(content)
+        except Exception as exc:
+            self.log(f"Execution info markup error: {exc}")
+            plain = re.sub(r"\[(\/?)((?:bold|dim))\]", "", content)
+            info.update(Text(plain))
+
+    def _render_lm_table_all(self) -> None:
+        """Render LM calls table for execution summary (all traces)."""
+        from textual.css.query import NoMatches
+
+        try:
+            table = self.query_one("#lm-table", DataTable)
+        except NoMatches:
+            # Widget doesn't exist - user is on a different tab - skip rendering
+            logger.debug("LM table widget not found (on different tab), skipping render")
+            return
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying LM table widget for all: {exc}", exc_info=True)
+            raise
+
+        # Clear rows only (default columns=False keeps column headers)
+        table.clear()
+        self._lm_table_row_map.clear()
+
+        if not self.execution:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Collect all traces from all tasks and filter to only LM calls
+        all_traces: List[TraceViewModel] = []
+        for task in self.execution.tasks.values():
+            all_traces.extend(task.traces)
+
+        # Filter to only LM call spans
+        lm_traces = [t for t in all_traces if (t.tokens > 0 or t.model) and ("lm" in (t.name or "").lower() or "call" in (t.name or "").lower())]
+
+        if not lm_traces:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Display each LM call trace
+        for trace in lm_traces:
+            # Build preview from inputs/outputs
+            preview = ""
+            if trace.inputs:
+                preview = self._short_snippet(trace.inputs, width=80)
+            if self.show_io and trace.outputs:
+                preview = self._short_snippet(trace.outputs, width=80)
+
+            # Calculate latency from duration
+            latency_ms = int(trace.duration * 1000) if trace.duration > 0 else 0
+
+            row_key = table.add_row(
+                trace.module or trace.name or "",
+                trace.model or "",
+                str(trace.tokens) if trace.tokens > 0 else "",
+                str(latency_ms) if latency_ms > 0 else "",
+                preview,
+            )
+            # Map row key to trace object for click event handling
+            self._lm_table_row_map[row_key] = trace
+
+    def _render_tool_calls_table(self, task: TaskViewModel) -> None:
+        """Render tool calls table for a selected task."""
+        from textual.css.query import NoMatches
+
+        try:
+            table = self.query_one("#tool-table", DataTable)
+        except NoMatches:
+            # Widget doesn't exist - user is on a different tab - skip rendering
+            logger.debug("Tool table widget not found (on different tab), skipping render")
+            return
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying tool table widget: {exc}", exc_info=True)
+            raise
+
+        # Clear rows only (default columns=False keeps column headers)
+        table.clear()
+        self._tool_table_row_map.clear()  # Clear row mapping
+
+        # Extract all tool calls from task traces
+        tool_calls = []
+        for trace in task.traces:
+            if trace.tool_calls:
+                # DEBUG: Log the structure of tool_calls
+                logger.debug(f"Tool calls for trace {trace.name}: {trace.tool_calls}")
+                for call in trace.tool_calls:
+                    logger.debug(f"Individual tool call: {call}")
+                    # Add trace context to tool call
+                    tool_calls.append({
+                        "call": call,
+                        "trace": trace,
+                        "module": trace.module or trace.name,
+                    })
+
+        if not tool_calls:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Display each tool call
+        for item in tool_calls:
+            call = item["call"]
+            trace = item["trace"]
+
+            # Extract tool name and toolkit
+            tool_name = self._extract_tool_name(call)
+            toolkit = self._extract_toolkit_name(call)
+
+            # Calculate duration if available
+            duration_ms = int(trace.duration * 1000) if trace.duration > 0 else 0
+
+            # Determine status (success/error)
+            status = "✓" if self._tool_call_successful(call) else "✗"
+
+            # Build preview from arguments/output based on toggle
+            preview = ""
+            if self.show_io:
+                # Show output if toggle is ON
+                output = self._extract_tool_output(call)
+
+                # If no output in call, try trace outputs as fallback
+                if output is None and trace and trace.outputs:
+                    output = trace.outputs
+
+                if output is not None:
+                    preview = self._short_snippet(output, width=80)
+                else:
+                    # Fallback to arguments if still no output
+                    args = self._extract_tool_arguments(call)
+                    if args is not None:
+                        preview = f"[dim]{self._short_snippet(args, width=80)}[/dim]"
+            else:
+                # Show arguments if toggle is OFF (default)
+                args = self._extract_tool_arguments(call)
+                if args is not None:
+                    preview = self._short_snippet(args, width=80)
+
+            row_key = table.add_row(
+                tool_name,
+                toolkit,
+                str(duration_ms) if duration_ms > 0 else "",
+                status,
+                preview,
+            )
+            # Map row key to tool call dict
+            self._tool_table_row_map[row_key] = item
+
+    def _render_tool_calls_table_for_agent(self, agent_group: AgentGroupViewModel) -> None:
+        """Render tool calls table filtered to a specific agent group."""
+        from textual.css.query import NoMatches
+
+        try:
+            table = self.query_one("#tool-table", DataTable)
+        except NoMatches:
+            # Widget doesn't exist - user is on a different tab - skip rendering
+            logger.debug("Tool table widget not found (on different tab), skipping render")
+            return
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying tool table widget for agent: {exc}", exc_info=True)
+            raise
+
+        # Clear rows only (default columns=False keeps column headers)
+        table.clear()
+        self._tool_table_row_map.clear()
+
+        if not agent_group.traces:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Extract tool calls from agent group traces
+        tool_calls = []
+        for trace in agent_group.traces:
+            if trace.tool_calls:
+                for call in trace.tool_calls:
+                    tool_calls.append({
+                        "call": call,
+                        "trace": trace,
+                        "module": trace.module or trace.name,
+                    })
+
+        if not tool_calls:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Display each tool call
+        for item in tool_calls:
+            call = item["call"]
+            trace = item["trace"]
+
+            tool_name = self._extract_tool_name(call)
+            toolkit = self._extract_toolkit_name(call)
+            duration_ms = int(trace.duration * 1000) if trace.duration > 0 else 0
+            status = "✓" if self._tool_call_successful(call) else "✗"
+
+            preview = ""
+            if self.show_io:
+                # Show output if toggle is ON
+                output = self._extract_tool_output(call)
+
+                # Fallback: If no output in call, try trace outputs
+                if output is None and trace and trace.outputs:
+                    output = trace.outputs
+
+                if output is not None:
+                    preview = self._short_snippet(output, width=80)
+                else:
+                    # Fallback to arguments if still no output
+                    args = self._extract_tool_arguments(call)
+                    if args is not None:
+                        preview = f"[dim]{self._short_snippet(args, width=80)}[/dim]"
+            else:
+                # Show arguments if toggle is OFF (default)
+                args = self._extract_tool_arguments(call)
+                if args is not None:
+                    preview = self._short_snippet(args, width=80)
+
+            row_key = table.add_row(
+                tool_name,
+                toolkit,
+                str(duration_ms) if duration_ms > 0 else "",
+                status,
+                preview,
+            )
+            self._tool_table_row_map[row_key] = item
+
+    def _render_tool_calls_table_all(self) -> None:
+        """Render tool calls table for execution summary (all tool calls)."""
+        from textual.css.query import NoMatches
+
+        try:
+            table = self.query_one("#tool-table", DataTable)
+        except NoMatches:
+            # Widget doesn't exist - user is on a different tab - skip rendering
+            logger.debug("Tool table widget not found (on different tab), skipping render")
+            return
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying tool table widget for all: {exc}", exc_info=True)
+            raise
+
+        # Clear rows only (default columns=False keeps column headers)
+        table.clear()
+        self._tool_table_row_map.clear()
+
+        if not self.execution:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Collect all tool calls from all tasks
+        tool_calls = []
+        for task in self.execution.tasks.values():
+            for trace in task.traces:
+                if trace.tool_calls:
+                    for call in trace.tool_calls:
+                        tool_calls.append({
+                            "call": call,
+                            "trace": trace,
+                            "module": trace.module or trace.name,
+                        })
+
+        if not tool_calls:
+            table.add_row("(none)", "", "", "", "")
+            return
+
+        # Display each tool call
+        for item in tool_calls:
+            call = item["call"]
+            trace = item["trace"]
+
+            tool_name = self._extract_tool_name(call)
+            toolkit = self._extract_toolkit_name(call)
+            duration_ms = int(trace.duration * 1000) if trace.duration > 0 else 0
+            status = "✓" if self._tool_call_successful(call) else "✗"
+
+            preview = ""
+            if self.show_io:
+                # Show output if toggle is ON
+                output = self._extract_tool_output(call)
+
+                # Fallback: If no output in call, try trace outputs
+                if output is None and trace and trace.outputs:
+                    output = trace.outputs
+
+                if output is not None:
+                    preview = self._short_snippet(output, width=80)
+                else:
+                    # Fallback to arguments if still no output
+                    args = self._extract_tool_arguments(call)
+                    if args is not None:
+                        preview = f"[dim]{self._short_snippet(args, width=80)}[/dim]"
+            else:
+                # Show arguments if toggle is OFF (default)
+                args = self._extract_tool_arguments(call)
+                if args is not None:
+                    preview = self._short_snippet(args, width=80)
+
+            row_key = table.add_row(
+                tool_name,
+                toolkit,
+                str(duration_ms) if duration_ms > 0 else "",
+                status,
+                preview,
+            )
+            self._tool_table_row_map[row_key] = item
+
+    def _extract_tool_name(self, call: Dict[str, Any]) -> str:
+        """Extract tool name from tool call dict."""
+        if not isinstance(call, dict):
+            return str(call)
+
+        # Try function object first (OpenAI format)
+        func = call.get("function")
+        if isinstance(func, dict):
+            func_name = func.get("name")
+            if func_name:
+                return func_name
+
+        # Try various field names
+        name = (call.get("tool") or call.get("tool_name") or
+                call.get("name") or call.get("type") or
+                call.get("id"))
+
+        return name or "unknown"
+
+    def _extract_toolkit_name(self, call: Dict[str, Any]) -> str:
+        """Extract toolkit name from tool call dict."""
+        if not isinstance(call, dict):
+            return "-"
+
+        toolkit = call.get("toolkit") or call.get("toolkit_class")
+        return toolkit or "-"
+
+    def _extract_tool_arguments(self, call: Dict[str, Any]) -> Any:
+        """Extract arguments from tool call dict."""
+        if not isinstance(call, dict):
+            return None
+
+        # Try function.arguments first (OpenAI format)
+        func = call.get("function")
+        if isinstance(func, dict):
+            args = func.get("arguments")
+            if args is not None:
+                return args
+
+        # Try direct arguments
+        args = call.get("arguments") or call.get("args") or call.get("input") or call.get("parameters")
+        if args is not None:
+            return args
+
+        # Fallback: return whole call dict minus known metadata fields
+        excluded_keys = {"tool", "tool_name", "name", "type", "id", "function", "output", "result", "return", "error", "status", "toolkit", "toolkit_class"}
+        filtered = {k: v for k, v in call.items() if k not in excluded_keys}
+        return filtered if filtered else None
+
+    def _extract_tool_output(self, call: Dict[str, Any]) -> Any:
+        """Extract output/result from tool call dict."""
+        if not isinstance(call, dict):
+            return None
+
+        # Try various output field names in the call itself
+        output = call.get("output") or call.get("result") or call.get("return") or call.get("response")
+        if output is not None:
+            return output
+
+        # Check function.output (OpenAI format)
+        func = call.get("function")
+        if isinstance(func, dict):
+            func_output = func.get("output") or func.get("result")
+            if func_output is not None:
+                return func_output
+
+        # Check for content field (some frameworks use this)
+        content = call.get("content")
+        if content is not None:
+            return content
+
+        return None
+
+    def _tool_call_successful(self, call: Dict[str, Any]) -> bool:
+        """Check if tool call was successful."""
+        if not isinstance(call, dict):
+            return True
+
+        # Check for error field - if present, call failed
+        if call.get("error"):
+            return False
+
+        # Check for explicit status field
+        status = call.get("status")
+        if status:
+            status_str = str(status).lower()
+            if status_str in ("failed", "error", "failure"):
+                return False
+            if status_str in ("success", "ok", "completed"):
+                return True
+
+        # If no error and no explicit failure status, assume success
+        return True
+
     async def on_data_loaded(self, message: DataLoaded) -> None:
         if message.success:
             task = self.get_selected_task()
             if task:
-                self._render_task_views(task)
+                await self._render_task_views_async(task)
         else:
             summary = self.query_one("#summary-info", Static)
             summary.update(f"Failed to load data: {message.error}")
 
+    def on_tree_table_node_selected(self, event: TreeTable.NodeSelected) -> None:  # pragma: no cover - UI
+        """Handle TreeTable node selection - show span detail modal."""
+        span = event.node.data.get("span_obj")
+        if span:
+            self._show_span_detail(span)
+
+    def on_tree_table_node_toggled(self, event: TreeTable.NodeToggled) -> None:  # pragma: no cover - UI
+        """Handle TreeTable node expand/collapse."""
+        # Optional: Log or track expand/collapse events
+        self.log(f"Node {'expanded' if event.expanded else 'collapsed'}: {event.node.label}")
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:  # pragma: no cover - UI
-        if event.data_table.id != "trace-table":
+        """Handle data table row selection - show detail modal for LM calls or tool calls."""
+        # Check if this is an LM call
+        trace = self._lm_table_row_map.get(event.row_key)
+        if trace:
+            self._show_span_detail(trace)
             return
-        if not self.current_spans:
-            return
-        idx = self._resolve_event_index(event.row_key, event, default=0)
-        if idx < 0 or idx >= len(self.current_spans):
-            return
-        self.selected_span_index = idx
-        self._update_trace_detail(self.current_spans[idx])
-        self._show_span_detail(self.current_spans[idx])
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:  # pragma: no cover - UI
-        if event.data_table.id != "trace-table":
-            return
-        if not self.current_spans:
-            return
-        idx = self._resolve_event_index(event.row_key, event, default=self.selected_span_index or 0)
-        if idx < 0 or idx >= len(self.current_spans):
-            return
-        self.selected_span_index = idx
-        self._update_trace_detail(self.current_spans[idx])
+        # Check if this is a tool call
+        tool_item = self._tool_table_row_map.get(event.row_key)
+        if tool_item:
+            self._show_tool_call_detail(tool_item)
 
-    def _show_span_detail(self, span: Dict[str, any]) -> None:
-        body = self._format_span_detail(span)
-        self.push_screen(SpanDetailModal(span.get('name', 'Span Detail'), body))
-
-
-def run_viz_app(execution_id: str, profile: Optional[str] = None, base_url: str = "http://localhost:8000") -> None:
-    """Helper to launch the Textual TUI."""
-    app = RomaVizApp(execution_id=execution_id, profile=profile, base_url=base_url)
-    app.run()
-class SpanDetailModal(ModalScreen[None]):
-    """Modal dialog showing detailed information for a span."""
-
-    CSS = """
-    Screen {
-        align: center middle;
-    }
-    #span-detail-container {
-        width: 90%;
-        max-width: 100;
-        border: tall $accent;
-        background: $panel;
-        padding: 1 2;
-    }
-    #span-detail-body {
-        height: auto;
-        overflow: auto;
-    }
-    """
-
-    def __init__(self, title: str, body: str) -> None:
-        super().__init__()
-        self.dialog_title = title
-        self.dialog_body = body
-
-    def compose(self) -> ComposeResult:
-        title_text = Text(self.dialog_title, style="bold")
-        body_text = Text()
+    def _show_span_detail(self, span: TraceViewModel) -> None:
+        """Show span detail in a modal dialog with full I/O."""
         try:
-            body_text = Text.from_markup(self.dialog_body)
+            # Use the new parser system with toggle support
+            parser = LMCallDetailParser()
+            self.push_screen(GenericDetailModal(
+                source_obj=span,
+                parser=parser,
+                show_io=self.show_io  # Respect current app toggle state
+            ))
+        except Exception as e:
+            logger.error(f"Failed to show span detail: {e}", exc_info=True)
+            self._show_error_fallback("Span", span, e)
+
+    def _show_tool_call_detail(self, tool_item: Dict[str, Any]) -> None:
+        """Show tool call detail in a modal dialog with full arguments/output."""
+        try:
+            # Use the new parser system with toggle support
+            parser = ToolCallDetailParser()
+            self.push_screen(GenericDetailModal(
+                source_obj=tool_item,
+                parser=parser,
+                show_io=self.show_io  # Respect current app toggle state
+            ))
+        except Exception as e:
+            logger.error(f"Failed to show tool call detail: {e}", exc_info=True)
+            self._show_error_fallback("Tool Call", tool_item, e)
+
+    def _show_error_fallback(self, object_type: str, obj: Any, error: Exception) -> None:
+        """Show simple error modal when parsing fails."""
+        import json
+
+        # Try to show raw data
+        try:
+            if isinstance(obj, dict):
+                raw_data = json.dumps(obj, indent=2, default=str)
+            else:
+                raw_data = str(obj)
         except Exception:
-            body_text = Text(self.dialog_body)
-        content = Text()
-        content.append_text(title_text)
-        content.append("\n\n")
-        content.append_text(body_text)
-        yield Container(
-            Static(content, id="span-detail-body"),
-            id="span-detail-container"
+            raw_data = f"Could not serialize object: {type(obj)}"
+
+        error_body = f"""[bold red]Error:[/bold red] {escape(str(error))}
+
+[bold]Raw Data:[/bold]
+{raw_data[:5000]}"""
+
+        # Show notification
+        self.notify(f"Failed to display {object_type}: {str(error)[:100]}", severity="error", timeout=5)
+
+        # Show simple modal with error + raw data
+        class SimpleErrorModal(ModalScreen):
+            def compose(self) -> ComposeResult:
+                with Container():
+                    yield Label(f"Error Displaying {object_type}", classes="modal-title")
+                    yield VerticalScroll(Static(error_body))
+
+            def on_key(self, event: events.Key) -> None:
+                if event.key in ("escape", "q", "enter"):
+                    self.dismiss()
+
+        self.push_screen(SimpleErrorModal())
+
+    async def _render_spans_tab_async(self, task: TaskViewModel) -> None:
+        """Async version with TreeTable widget and progress indicators."""
+        from textual.css.query import NoMatches
+
+        try:
+            heading = self.query_one("#spans-heading", Static)
+            summary = self.query_one("#spans-summary", Static)
+            table = self.query_one("#spans-table", TreeTable)
+        except NoMatches:
+            # Widgets don't exist - user is on a different tab - skip rendering
+            logger.debug("Spans tab widgets not found (on different tab), skipping render")
+            return
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying spans tab widgets: {exc}", exc_info=True)
+            raise
+
+        heading_text = f"Task: {task.goal or task.task_id}"
+
+        # Show loading indicator
+        heading.update(f"[dim]Loading... {self._escape_text(heading_text)}[/dim]")
+
+        # Clear table
+        table.clear()
+
+        traces = task.traces
+
+        if not traces:
+            heading.update(self._escape_text(heading_text))
+            summary.update("")
+            self._render_timeline_graph([])
+            return
+
+        # Progress callback
+        def progress(current, total, message):
+            pct = int((current / total) * 100) if total > 0 else 0
+            heading.update(f"[dim]{message} {pct}% ({current}/{total})[/dim]")
+
+        # Build TreeTableNode tree with progress (ASYNC)
+        root_nodes = await self._build_tree_table_nodes_async(traces, progress_callback=progress)
+
+        # Calculate metrics for summary
+        # IMPORTANT: Only sum root traces to avoid double-counting nested spans
+        root_traces = [t for t in traces if not t.parent_trace_id]
+        total_duration = sum(t.duration for t in root_traces)
+        summary_text = f"[bold]TOTAL[/bold]: {len(traces)} spans, {total_duration:.2f}s"
+        summary.update(summary_text)
+
+        # Add nodes to table
+        self._add_tree_nodes_to_table(table, root_nodes)
+
+        # Restore heading
+        heading.update(self._escape_text(heading_text))
+
+        # Render timeline graph
+        self._render_timeline_graph(traces)
+
+    async def _render_trace_tab_for_traces_async(self, traces: List[TraceViewModel], title: str = "All Traces") -> None:
+        """Async version for agent groups with TreeTable and progress."""
+        from textual.css.query import NoMatches
+
+        try:
+            heading = self.query_one("#spans-heading", Static)
+            summary = self.query_one("#spans-summary", Static)
+            table = self.query_one("#spans-table", TreeTable)
+        except NoMatches:
+            # Widgets don't exist - user is on a different tab - skip rendering
+            logger.debug("Trace tab widgets not found (on different tab), skipping render")
+            return
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying trace tab widgets for traces: {exc}", exc_info=True)
+            raise
+
+        # Show loading indicator
+        heading.update(f"[dim]Loading... {self._escape_text(title)}[/dim]")
+
+        # Clear table
+        table.clear()
+
+        if not traces:
+            heading.update(self._escape_text(title))
+            summary.update("")
+            return
+
+        # Progress callback
+        def progress(current, total, message):
+            pct = int((current / total) * 100) if total > 0 else 0
+            heading.update(f"[dim]{message} {pct}% ({current}/{total})[/dim]")
+
+        # Build TreeTableNode tree with progress (ASYNC)
+        root_nodes = await self._build_tree_table_nodes_async(traces, progress_callback=progress)
+
+        # Calculate metrics for summary
+        # IMPORTANT: Only sum root traces to avoid double-counting nested spans
+        root_traces = [t for t in traces if not t.parent_trace_id]
+        total_duration = sum(t.duration for t in root_traces)
+        summary_text = f"[bold]{title}[/bold]: {len(traces)} spans, {total_duration:.2f}s"
+        summary.update(summary_text)
+
+        # Add nodes to table
+        self._add_tree_nodes_to_table(table, root_nodes)
+
+        # Restore heading
+        heading.update(self._escape_text(title))
+
+        # Render timeline graph
+        self._render_timeline_graph(traces)
+
+    async def _render_trace_tab_by_tasks_async(self, title: str = "All Tasks") -> None:
+        """Async version for execution summary with TreeTable (goals/modules/spans hierarchy)."""
+        from textual.css.query import NoMatches
+        from roma_dspy.tui.widgets.tree_table import TreeTableNode
+
+        try:
+            heading = self.query_one("#spans-heading", Static)
+            summary = self.query_one("#spans-summary", Static)
+            table = self.query_one("#spans-table", TreeTable)
+        except NoMatches:
+            # Widgets don't exist - user is on a different tab - skip rendering
+            logger.debug("Trace tab widgets not found (on different tab), skipping render")
+            return
+        except Exception as exc:
+            # Real error - log it and re-raise
+            logger.error(f"CRITICAL: Error querying trace tab widgets by tasks: {exc}", exc_info=True)
+            raise
+
+        # Show loading indicator
+        heading.update(f"[dim]Loading... {self._escape_text(title)}[/dim]")
+        table.clear()
+
+        if not self.execution or not self.execution.tasks:
+            heading.update(self._escape_text(title))
+            summary.update("")
+            return
+
+        # Collect all tasks
+        def collect_all_tasks(task_id: str, collected: List[TaskViewModel]) -> None:
+            task = self.execution.tasks.get(task_id)
+            if task:
+                collected.append(task)
+                for subtask_id in task.subtask_ids:
+                    collect_all_tasks(subtask_id, collected)
+
+        all_tasks_list: List[TaskViewModel] = []
+        for root_id in self.execution.root_task_ids:
+            collect_all_tasks(root_id, all_tasks_list)
+
+        # Group by goal
+        tasks_by_goal: Dict[str, List[TaskViewModel]] = defaultdict(list)
+        for task in all_tasks_list:
+            goal_key = task.goal if task.goal else task.task_id
+            tasks_by_goal[goal_key].append(task)
+
+        # Calculate total metrics
+        all_spans_total: List[TraceViewModel] = []
+        for task in all_tasks_list:
+            all_spans_total.extend(task.traces)
+
+        # IMPORTANT: Only sum root traces to avoid double-counting
+        root_spans_total = [s for s in all_spans_total if not s.parent_trace_id]
+        total_duration = sum(s.duration for s in root_spans_total)
+
+        # Update summary widget
+        summary_text = f"[bold]TOTAL[/bold]: {len(all_tasks_list)} tasks, {len(all_spans_total)} spans, {total_duration:.2f}s"
+        summary.update(summary_text)
+
+        # Progress callback
+        total_goals = len(tasks_by_goal)
+        current_goal = 0
+
+        # Sort goals chronologically by earliest trace start time
+        def get_goal_start_time(goal_tasks: List[TaskViewModel]) -> float:
+            """Get the earliest start time for all traces in a goal's tasks."""
+            earliest_time = float('inf')
+            for task in goal_tasks:
+                for trace in task.traces:
+                    if trace.start_ts and trace.start_ts < earliest_time:
+                        earliest_time = trace.start_ts
+            return earliest_time if earliest_time != float('inf') else 0.0
+
+        sorted_goals = sorted(
+            tasks_by_goal.items(),
+            key=lambda x: get_goal_start_time(x[1])
         )
 
-    def on_key(self, event: events.Key) -> None:  # pragma: no cover - UI only
-        if event.key in ("escape", "q", "enter"):
-            self.dismiss(None)
+        # Build tree structure: Goals -> Modules -> Spans (with async yields)
+        for goal, tasks in sorted_goals:
+            current_goal += 1
+            heading.update(f"[dim]Building tree... Goal {current_goal}/{total_goals}[/dim]")
+
+            # Sort tasks within goal chronologically by earliest trace
+            tasks_sorted = sorted(
+                tasks,
+                key=lambda t: min((tr.start_ts for tr in t.traces if tr.start_ts), default=0.0)
+            )
+
+            # Collect traces for this goal
+            all_traces: List[TraceViewModel] = []
+            for task in tasks_sorted:
+                all_traces.extend(task.traces)
+
+            # Calculate goal metrics
+            # IMPORTANT: Only sum root traces to avoid double-counting
+            root_traces_goal = [t for t in all_traces if not t.parent_trace_id]
+            goal_duration = sum(t.duration for t in root_traces_goal)
+            goal_tool_calls = sum(len(t.tool_calls) if t.tool_calls else 0 for t in all_traces)
+
+            # Goal node (root) with summary data
+            goal_label = f"📋 {goal[:60] if len(goal) > 60 else goal}"
+            goal_node = table.add_root(
+                goal_label,
+                {
+                    "Start Time": "-",
+                    "Duration": f"{goal_duration:.1f}s ({len(tasks)}t/{len(all_traces)}s)",
+                    "Model": "-",
+                    "Tools": str(goal_tool_calls) if goal_tool_calls > 0 else "-",
+                },
+                node_id=f"goal-{goal[:30]}"
+            )
+
+            # Group by module
+            spans_by_module: Dict[str, List[TraceViewModel]] = defaultdict(list)
+            for span in all_traces:
+                module_name = span.module or "Other"
+                spans_by_module[module_name].append(span)
+
+            # Add modules as children of goal
+            for module_name in sorted(spans_by_module.keys()):
+                module_spans = spans_by_module[module_name]
+
+                # Calculate module metrics
+                # IMPORTANT: Only sum root traces to avoid double-counting
+                root_module_spans = [s for s in module_spans if not s.parent_trace_id]
+                module_duration = sum(s.duration for s in root_module_spans)
+                module_tool_calls = sum(len(s.tool_calls) if s.tool_calls else 0 for s in module_spans)
+
+                # Module node (child of goal) with summary data
+                module_label = f"🔧 {module_name}"
+                module_node = goal_node.add_child(TreeTableNode(
+                    id=f"module-{module_name}",
+                    label=module_label,
+                    data={
+                        "Start Time": "-",
+                        "Duration": f"{module_duration:.1f}s ({len(module_spans)}s)",
+                        "Model": "-",
+                        "Tools": str(module_tool_calls) if module_tool_calls > 0 else "-",
+                    },
+                ))
+
+                # Progress for this module
+                def module_progress(current, total, message):
+                    heading.update(f"[dim]Building spans for {module_name}... {current}/{total}[/dim]")
+
+                # Build span tree for this module (ASYNC)
+                span_nodes = await self._build_tree_table_nodes_async(module_spans, progress_callback=module_progress)
+
+                # Add spans as children of module
+                for span_node in span_nodes:
+                    # Add span root node
+                    span_root = module_node.add_child(TreeTableNode(
+                        id=span_node.id,
+                        label=span_node.label,
+                        data=span_node.data,
+                    ))
+
+                    # Recursively add span children
+                    def add_span_children(parent, tree_node):
+                        for child in tree_node.children:
+                            child_node = parent.add_child(TreeTableNode(
+                                id=child.id,
+                                label=child.label,
+                                data=child.data,
+                            ))
+                            add_span_children(child_node, child)
+
+                    add_span_children(span_root, span_node)
+
+                # Yield after each module to keep UI responsive
+                await asyncio.sleep(0)
+
+        # Rebuild visible rows to update display
+        table.rebuild_visible_rows()
+
+        # Restore heading
+        heading.update(self._escape_text(title))
+
+        # Render timeline graph
+        self._render_timeline_graph(all_spans_total)
+
+
+def run_viz_app(
+    execution_id: str,
+    base_url: str = "http://localhost:8000",
+    live: bool = False,
+    poll_interval: float = 2.0,
+) -> None:
+    """
+    Helper to launch the Textual TUI.
+
+    Args:
+        execution_id: Execution ID to visualize
+        base_url: API server URL
+        live: Enable live mode with automatic polling
+        poll_interval: Polling interval in seconds (default: 2.0)
+    """
+    app = RomaVizApp(
+        execution_id=execution_id,
+        base_url=base_url,
+        live=live,
+        poll_interval=poll_interval,
+    )
+    app.run()
+# Old SpanDetailModal removed - replaced with GenericDetailModal from detail_view.py

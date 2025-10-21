@@ -17,8 +17,8 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
-# Install dependencies (core + e2b + api)
-RUN pip install --no-cache-dir -e ".[e2b,api]"
+# Install dependencies (core + e2b + api + boto3 for S3/MinIO support)
+RUN pip install --no-cache-dir -e ".[e2b,api]" boto3
 
 # ============================================================================
 # Final stage
@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir -e ".[e2b,api]"
 
 FROM python:3.12-slim
 
-# Install runtime dependencies including goofys for S3 mounting
+# Install runtime dependencies including goofys for S3 mounting and Node.js for MCP servers
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     postgresql-client \
     wget \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install goofys for S3 mounting

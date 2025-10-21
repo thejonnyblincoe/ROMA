@@ -46,6 +46,7 @@ class ToolkitManager:
         "CoinGeckoToolkit": "roma_dspy.tools.crypto.coingecko.toolkit",
         "DefiLlamaToolkit": "roma_dspy.tools.crypto.defillama.toolkit",
         "ArkhamToolkit": "roma_dspy.tools.crypto.arkham.toolkit",
+        "MCPToolkit": "roma_dspy.tools.mcp.toolkit",
     }
 
     def __new__(cls) -> "ToolkitManager":
@@ -77,6 +78,11 @@ class ToolkitManager:
         self._cache_thread_lock = threading.Lock()  # Thread-safe access across event loops
         self._cache_async_lock: Optional[asyncio.Lock] = None  # Lazy-initialized per event loop
         self._cache_async_lock_loop_id: Optional[int] = None  # Track which event loop owns the lock
+
+        # BUG FIX B: Track which toolkits have been fetched by each execution
+        # Maps execution_id -> set of cache_keys
+        # This prevents refcount increment on subsequent fetches within same execution
+        self._execution_toolkit_map: Dict[str, set[str]] = {}
 
         self._register_builtin_toolkits()
 
@@ -447,22 +453,38 @@ class ToolkitManager:
                 f"[CACHE CHECK] {config.class_name} | "
                 f"cache_key={cache_key} | "
                 f"config_hash={config_hash} | "
-                f"toolkit_config={config.toolkit_config} | "
+                f"toolkit_config={config.safe_dict()} | "  # BUG FIX D: Use safe_dict() to redact secrets
                 f"cache_size={len(self._toolkit_cache)}"
             )
+
+            # BUG FIX B: Initialize execution tracking for this execution
+            if execution_id not in self._execution_toolkit_map:
+                self._execution_toolkit_map[execution_id] = set()
 
             # Fast path: check cache without lock
             toolkit = None
             with self._cache_thread_lock:
                 if cache_key in self._toolkit_cache:
                     toolkit = self._toolkit_cache[cache_key]
-                    # Increment reference count
-                    self._toolkit_refcounts[cache_key] = self._toolkit_refcounts.get(cache_key, 0) + 1
+
+                    # BUG FIX B: Only increment refcount on FIRST fetch per execution
+                    # This prevents refcount leaks when modules fetch tools multiple times
+                    if cache_key not in self._execution_toolkit_map[execution_id]:
+                        self._toolkit_refcounts[cache_key] = self._toolkit_refcounts.get(cache_key, 0) + 1
+                        self._execution_toolkit_map[execution_id].add(cache_key)
+                        logger.debug(
+                            f"[CACHE HIT] First fetch for {execution_id} | "
+                            f"cache_key={cache_key} | "
+                            f"refcount={self._toolkit_refcounts[cache_key]}"
+                        )
+                    else:
+                        logger.debug(
+                            f"[CACHE REUSE] Subsequent fetch for {execution_id} | "
+                            f"cache_key={cache_key} | "
+                            f"refcount={self._toolkit_refcounts[cache_key]} (not incremented)"
+                        )
+
                     reused_count += 1
-                    logger.debug(
-                        f"[CACHE HIT] Reused cached {config.class_name} for {execution_id} "
-                        f"(refcount: {self._toolkit_refcounts[cache_key]})"
-                    )
 
                     # Track cache hit event
                     await self._track_toolkit_event(
@@ -485,7 +507,10 @@ class ToolkitManager:
                     with self._cache_thread_lock:
                         if cache_key in self._toolkit_cache:
                             toolkit = self._toolkit_cache[cache_key]
-                            self._toolkit_refcounts[cache_key] = self._toolkit_refcounts.get(cache_key, 0) + 1
+                            # BUG FIX B: Only increment refcount on first fetch per execution
+                            if cache_key not in self._execution_toolkit_map[execution_id]:
+                                self._toolkit_refcounts[cache_key] = self._toolkit_refcounts.get(cache_key, 0) + 1
+                                self._execution_toolkit_map[execution_id].add(cache_key)
                             reused_count += 1
                         else:
                             # Create toolkit (not in lock to avoid blocking)
@@ -503,10 +528,35 @@ class ToolkitManager:
                             )
                             duration_ms = (time.time() - start_time) * 1000
 
+                            # BUG FIX A: Initialize async toolkits explicitly
+                            # Some toolkits (like MCPToolkit) require async initialization
+                            # that can't happen in __init__ when event loop is already running
+                            if hasattr(toolkit, 'initialize') and callable(toolkit.initialize):
+                                # Check if not already initialized (prevent double-init)
+                                needs_init = True
+                                if hasattr(toolkit, '_initialized'):
+                                    needs_init = not toolkit._initialized
+
+                                if needs_init:
+                                    logger.debug(f"Initializing async toolkit: {config.class_name}")
+                                    init_start = time.time()
+                                    await toolkit.initialize()
+                                    init_duration_ms = (time.time() - init_start) * 1000
+
+                                    # Log initialization success
+                                    tool_count = len(toolkit.get_available_tool_names())
+                                    logger.info(
+                                        f"Async toolkit initialized: {config.class_name} | "
+                                        f"tools_discovered={tool_count} | "
+                                        f"init_time={init_duration_ms:.1f}ms"
+                                    )
+
                             # Cache with thread lock
                             with self._cache_thread_lock:
                                 self._toolkit_cache[cache_key] = toolkit
                                 self._toolkit_refcounts[cache_key] = 1
+                                # BUG FIX B: Track this toolkit for this execution
+                                self._execution_toolkit_map[execution_id].add(cache_key)
                                 created_count += 1
 
                             logger.info(
@@ -780,12 +830,14 @@ class ToolkitManager:
 
         Uses reference counting for safe cleanup:
         1. Find all toolkits for this execution
-        2. Decrement reference counts
-        3. Remove toolkits with refcount == 0
-        4. Warn if refcount > 0 (still in use by other agents)
+        2. Call cleanup() on toolkits that will be removed
+        3. Decrement reference counts
+        4. Remove toolkits with refcount == 0
+        5. Warn if refcount > 0 (still in use by other agents)
 
         Thread Safety:
             - Uses threading.Lock for atomic operations
+            - Releases lock before async toolkit.cleanup() calls
             - Safe to call during active execution
 
         Execution Isolation:
@@ -804,24 +856,49 @@ class ToolkitManager:
         removed_count = 0
         retained_count = 0
 
-        with self._cache_thread_lock:
-            # Find all cache keys for this execution
-            # Format: "execution_id:ClassName:config_hash"
-            keys_for_execution = [
-                key for key in self._toolkit_cache.keys()
-                if key.startswith(f"{safe_exec_id}:")
-            ]
+        # BUG FIX B: Use execution tracking map to get cache keys
+        # This ensures we only clean up toolkits that were actually fetched
+        keys_for_execution = self._execution_toolkit_map.get(execution_id, set())
 
+        if not keys_for_execution:
+            logger.debug(f"No toolkits to clean up for execution {execution_id}")
+            # Clean up tracking map even if no toolkits
+            self._execution_toolkit_map.pop(execution_id, None)
+            return
+
+        # Step 1: Collect toolkits to cleanup (in lock)
+        toolkits_to_cleanup = []
+        with self._cache_thread_lock:
+
+            for cache_key in keys_for_execution:
+                refcount = self._toolkit_refcounts.get(cache_key, 0)
+
+                if refcount <= 1:
+                    # Last reference - will be removed, check if needs cleanup
+                    toolkit = self._toolkit_cache.get(cache_key)
+                    if toolkit and hasattr(toolkit, 'cleanup'):
+                        toolkits_to_cleanup.append((cache_key, toolkit))
+
+        # Step 2: Cleanup toolkits (outside lock - async operations)
+        for cache_key, toolkit in toolkits_to_cleanup:
+            try:
+                await toolkit.cleanup()
+                logger.debug(f"Cleaned up toolkit: {cache_key}")
+            except Exception as e:
+                logger.warning(f"Toolkit cleanup error for {cache_key}: {e}")
+
+        # Step 3: Remove from cache (back in lock)
+        with self._cache_thread_lock:
             for cache_key in keys_for_execution:
                 # Decrement reference count
                 refcount = self._toolkit_refcounts.get(cache_key, 0)
 
                 if refcount <= 1:
-                    # Last reference - safe to remove
+                    # Last reference - remove
                     del self._toolkit_cache[cache_key]
                     self._toolkit_refcounts.pop(cache_key, None)
                     removed_count += 1
-                    logger.debug(f"Removed toolkit: {cache_key}")
+                    logger.debug(f"Removed toolkit from cache: {cache_key}")
                 else:
                     # Still in use by other agents - decrement and keep
                     self._toolkit_refcounts[cache_key] = refcount - 1
@@ -830,6 +907,9 @@ class ToolkitManager:
                         f"Retained toolkit {cache_key} "
                         f"(refcount: {refcount} -> {refcount-1})"
                     )
+
+        # BUG FIX B: Remove execution tracking (prevent memory leak)
+        self._execution_toolkit_map.pop(execution_id, None)
 
         # Log cleanup summary
         if removed_count > 0 or retained_count > 0:

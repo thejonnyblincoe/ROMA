@@ -44,6 +44,7 @@ class AsyncHTTPClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
+        rate_limit: Optional[float] = None,
     ):
         """Initialize async HTTP client.
 
@@ -53,14 +54,17 @@ class AsyncHTTPClient:
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
             retry_delay: Initial delay between retries (exponential backoff)
+            rate_limit: Minimum seconds between requests (None = no rate limiting)
         """
         self.base_url = base_url.rstrip("/")
         self.default_headers = headers or {}
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.rate_limit = rate_limit
 
         self._client: Optional[httpx.AsyncClient] = None
+        self._last_request_time: float = 0.0
 
     async def __aenter__(self) -> AsyncHTTPClient:
         """Async context manager entry."""
@@ -126,6 +130,20 @@ class AsyncHTTPClient:
             "POST", path, json_data=json_data, params=params, headers=headers
         )
 
+    async def _apply_rate_limit(self) -> None:
+        """Apply rate limiting if configured."""
+        if self.rate_limit is None:
+            return
+
+        import time
+        current_time = time.time()
+        time_since_last = current_time - self._last_request_time
+
+        if time_since_last < self.rate_limit:
+            await asyncio.sleep(self.rate_limit - time_since_last)
+
+        self._last_request_time = time.time()
+
     async def _request(
         self,
         method: str,
@@ -150,6 +168,9 @@ class AsyncHTTPClient:
             HTTPClientError: On request failure after retries
         """
         await self._ensure_client()
+
+        # Apply rate limiting
+        await self._apply_rate_limit()
 
         # Merge headers
         request_headers = {**self.default_headers}

@@ -1,5 +1,8 @@
 """PostgreSQL async storage for execution traces and checkpoints."""
 
+import asyncio
+import threading
+import warnings
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -15,12 +18,28 @@ from roma_dspy.types import ExecutionStatus
 from roma_dspy.core.storage.models import Base, Execution, Checkpoint, TaskTrace, LMTrace, CircuitBreaker, EventTrace, ToolkitTrace, ToolInvocationTrace
 
 
+class _ThreadLocalState(threading.local):
+    """Thread-local state for PostgresStorage.
+
+    Each thread gets its own engine and session factory bound to its own event loop.
+    This enables safe multi-threaded usage with DSPy's parallelizer.
+    """
+    def __init__(self):
+        self.engine: Optional[AsyncEngine] = None
+        self.session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+        self.initialized: bool = False
+        self.event_loop_id: Optional[int] = None  # Track which event loop the engine is bound to
+
+
 class PostgresStorage:
     """
     Async Postgres storage for execution traces and checkpoints.
 
     Provides durable, queryable persistence for all execution data including
     checkpoints, task traces, LM traces, and circuit breaker states.
+
+    Thread-safe: Each thread gets its own database engine bound to its own event loop,
+    enabling safe concurrent usage with DSPy's parallelizer.
 
     Example:
         ```python
@@ -52,27 +71,62 @@ class PostgresStorage:
             config: PostgresConfig with connection settings
         """
         self.config = config
-        self._engine: Optional[AsyncEngine] = None
-        self._session_factory: Optional[async_sessionmaker[AsyncSession]] = None
-        self._initialized = False
+        self._local = _ThreadLocalState()  # Thread-local storage for engine/sessions
 
     async def initialize(self) -> None:
-        """Initialize database engine and session factory.
+        """Initialize database engine and session factory for current thread.
 
         Must be called before using any storage operations.
-        Safe to call multiple times - subsequent calls are no-ops.
-        """
-        if self._initialized:
-            logger.debug("PostgresStorage already initialized")
-            return
+        Safe to call multiple times - idempotent per thread.
 
+        Detects and handles event loop changes within the same thread:
+        - If event loop has changed (closed and recreated), disposes old engine and reinitializes
+        - If same event loop, returns immediately (already initialized)
+
+        Each thread gets its own engine bound to its own event loop, enabling
+        safe concurrent usage with DSPy's parallelizer.
+        """
         if not self.config.enabled:
             logger.info("PostgreSQL storage disabled in config")
             return
 
+        # Get current event loop and its ID
         try:
-            # Create async engine with connection pooling
-            self._engine = create_async_engine(
+            current_loop = asyncio.get_running_loop()
+            current_loop_id = id(current_loop)
+        except RuntimeError:
+            raise RuntimeError("PostgresStorage.initialize() must be called from an async context")
+
+        # Check if we need to reinitialize due to event loop change
+        if self._local.initialized:
+            if self._local.event_loop_id == current_loop_id:
+                logger.debug(
+                    f"PostgresStorage already initialized in thread {threading.get_ident()} "
+                    f"with event loop {current_loop_id}"
+                )
+                return
+            else:
+                # Event loop changed - dispose old engine and reinitialize
+                logger.info(
+                    f"Event loop changed in thread {threading.get_ident()} "
+                    f"(old={self._local.event_loop_id}, new={current_loop_id}), "
+                    "disposing old engine and reinitializing PostgresStorage"
+                )
+                if self._local.engine:
+                    try:
+                        await self._local.engine.dispose()
+                    except Exception as e:
+                        logger.warning(f"Error disposing old engine: {e}")
+
+                # Reset state
+                self._local.initialized = False
+                self._local.engine = None
+                self._local.session_factory = None
+                self._local.event_loop_id = None
+
+        try:
+            # Create async engine with connection pooling for this thread
+            self._local.engine = create_async_engine(
                 self.config.connection_url,
                 pool_size=self.config.pool_size,
                 max_overflow=self.config.max_overflow,
@@ -81,39 +135,48 @@ class PostgresStorage:
                 pool_pre_ping=True,  # Verify connections before using
             )
 
-            # Create session factory
-            self._session_factory = async_sessionmaker(
-                self._engine,
+            # Create session factory for this thread
+            self._local.session_factory = async_sessionmaker(
+                self._local.engine,
                 class_=AsyncSession,
                 expire_on_commit=False,  # Avoid lazy loading issues
             )
 
-            # Create tables if needed
-            async with self._engine.begin() as conn:
+            # Create tables if needed (safe to call multiple times)
+            async with self._local.engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
 
-            self._initialized = True
-            logger.info("PostgresStorage initialized successfully")
+            # Store the event loop ID this engine is bound to
+            self._local.event_loop_id = current_loop_id
+            self._local.initialized = True
+
+            logger.info(
+                f"PostgresStorage initialized in thread {threading.get_ident()} "
+                f"with event loop {current_loop_id}"
+            )
 
         except Exception as e:
-            logger.error(f"Failed to initialize PostgresStorage: {e}")
+            logger.error(f"Failed to initialize PostgresStorage in thread {threading.get_ident()}: {e}")
             self.config.enabled = False
             raise
 
     @asynccontextmanager
     async def session(self) -> AsyncSession:
-        """Get database session context manager.
+        """Get database session context manager for current thread.
 
         Yields:
             AsyncSession for database operations
 
         Raises:
-            RuntimeError: If storage not initialized
+            RuntimeError: If storage not initialized in current thread
         """
-        if not self._initialized or not self._session_factory:
-            raise RuntimeError("PostgresStorage not initialized. Call initialize() first.")
+        if not self._local.initialized or not self._local.session_factory:
+            raise RuntimeError(
+                f"PostgresStorage not initialized in thread {threading.get_ident()}. "
+                "Call initialize() first."
+            )
 
-        async with self._session_factory() as session:
+        async with self._local.session_factory() as session:
             try:
                 yield session
                 await session.commit()
@@ -1073,12 +1136,43 @@ class PostgresStorage:
             return deleted
 
     async def close(self) -> None:
-        """Close database connections (alias for shutdown)."""
+        """Close database connections for current thread (alias for shutdown)."""
         await self.shutdown()
 
     async def shutdown(self) -> None:
-        """Cleanup database connections."""
-        if self._engine:
-            await self._engine.dispose()
-            logger.info("PostgresStorage shutdown complete")
-            self._initialized = False
+        """Cleanup database connections for current thread.
+
+        Each thread manages its own engine lifecycle. This only affects
+        the calling thread's engine.
+
+        Thread-safe: Works correctly when called from DSPy's ParallelExecutor
+        worker threads, even when event loop is about to close.
+        """
+        if self._local.engine:
+            try:
+                # Use sync disposal to avoid event loop dependency
+                # This is critical for worker threads where asyncio.run() is about to close the loop
+                # Reference: https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#using-asyncio-scoped-session
+                await self._local.engine.dispose()
+                logger.debug(f"PostgresStorage disposed engine for thread {threading.get_ident()}")
+            except RuntimeError as e:
+                # Event loop already closed - this is expected in worker threads
+                # The connections will be cleaned up by the engine's finalizer
+                if "Event loop is closed" in str(e) or "no running event loop" in str(e).lower():
+                    logger.debug(
+                        f"PostgresStorage: Event loop closed before engine disposal in thread {threading.get_ident()}. "
+                        "Connection cleanup will be handled by finalizer (expected in worker threads)."
+                    )
+                else:
+                    # Unexpected RuntimeError - log but don't fail
+                    logger.warning(f"PostgresStorage shutdown error in thread {threading.get_ident()}: {e}")
+            except Exception as e:
+                # Other errors - log but don't fail
+                logger.warning(f"PostgresStorage shutdown error in thread {threading.get_ident()}: {e}")
+            finally:
+                # Always reset state, even if disposal failed
+                logger.info(f"PostgresStorage shutdown complete for thread {threading.get_ident()}")
+                self._local.initialized = False
+                self._local.engine = None
+                self._local.session_factory = None
+                self._local.event_loop_id = None

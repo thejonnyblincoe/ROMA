@@ -7,17 +7,17 @@ import time
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, TYPE_CHECKING
 
+import dspy
 from loguru import logger
 
 from roma_dspy.core.context import ExecutionContext
 from roma_dspy.core.engine.dag import TaskDAG
-from roma_dspy.core.modules import Aggregator, Atomizer, Executor, Planner, Verifier
-from roma_dspy.core.observability.execution_manager import add_span_attribute
+from roma_dspy.core.observability import get_span_manager
 from roma_dspy.core.registry import AgentRegistry
 from roma_dspy.core.signatures import SubTask, TaskNode
+from roma_dspy.resilience import with_module_resilience, measure_execution_time
 from roma_dspy.tools.base.manager import ToolkitManager
 from roma_dspy.types import ModuleResult, NodeType, TaskStatus, AgentType, TokenMetrics
-from roma_dspy.resilience import with_module_resilience, measure_execution_time
 
 if TYPE_CHECKING:
     from ..context import ContextManager
@@ -255,37 +255,52 @@ class ModuleRuntime:
     # ------------------------------------------------------------------
 
     async def _get_tools_data_async(self, agent: "BaseModule") -> list[dict]:
-        """
-        Extract tool information from agent for context building.
-
-        For toolkit-based agents, retrieves tools from ToolkitManager using ExecutionContext.
-        Returns tool names and descriptions for inclusion in agent context XML.
+        """Extract tool information from agent for context building.
 
         Returns:
             List of dicts with 'name' and 'description' keys
         """
-        # Check if agent uses toolkits (config-based dynamic tool loading)
-        if hasattr(agent, '_toolkit_configs') and agent._toolkit_configs:
-            # Get tools from ToolkitManager via ExecutionContext
-            ctx = ExecutionContext.get()
-            if ctx and ctx.file_storage:
-                try:
-                    manager = ToolkitManager.get_instance()
-                    tools_dict = await manager.get_tools_for_execution(
-                        execution_id=ctx.execution_id,
-                        file_storage=ctx.file_storage,
-                        toolkit_configs=agent._toolkit_configs
-                    )
-                    return [
-                        {"name": name, "description": getattr(tool, "__doc__", "No description available")}
-                        for name, tool in tools_dict.items()
-                    ]
-                except Exception as e:
-                    logger.warning(f"Failed to load toolkit tools for context: {e}")
-                    return []
+        if not (hasattr(agent, '_toolkit_configs') and agent._toolkit_configs):
+            return []
 
-        # No toolkits configured - return empty list
-        return []
+        ctx = ExecutionContext.get()
+        if not (ctx and ctx.file_storage):
+            return []
+
+        try:
+            manager = ToolkitManager.get_instance()
+            tools_dict = await manager.get_tools_for_execution(
+                execution_id=ctx.execution_id,
+                file_storage=ctx.file_storage,
+                toolkit_configs=agent._toolkit_configs
+            )
+            return [
+                {"name": name, "description": getattr(tool, "__doc__", "No description available")}
+                for name, tool in tools_dict.items()
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to load toolkit tools: {e}")
+            return []
+
+    def _extract_token_usage(self, result: Any) -> tuple[int, int, int]:
+        """Extract token usage from DSPy result.
+
+        Returns:
+            Tuple of (prompt_tokens, completion_tokens, total_tokens)
+        """
+        usage = getattr(result, 'get_lm_usage', lambda: None)()
+        if not usage or not isinstance(usage, dict):
+            return 0, 0, 0
+
+        # Get first model's usage data
+        for model_usage in usage.values():
+            if isinstance(model_usage, dict):
+                prompt = model_usage.get('prompt_tokens', 0)
+                completion = model_usage.get('completion_tokens', 0)
+                total = model_usage.get('total_tokens', prompt + completion)
+                return prompt, completion, total
+
+        return 0, 0, 0
 
     async def _persist_lm_trace(
         self,
@@ -296,80 +311,55 @@ class ModuleRuntime:
         start_time: float,
         task_id: str
     ) -> None:
-        """Persist LM call trace to Postgres.
+        """Persist LM call trace to Postgres with retry logic for FK violations."""
+        max_retries = 3
+        retry_delay = 0.1
 
-        Args:
-            execution_id: Execution identifier
-            postgres: PostgresStorage instance
-            module: Module that made the LM call
-            result: LM call result
-            start_time: Call start timestamp
-            task_id: Task identifier
-        """
-        try:
-            latency_ms = int((time.time() - start_time) * 1000)
+        for attempt in range(max_retries):
+            try:
+                latency_ms = int((time.time() - start_time) * 1000)
+                prompt_tokens, completion_tokens, total_tokens = self._extract_token_usage(result)
 
-            # Extract token usage from DSPy result
-            # DSPy Prediction objects use get_lm_usage() method
-            # Returns nested dict: {'model_name': {'prompt_tokens': X, ...}}
-            usage = None
-            if hasattr(result, 'get_lm_usage'):
-                usage = result.get_lm_usage()
-                logger.debug(f"[LM Trace] get_lm_usage() returned: {usage}")
-            else:
-                logger.debug(f"[LM Trace] Result has no get_lm_usage() method. Type: {type(result).__name__}")
+                # Get model configuration
+                lm = getattr(module, 'lm', None) or getattr(module, '_lm', None)
+                model = getattr(lm, 'model', 'unknown') if lm else 'unknown'
+                temperature = getattr(lm, 'kwargs', {}).get('temperature') if lm else None
+                max_tokens = getattr(lm, 'kwargs', {}).get('max_tokens') if lm else None
 
-            # Extract token data from nested structure
-            prompt_tokens = 0
-            completion_tokens = 0
-            total_tokens = 0
+                # Get cost
+                usage = getattr(result, 'get_lm_usage', lambda: {})()
+                cost_usd = usage.get('cost') if isinstance(usage, dict) else None
+                if not cost_usd and hasattr(result, 'metrics'):
+                    cost_usd = getattr(result.metrics, 'cost', None)
 
-            if usage and isinstance(usage, dict):
-                # DSPy returns: {'model_name': {'prompt_tokens': X, 'completion_tokens': Y, ...}}
-                # Get first (and usually only) model's usage data
-                for _model_name, model_usage in usage.items():
-                    if isinstance(model_usage, dict):
-                        prompt_tokens = model_usage.get('prompt_tokens', 0)
-                        completion_tokens = model_usage.get('completion_tokens', 0)
-                        total_tokens = model_usage.get('total_tokens', prompt_tokens + completion_tokens)
-                        logger.debug(f"[LM Trace] Extracted tokens: prompt={prompt_tokens}, completion={completion_tokens}, total={total_tokens}")
-                        break  # Use first model's data
+                await postgres.save_lm_trace(
+                    execution_id=execution_id,
+                    task_id=task_id,
+                    module_name=module.__class__.__name__.lower(),
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    cost_usd=cost_usd,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    prediction_strategy=str(getattr(module, '_prediction_strategy', None)),
+                    latency_ms=latency_ms,
+                    metadata={"success": True}
+                )
+                return
 
-            # Get model info from module's LM
-            lm = getattr(module, 'lm', None) or getattr(module, '_lm', None)
-            model = getattr(lm, 'model', 'unknown') if lm else 'unknown'
-            temperature = getattr(lm, 'kwargs', {}).get('temperature') if lm else None
-            max_tokens = getattr(lm, 'kwargs', {}).get('max_tokens') if lm else None
+            except Exception as e:
+                error_str = str(e).lower()
+                is_fk_violation = any(k in error_str for k in ('foreign key', 'fkey', 'violates foreign key constraint'))
 
-            # Calculate cost if available
-            # First try DSPy's usage dict, then fallback to TokenMetrics
-            cost_usd = None
-            if usage and isinstance(usage, dict):
-                cost_usd = usage.get('cost')
-            elif hasattr(result, 'metrics') and isinstance(result.metrics, TokenMetrics):
-                cost_usd = result.metrics.cost
-
-            # Get prediction strategy
-            prediction_strategy = str(getattr(module, '_prediction_strategy', None))
-
-            await postgres.save_lm_trace(
-                execution_id=execution_id,
-                task_id=task_id,
-                module_name=module.__class__.__name__.lower(),
-                model=model,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                cost_usd=cost_usd,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                prediction_strategy=prediction_strategy,
-                latency_ms=latency_ms,
-                metadata={"success": True}
-            )
-            logger.debug(f"Persisted LM trace for task {task_id}")
-        except Exception as e:
-            logger.warning(f"Failed to persist LM trace: {e}")
+                if is_fk_violation and attempt < max_retries - 1:
+                    logger.warning(f"FK violation on attempt {attempt + 1}/{max_retries}, retrying...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    logger.warning(f"Failed to persist LM trace: {e}")
+                    return
 
     async def _execute_agent_with_tracing(
         self,
@@ -381,117 +371,43 @@ class ModuleRuntime:
         prepare_module_kwargs: Callable[[TaskNode, Optional[str]], dict],
         process_result: Callable[[TaskNode, Any, float, Any, Any, TaskDAG], TaskNode],
     ) -> TaskNode:
+        """Execute agent with MLflow tracing and LM persistence.
+
+        Eliminates ~175 lines of duplicate code by extracting common execution pattern.
         """
-        Generic execution wrapper with LM tracing for all agent types.
-
-        This method eliminates ~175 lines of duplicate code by extracting the common
-        pattern shared across atomize_async, plan_async, execute_async, force_execute_async,
-        and aggregate_async.
-
-        Args:
-            agent_type: Type of agent to execute (ATOMIZER, PLANNER, etc.)
-            task: Current task node
-            dag: Task DAG
-            context_builder_args: Additional args for context builder (e.g., self, dag for planner/executor)
-            prepare_module_kwargs: Function to prepare module-specific kwargs from task and context
-            process_result: Function to process module result into updated task
-
-        Returns:
-            Updated task node after execution
-
-        Raises:
-            Exception: Re-raises any exception from module execution with enhanced context
-        """
-        # 1. Get agent from registry
         agent = self.registry.get_agent(agent_type, task.task_type)
 
-        # 2. Build context using ContextManager if available
+        # Build context with tools if available
         context = None
         if self.context_manager:
             tools_data = await self._get_tools_data_async(agent)
-            logger.debug(f"[Context] Loaded {len(tools_data)} tools for {agent_type.value}")
-            # Dynamic context builder method lookup
             builder_name = f"build_{agent_type.value.lower()}_context"
             context_builder = getattr(self.context_manager, builder_name)
             context = context_builder(task, tools_data, *context_builder_args)
-            if tools_data:
-                logger.debug(f"[Context] Tools in context: {[t['name'] for t in tools_data[:5]]}...")
 
-        # PHASE 3: Add ROMA span attributes for MLflow observability
-        add_span_attribute(task, agent_type)
-
-        # 3. Execute with timing and explicit MLflow span context (if available)
         try:
             start_time = time.time()
-
-            # Prepare module-specific kwargs
             module_kwargs = prepare_module_kwargs(task, context)
 
-            # If MLflow tracing is available, start a wrapper span so DSPy spans nest under it
-            _span_ctx = None
-            try:
-                from mlflow.tracing.fluent import start_span as _mlflow_start_span
+            # Preserve existing DSPy callbacks
+            existing_callbacks = list(dspy.settings.callbacks) if hasattr(dspy.settings, 'callbacks') else []
+            module_kwargs['context'] = {'callbacks': existing_callbacks}
 
-                # Name spans like Planner.forward, Executor.forward, etc.
-                span_name = agent_type.value
-                _span_ctx = _mlflow_start_span(span_name)
-            except Exception:
-                _span_ctx = None
-
-            if _span_ctx is not None:
-                async def _run_with_span():
-                    with _span_ctx as span:
-                        # Attach ROMA attributes so the visualizer can reconstruct hierarchy
-                        attrs = {
-                            "roma.execution_id": task.execution_id or "unknown",
-                            "roma.task_id": task.task_id,
-                            "roma.parent_task_id": task.parent_id or "root",
-                            "roma.depth": task.depth,
-                            "roma.max_depth": task.max_depth,
-                            "roma.status": task.status.value,
-                            "roma.module": agent_type.value,
-                            "roma.span_type": "module_wrapper",
-                            "roma.goal": task.goal,
-                        }
-                        if getattr(task, 'task_type', None):
-                            attrs["roma.task_type"] = getattr(task.task_type, 'value', task.task_type)
-                        if getattr(task, 'node_type', None):
-                            attrs["roma.node_type"] = getattr(task.node_type, 'value', task.node_type)
-                        if hasattr(task, 'is_atomic'):
-                            attrs["roma.is_atomic"] = task.is_atomic
-
-                        try:
-                            span.set_attributes(attrs)
-                            # Minimal input context to aid goal discovery in MLflow viz
-                            span.set_inputs({"goal": task.goal})
-                        except Exception:
-                            pass
-
-                        return await self._async_execute_module(agent, **module_kwargs)
-
-                result, duration, token_metrics, messages = await _run_with_span()
-            else:
-                # Fallback: run without explicit span (DSPy autolog may still create spans)
+            # Execute with ROMA span wrapper
+            span_manager = get_span_manager()
+            with span_manager.create_span(agent_type, task, agent.__class__.__name__):
                 result, duration, token_metrics, messages = await self._async_execute_module(
                     agent, **module_kwargs
                 )
 
-            # 4. Persist LM trace to Postgres (common pattern)
+            # Persist LM trace
             execution_id, postgres = self.context_store.get_execution_context()
             if postgres and execution_id:
                 await self._persist_lm_trace(
-                    execution_id=execution_id,
-                    postgres=postgres,
-                    module=agent,
-                    result=result,
-                    start_time=start_time,
-                    task_id=task.task_id
+                    execution_id, postgres, agent, result, start_time, task.task_id
                 )
 
-            # 5. Process result (module-specific logic)
-            task = process_result(task, result, duration, token_metrics, messages, dag)
-
-            return task
+            return process_result(task, result, duration, token_metrics, messages, dag)
 
         except Exception as e:
             self._enhance_error_context(e, agent_type, task)
@@ -579,7 +495,7 @@ class ModuleRuntime:
         def prepare_kwargs(t: TaskNode, context: Optional[str]) -> dict:
             nonlocal context_captured
             context_captured = context
-            return {"goal": t.goal, "context": context}
+            return {"goal": t.goal, "context_payload": context}
 
         def process_result(t: TaskNode, result: Any, duration: float, token_metrics: Any, messages: Any, dag: TaskDAG) -> TaskNode:
             # Record with context metadata
@@ -625,7 +541,7 @@ class ModuleRuntime:
         def prepare_kwargs(t: TaskNode, context: Optional[str]) -> dict:
             nonlocal context_captured
             context_captured = context
-            return {"goal": t.goal, "context": context}
+            return {"goal": t.goal, "context_payload": context}
 
         def process_result(t: TaskNode, result: Any, duration: float, token_metrics: Any, messages: Any, dag: TaskDAG) -> TaskNode:
             # Record with context metadata (forced execution has additional metadata)

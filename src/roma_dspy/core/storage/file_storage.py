@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from loguru import logger
 
-from roma_dspy.config.schemas import StorageConfig
+from roma_dspy.config.schemas.storage import StorageConfig
 
 
 class FileStorage:

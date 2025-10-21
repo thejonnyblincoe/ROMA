@@ -63,43 +63,19 @@ class ArkhamAPIClient:
 
         self.base_url = base_url
         self.timeout = timeout
-        # Initialize with base_url (required by AsyncHTTPClient)
-        self._client = AsyncHTTPClient(base_url=base_url)
-        self._endpoints_setup = False
 
-    async def _ensure_endpoints_setup(self) -> None:
-        """Setup HTTP endpoints with rate limiting if not already done."""
-        if self._endpoints_setup:
-            return
-
-        # Standard endpoint: 20 req/sec
-        await self._client.add_endpoint(
-            name="arkham",
-            base_url=self.base_url,
+        # Initialize HTTP client with Arkham headers and rate limiting
+        # Arkham API: 20 req/sec standard = 0.05s between requests
+        self._client = AsyncHTTPClient(
+            base_url=base_url,
             headers={
                 "API-Key": self.api_key,
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
-            timeout=self.timeout,
-            rate_limit=0.05,  # 20 req/sec = 0.05s minimum between requests
+            timeout=timeout,
+            rate_limit=0.05,  # 20 requests/second
         )
-
-        # Heavy endpoint: 1 req/sec for data-intensive operations
-        await self._client.add_endpoint(
-            name="arkham_heavy",
-            base_url=self.base_url,
-            headers={
-                "API-Key": self.api_key,
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            timeout=self.timeout,
-            rate_limit=1.0,  # 1 req/sec = 1.0s minimum between requests
-        )
-
-        self._endpoints_setup = True
-        logger.debug("Arkham API endpoints configured")
 
     async def _request(
         self,
@@ -112,7 +88,7 @@ class ArkhamAPIClient:
         Args:
             endpoint: API endpoint path
             params: Query parameters
-            use_heavy_endpoint: Use heavy endpoint (1 req/sec rate limit)
+            use_heavy_endpoint: Use heavy endpoint (currently ignored, same rate limit)
 
         Returns:
             dict: JSON response from API
@@ -120,12 +96,8 @@ class ArkhamAPIClient:
         Raises:
             ArkhamAPIError: If API returns error response
         """
-        await self._ensure_endpoints_setup()
-
-        endpoint_name = "arkham_heavy" if use_heavy_endpoint else "arkham"
-
         try:
-            response = await self._client.get(endpoint_name, endpoint, params=params)
+            response = await self._client.get(endpoint, params=params)
             return response
 
         except HTTPClientError as e:

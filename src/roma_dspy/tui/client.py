@@ -14,11 +14,9 @@ class VizApiClient:
     def __init__(
         self,
         base_url: str = "http://localhost:8000",
-        profile: Optional[str] = None,
         timeout: float = 10.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.profile = profile
         self.timeout = timeout
 
     async def _post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -33,39 +31,6 @@ class VizApiClient:
             resp.raise_for_status()
             return resp.json()
 
-    async def fetch_mlflow_tree(self, execution_id: str) -> Dict[str, Any]:
-        payload = {
-            "visualizer_type": "llm_trace",
-            "format": "json",
-            "data_source": "mlflow",
-            "profile": self.profile,
-            "options": {
-                "fancy": False,
-            },
-        }
-        response = await self._post(
-            f"/api/v1/executions/{execution_id}/visualize",
-            payload,
-        )
-        content = response.get("content", "{}")
-        return json.loads(content)
-
-    async def fetch_snapshot(self, execution_id: str) -> Dict[str, Any]:
-        payload = {
-            "visualizer_type": "tree",
-            "format": "json",
-            "data_source": "checkpoint",
-            "profile": self.profile,
-            "options": {
-                "fancy": False,
-            },
-        }
-        response = await self._post(
-            f"/api/v1/executions/{execution_id}/visualize",
-            payload,
-        )
-        content = response.get("content", "{}")
-        return json.loads(content)
 
     async def fetch_metrics(self, execution_id: str) -> Dict[str, Any]:
         return await self._get(f"/api/v1/executions/{execution_id}/metrics")
@@ -78,3 +43,15 @@ class VizApiClient:
 
     async def fetch_toolkit_metrics(self, execution_id: str) -> Dict[str, Any]:
         return await self._get(f"/api/v1/executions/{execution_id}/toolkit-metrics")
+
+    async def fetch_execution_data(self, execution_id: str) -> Dict[str, Any]:
+        """
+        Fetch consolidated execution data from the new /data endpoint.
+
+        This endpoint provides real-time trace data with agent executions,
+        suitable for live visualization. Includes task hierarchy.
+
+        Returns:
+            Dict with keys: execution_id, experiment, tasks, summary, traces, fallback_spans
+        """
+        return await self._get(f"/api/v1/executions/{execution_id}/data")

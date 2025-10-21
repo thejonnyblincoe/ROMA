@@ -91,88 +91,11 @@ solve task profile="crypto_agent" max_depth="3" verbose="false" output="text":
 # Run any CLI command in the container (Docker)
 cli-docker *args:
     docker exec -it roma-dspy-api roma-dspy {{args}}
-# Visualize task execution DAG
-# Usage: just visualize <execution_id> [visualizer_type] [output_file]
-# Visualizer types: tree, timeline, statistics, context_flow, llm_trace
-# Example: just visualize abc123 tree
-# Example: just visualize abc123 llm_trace viz.txt
-visualize execution_id visualizer_type="tree" output_file="" profile="":
-    @if [ -n "{{output_file}}" ]; then \
-        if [ -n "{{profile}}" ]; then \
-            docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type {{visualizer_type}} --output {{output_file}} --profile {{profile}}; \
-        else \
-            docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type {{visualizer_type}} --output {{output_file}}; \
-        fi; \
-    else \
-        if [ -n "{{profile}}" ]; then \
-            docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type {{visualizer_type}} --profile {{profile}}; \
-        else \
-            docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type {{visualizer_type}}; \
-        fi; \
-    fi
-# Quick visualize with tree (default)
-viz-tree execution_id profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type tree --profile {{profile}}; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type tree; \
-    fi
-# Visualize with timeline
-viz-timeline execution_id profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type timeline --profile {{profile}}; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type timeline; \
-    fi
-# Visualize with statistics
-viz-stats execution_id profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type statistics --profile {{profile}}; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type statistics; \
-    fi
-# Visualize with context flow
-viz-context execution_id profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type context_flow --profile {{profile}}; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type context_flow; \
-    fi
-# Visualize with LLM trace (detailed execution trace)
-viz-trace execution_id profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type llm_trace --data-source mlflow --fancy --profile {{profile}}; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type llm_trace --data-source mlflow --fancy; \
-    fi
-# Save visualization to file (any type)
-viz-save execution_id output_file visualizer_type="tree" profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type {{visualizer_type}} --output {{output_file}} --profile {{profile}}; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type {{visualizer_type}} --output {{output_file}}; \
-    fi
-# Ultra-detailed tree view (verbose with IDs, timing, tokens, no truncation)
-viz-detailed execution_id profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type tree --verbose --show-ids --profile {{profile}}; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type tree --verbose --show-ids; \
-    fi
-# Full execution trace with no goal truncation
-viz-full execution_id profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type llm_trace --max-goal-length 0 --verbose --profile {{profile}} --data-source mlflow --fancy; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type llm_trace --max-goal-length 0 --verbose --data-source mlflow --fancy; \
-    fi
-# Tree view with custom goal length
-viz-tree-custom execution_id max_length="100" profile="":
-    @if [ -n "{{profile}}" ]; then \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type tree --max-goal-length {{max_length}} --profile {{profile}}; \
-    else \
-        docker exec roma-dspy-api roma-dspy visualize {{execution_id}} --type tree --max-goal-length {{max_length}}; \
-    fi
+# Interactive TUI visualization
+# Usage: just viz <execution_id>
+# Example: just viz abc-123-def-456
+viz execution_id:
+    docker exec -it roma-dspy-api roma-dspy viz-interactive {{execution_id}}
 # ==============================================================================
 # Quick Setup Commands
 # ==============================================================================

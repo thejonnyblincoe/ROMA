@@ -4,15 +4,45 @@
 
 ## 🚀 Quick Start
 
+**Recommended: Complete Setup with Docker** (Production-ready, includes all features)
+
 ```bash
-# One-command setup
+# One-command setup (builds Docker, starts services, optional E2B/S3)
 just setup
 
 # Or with specific profile
 just setup crypto_agent
+
+# Verify services are running
+curl http://localhost:8000/health
+
+# Solve your first task
+just solve "What is the capital of France?"
 ```
 
-See [SETUP_GUIDE.md](reports/SETUP_GUIDE.md) for detailed setup instructions.
+**What `just setup` includes:**
+- ✅ Builds Docker images
+- ✅ Starts all services (PostgreSQL, MinIO, REST API)
+- ✅ Configures environment (.env)
+- ✅ Optional: S3 storage mount (prompts)
+- ✅ Optional: E2B code execution template (prompts)
+- ✅ Creates CLI shortcuts (`./cli`, `./run`)
+
+**Alternative: Manual Docker Setup** (Skip prompts)
+
+```bash
+# Start services without setup wizard
+just docker-up           # Basic (PostgreSQL + MinIO + API)
+just docker-up-full      # With MLflow observability
+```
+
+**Services Available:**
+- 🚀 **REST API**: http://localhost:8000/docs
+- 🗄️ **PostgreSQL**: Automatic persistence
+- 📦 **MinIO**: S3-compatible storage (http://localhost:9001)
+- 📊 **MLflow**: http://localhost:5000 (with `docker-up-full`)
+
+See [Quick Start Guide](docs/QUICKSTART.md) and [Deployment Guide](docs/DEPLOYMENT.md) for details.
 
 ## Table of Contents
 - [Conceptual Overview](#conceptual-overview)
@@ -360,7 +390,7 @@ S3 works transparently via Docker volume mounts - no code changes needed:
 docker compose --profile s3 up -d
 ```
 
-See [STORAGE_ARCHITECTURE.md](reports/STORAGE_ARCHITECTURE.md) for complete architecture details.
+See the [Storage Architecture](#storage-architecture) section above for complete architecture details.
 
 ### Profile Management
 
@@ -1106,9 +1136,10 @@ See `CHANGELOG.md` for detailed test documentation.
 Happy building! If you extend or customize a module, keep the signatures aligned so your higher-level orchestration remains stable.
 
 **Additional Resources:**
-- [Configuration System](config/README.md) - Detailed configuration documentation
-- [Storage Architecture](reports/STORAGE_ARCHITECTURE.md) - Complete storage system design
-- [Setup Guide](reports/SETUP_GUIDE.md) - Dynamic setup and profile management
+- [Quick Start Guide](docs/QUICKSTART.md) - Get started in under 10 minutes
+- [Configuration Guide](docs/CONFIGURATION.md) - Complete configuration reference
+- [Toolkits Reference](docs/TOOLKITS.md) - All built-in and custom toolkits
+- [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment with Docker
 - [E2B Setup](docs/E2B_SETUP.md) - Code execution toolkit setup
-- [Deployment Guide](reports/DEPLOYMENT_GUIDE.md) - Production deployment instructions
-- [Quick Start](QUICKSTART.md) - 5-minute local setup guide
+- [Observability](docs/OBSERVABILITY.md) - MLflow tracking and monitoring
+- [Configuration System](config/README.md) - Configuration profiles and examples

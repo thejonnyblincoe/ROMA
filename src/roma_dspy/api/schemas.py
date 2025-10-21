@@ -1,8 +1,11 @@
 """Pydantic schemas for API requests and responses."""
 
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
+
+
 
 
 # ============================================================================
@@ -81,15 +84,8 @@ class ExecutionResponse(BaseModel):
 
 
 class ExecutionDetailResponse(ExecutionResponse):
-    """Extended execution response with DAG visualization."""
+    """Extended execution response with statistics."""
 
-    dag_snapshot: Optional[Dict[str, Any]] = Field(
-        default=None,
-        deprecated=True,
-        description="DEPRECATED: Use checkpoint endpoints (GET /executions/{id}/dag) instead. "
-                    "This field now sourced from checkpoints, not Execution.dag_snapshot column. "
-                    "Will be removed in v0.3.0."
-    )
     statistics: Optional[DAGStatisticsResponse] = None
 
 
@@ -113,6 +109,10 @@ class CheckpointResponse(BaseModel):
     file_path: Optional[str] = None
     file_size_bytes: Optional[int] = None
     compressed: bool
+    dag_snapshot: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="DAG snapshot containing task hierarchy and execution state"
+    )
 
 
 class CheckpointListResponse(BaseModel):
@@ -183,47 +183,6 @@ class ErrorResponse(BaseModel):
     timestamp: datetime
 
 
-class VisualizationOptions(BaseModel):
-    """Options for controlling visualization detail level."""
-
-    show_ids: bool = Field(default=False, description="Show full task IDs")
-    show_timing: bool = Field(default=True, description="Show execution times and durations")
-    show_tokens: bool = Field(default=True, description="Show token usage and costs")
-    max_goal_length: int = Field(default=60, ge=0, description="Maximum goal text length (0 = unlimited)")
-    verbose: bool = Field(default=False, description="Enable all details (overrides other flags)")
-    fancy: bool = Field(default=True, description="Use Rich library for fancy CLI visualization (default) or plain text")
-    show_io: bool = Field(default=False, description="Show full Input/Output panels (off by default)")
-    width: Optional[int] = Field(default=None, description="Force console width for rendering (e.g., 180)")
-
-
-class VisualizationRequest(BaseModel):
-    """Request schema for generating visualizations."""
-
-    visualizer_type: str = Field(
-        ...,
-        description="Type of visualizer: tree, timeline, statistics, context_flow, llm_trace"
-    )
-    profile: Optional[str] = Field(default=None, description="Configuration profile name to load")
-    include_subgraphs: bool = Field(default=True, description="Include subgraph tasks")
-    format: str = Field(default="text", description="Output format: text, json")
-    data_source: str = Field(
-        default="checkpoint",
-        description="Data source: 'checkpoint' (DAG snapshots from PostgreSQL) or 'mlflow' (DSPy traces from MLflow)"
-    )
-    options: Optional[VisualizationOptions] = Field(
-        default=None,
-        description="Visualization detail options (uses defaults if not provided)"
-    )
-
-
-class VisualizationResponse(BaseModel):
-    """Response schema for visualization output."""
-
-    execution_id: str
-    visualizer_type: str
-    content: str
-    format: str
-    generated_at: datetime
 
 
 class MetricsResponse(BaseModel):
@@ -249,3 +208,18 @@ class StatusPollingResponse(BaseModel):
     total_tasks: int
     estimated_remaining_seconds: Optional[int] = None
     last_updated: datetime
+
+
+class ExecutionDataResponse(BaseModel):
+    """Response schema for consolidated execution data from MLflow traces.
+
+    This endpoint provides real-time trace data suitable for live visualization.
+    Data is fetched from MLflow and consolidated by ExecutionDataService.
+    Searches all MLflow experiments by execution_id tag.
+    """
+
+    execution_id: str
+    tasks: List[Dict[str, Any]]  # Task entries with agent_executions
+    summary: Dict[str, Any]  # Aggregated metrics
+    traces: List[Dict[str, Any]]  # Trace metadata
+    fallback_spans: List[Dict[str, Any]]  # Spans without task_id

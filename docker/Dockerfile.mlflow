@@ -1,7 +1,7 @@
 FROM ghcr.io/mlflow/mlflow:latest
 
-# Install psycopg2 for PostgreSQL support
-RUN pip install psycopg2-binary
+# Install dependencies for PostgreSQL and S3/MinIO support
+RUN pip install psycopg2-binary boto3
 
 # Create mlflow directories with proper permissions
 RUN mkdir -p /mlflow /mlflow/artifacts && \

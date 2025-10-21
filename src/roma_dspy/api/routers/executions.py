@@ -12,6 +12,7 @@ from roma_dspy.api.schemas import (
     ExecutionDetailResponse,
     ExecutionListResponse,
     StatusPollingResponse,
+    ExecutionDataResponse,
     ErrorResponse,
 )
 from roma_dspy.api.helpers import (
@@ -321,4 +322,63 @@ async def cancel_execution(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to cancel execution: {str(e)}"
+        )
+
+
+@router.get("/executions/{execution_id}/data", response_model=ExecutionDataResponse)
+async def get_execution_data(
+    request: Request,
+    execution_id: str,
+    storage: PostgresStorage = Depends(get_storage)
+) -> ExecutionDataResponse:
+    """
+    Get consolidated execution data from MLflow traces.
+
+    This endpoint fetches and consolidates MLflow trace data for real-time visualization.
+    It uses ExecutionDataService to fetch traces and build task/agent execution structure.
+
+    Use this for:
+    - Live TUI updates (poll this endpoint periodically)
+    - Real-time visualization of task progress
+    - Accessing detailed span/token metrics
+
+    Args:
+        execution_id: Execution ID
+
+    Returns:
+        Consolidated execution data with tasks, agent executions, spans, and metrics
+    """
+    # Verify execution exists in storage
+    execution = await storage.get_execution(execution_id)
+    if not execution:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Execution {execution_id} not found"
+        )
+
+    # Get MLflow tracking URI from environment
+    # Docker sets MLFLOW_TRACKING_URI=http://mlflow:5000
+    import os
+    mlflow_tracking_uri = os.getenv('MLFLOW_TRACKING_URI', 'http://127.0.0.1:5000')
+
+    try:
+        # Import ExecutionDataService here to avoid circular dependencies
+        from roma_dspy.core.services.execution_data_service import ExecutionDataService
+
+        # Create service instance
+        # Searches all experiments by execution_id tag (no experiment name needed)
+        service = ExecutionDataService(
+            mlflow_tracking_uri=mlflow_tracking_uri,
+        )
+
+        # Get consolidated data
+        data = service.get_execution_data(execution_id)
+
+        return ExecutionDataResponse(**data)
+
+    except Exception as e:
+        logger.error(f"Failed to get execution data for {execution_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get execution data: {str(e)}"
         )

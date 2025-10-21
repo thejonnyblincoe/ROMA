@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dspy
 import inspect
+import threading
 import time
 from typing import Union, Any, Optional, Dict, Mapping, Sequence, Mapping as TMapping, List, TYPE_CHECKING
 
@@ -27,8 +28,9 @@ class BaseModule(dspy.Module):
     - Sync and async entrypoints (forward / aforward) with optional tools, context and per-call kwargs.
     """
 
-    # Class-level counter for instance IDs
+    # Class-level counter for instance IDs (thread-safe)
     _instance_counter = 0
+    _instance_counter_lock = threading.Lock()
 
     def __call__(self, *args, **kwargs):
         """Delegate to forward method for compatibility with runtime calls."""
@@ -44,16 +46,24 @@ class BaseModule(dspy.Module):
         model: Optional[str] = None,
         model_config: Optional[Mapping[str, Any]] = None,
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
+        config_demos: Optional[List[Any]] = None,
         context_defaults: Optional[Dict[str, Any]] = None,
         **strategy_kwargs: Any,
     ) -> None:
         super().__init__()
 
-        # Assign unique instance ID for debugging
-        BaseModule._instance_counter += 1
-        self._instance_id = BaseModule._instance_counter
+        # Assign unique instance ID for debugging (thread-safe)
+        with BaseModule._instance_counter_lock:
+            BaseModule._instance_counter += 1
+            self._instance_id = BaseModule._instance_counter
+
+        # Lock for lazy predictor initialization (thread-safe)
+        self._lazy_init_lock = threading.Lock()
 
         self.signature = signature
+
+        # Store config demos (for few-shot prompting)
+        self._config_demos: List[Any] = list(config_demos or [])
 
         # If config is provided, use it to set up the module
         if config is not None:
@@ -110,7 +120,11 @@ class BaseModule(dspy.Module):
         else:
             # Build predictor immediately for non-tool strategies or legacy tool mode
             if prediction_strategy in (PredictionStrategy.REACT, PredictionStrategy.CODE_ACT):
-                build_kwargs.setdefault("tools", self._tools or {})
+                # DSPy ReAct expects tools as a list, not dict
+                # When iterating "for t in tools", dict gives keys (strings), not values (callables)
+                # Convert dict values to list for predictor initialization
+                tools_dict = self._tools or {}
+                build_kwargs.setdefault("tools", list(tools_dict.values()) if tools_dict else [])
             self._predictor = prediction_strategy.build(self.signature, **build_kwargs)
             self._lazy_init_needed = False
             self._prediction_strategy = None
@@ -141,9 +155,17 @@ class BaseModule(dspy.Module):
 
         build_kwargs = dict(strategy_kwargs)
         if prediction_strategy in (PredictionStrategy.REACT, PredictionStrategy.CODE_ACT) and self._tools:
-            build_kwargs.setdefault("tools", self._tools)
+            # DSPy ReAct expects tools as a list, not dict
+            # When iterating "for t in tools", dict gives keys (strings), not values (callables)
+            # Convert dict values to list for predictor initialization
+            build_kwargs.setdefault("tools", list(self._tools.values()))
 
         self._predictor = prediction_strategy.build(self.signature, **build_kwargs)
+
+        # Initialize lazy init state (used in _update_predictor_tools)
+        self._lazy_init_needed = False
+        self._prediction_strategy = None
+        self._build_kwargs = None
 
         if lm is not None and model is not None:
             logger.warning(
@@ -170,6 +192,7 @@ class BaseModule(dspy.Module):
         input_task: str,
         *,
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
+        demos: Optional[List[Any]] = None,
         config: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
         context_payload: Optional[str] = None,
@@ -186,6 +209,10 @@ class BaseModule(dspy.Module):
         Args:
             input_task: The string for the signature input field ('goal').
             tools: Optional tools (dspy.Tool objects) to use for this call.
+            demos: Optional few-shot demos (dspy.Example objects) to use for this call.
+                   These are merged with config demos (config demos first, then runtime demos).
+                   Pass None or omit to use only config demos. Pass [] to use config demos only.
+                   Note: Currently no way to clear config demos at runtime.
             config: Optional per-call LM overrides.
             context: Dict passed into dspy.context(...) for this call (DSPy runtime config).
             context_payload: XML string to pass to signature's context field (agent instructions).
@@ -194,6 +221,9 @@ class BaseModule(dspy.Module):
         """
         # Sync forward: toolkit-based modules have empty tools (graceful degradation)
         runtime_tools = self._merge_tools(self._tools, tools)
+
+        # Prepare demos (merge config + runtime demos)
+        merged_demos = self._prepare_demos(demos)
 
         # Build context kwargs (merge defaults and per-call), ensure an LM is set
         ctx = dict(self._context_defaults)
@@ -209,6 +239,8 @@ class BaseModule(dspy.Module):
             extra["config"] = config
         if runtime_tools:
             extra["tools"] = runtime_tools
+        if merged_demos:
+            extra["demos"] = merged_demos
         if context_payload is not None:
             extra["context"] = context_payload
 
@@ -224,6 +256,7 @@ class BaseModule(dspy.Module):
         input_task: str,
         *,
         tools: Optional[Union[Sequence[Any], TMapping[str, Any]]] = None,
+        demos: Optional[List[Any]] = None,
         config: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
         context_payload: Optional[str] = None,
@@ -237,6 +270,10 @@ class BaseModule(dspy.Module):
         Args:
             input_task: The string for the signature input field ('goal').
             tools: Optional tools (dspy.Tool objects) to use for this call.
+            demos: Optional few-shot demos (dspy.Example objects) to use for this call.
+                   These are merged with config demos (config demos first, then runtime demos).
+                   Pass None or omit to use only config demos. Pass [] to use config demos only.
+                   Note: Currently no way to clear config demos at runtime.
             config: Optional per-call LM overrides.
             context: Dict passed into dspy.context(...) for this call (DSPy runtime config).
             context_payload: XML string to pass to signature's context field (agent instructions).
@@ -250,6 +287,9 @@ class BaseModule(dspy.Module):
         # Update predictor's internal tools (for ReAct/CodeAct that don't accept tools as parameters)
         self._update_predictor_tools(runtime_tools)
 
+        # Prepare demos (merge config + runtime demos)
+        merged_demos = self._prepare_demos(demos)
+
         ctx = dict(self._context_defaults)
         if context:
             ctx.update(context)
@@ -262,6 +302,8 @@ class BaseModule(dspy.Module):
             extra["config"] = config
         if runtime_tools:
             extra["tools"] = runtime_tools
+        if merged_demos:
+            extra["demos"] = merged_demos
         if context_payload is not None:
             extra["context"] = context_payload
 
@@ -399,6 +441,26 @@ class BaseModule(dspy.Module):
         merged.update(to_add)
         return merged
 
+    def _prepare_demos(self, runtime_demos: Optional[List[Any]] = None) -> List[Any]:
+        """
+        Merge config demos and runtime demos.
+
+        Config demos are provided at module initialization (from YAML config),
+        runtime demos are provided at forward() call time.
+
+        Merging strategy: config demos first, then runtime demos (concatenation).
+
+        Args:
+            runtime_demos: Optional demos provided at runtime via forward() method
+
+        Returns:
+            List of dspy.Example objects (config + runtime)
+        """
+        if runtime_demos is None:
+            return list(self._config_demos)
+        # Concatenate: config demos + runtime demos
+        return list(self._config_demos) + list(runtime_demos)
+
     def _update_predictor_tools(self, runtime_tools: Dict[str, Any]) -> None:
         """
         Update predictor's internal tools dynamically.
@@ -414,22 +476,25 @@ class BaseModule(dspy.Module):
         if not runtime_tools:
             return
 
-        # Case 1: Lazy initialization - build predictor with tools
+        # Case 1: Lazy initialization - build predictor with tools (thread-safe with double-checked locking)
         if self._lazy_init_needed and self._predictor is None:
-            build_kwargs = dict(self._build_kwargs)
-            # DSPy ReAct/CodeAct expect tools as a list of callables, not a dict
-            # Pass list of tool functions (values), not dict keys
-            build_kwargs["tools"] = list(runtime_tools.values())
-            self._predictor = self._prediction_strategy.build(self.signature, **build_kwargs)
-            logger.debug(
-                f"Initialized {self._prediction_strategy.value} predictor with {len(runtime_tools)} custom tools + finish tool"
-            )
-            # Patch finish tool to accept kwargs (prevents LLM from passing output params)
-            self._patch_finish_tool()
-            # Clear lazy init state
-            self._lazy_init_needed = False
-            self._prediction_strategy = None
-            self._build_kwargs = None
+            with self._lazy_init_lock:
+                # Double-check: another thread might have initialized while we waited for the lock
+                if self._lazy_init_needed and self._predictor is None:
+                    build_kwargs = dict(self._build_kwargs)
+                    # DSPy ReAct/CodeAct expect tools as a list of callables, not a dict
+                    # Pass list of tool functions (values), not dict keys
+                    build_kwargs["tools"] = list(runtime_tools.values())
+                    self._predictor = self._prediction_strategy.build(self.signature, **build_kwargs)
+                    logger.debug(
+                        f"Initialized {self._prediction_strategy.value} predictor with {len(runtime_tools)} custom tools + finish tool"
+                    )
+                    # Patch finish tool to accept kwargs (prevents LLM from passing output params)
+                    self._patch_finish_tool()
+                    # Clear lazy init state
+                    self._lazy_init_needed = False
+                    self._prediction_strategy = None
+                    self._build_kwargs = None
             return
 
         # Case 2: Dynamic update - update existing predictor's tools

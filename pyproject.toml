@@ -31,6 +31,18 @@ dependencies = [
     "greenlet>=3.2.4",
     "httpx>=0.26.0",
     "textual>=0.60.0",
+    "datasets>=4.2.0",
+    "dockerfile-parse>=2.0.1",
+    "e2b>=2.2.0",
+    "e2b-code-interpreter>=2.0.0",
+    "httptools>=0.6.4",
+    "uvloop>=0.21.0",
+    "vulture>=2.14",
+    "watchfiles>=1.1.0",
+    "websockets>=15.0.1",
+    "boto3>=1.40.55",
+    "fastmcp>=2.12.4",
+    "jinja2>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +54,10 @@ api = [
     "uvicorn[standard]>=0.27.0",
     "httpx>=0.26.0",
     "python-multipart>=0.0.6",
+]
+mcp = [
+    "httpx-sse>=0.4.0",
+    "mcp>=1.0.0",
 ]
 
 [project.scripts]

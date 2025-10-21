@@ -3,6 +3,7 @@ Recursive solver for hierarchical task decomposition with depth constraints.
 """
 
 import asyncio
+import threading
 import warnings
 from datetime import datetime, UTC
 from typing import Callable, Optional, Union, Tuple, Dict, List, TYPE_CHECKING
@@ -129,7 +130,18 @@ class RecursiveSolver:
             from roma_dspy.config.schemas.base import CacheConfig
             self._configure_dspy_cache(CacheConfig())
 
-        self.last_dag = None  # Store last DAG for visualization
+        # Thread-safe storage for last_dag (fixes GEPA parallel execution race condition)
+        self._local = threading.local()
+
+    @property
+    def last_dag(self) -> Optional[TaskDAG]:
+        """Get last DAG for current thread (thread-safe)."""
+        return getattr(self._local, 'last_dag', None)
+
+    @last_dag.setter
+    def last_dag(self, value: Optional[TaskDAG]) -> None:
+        """Set last DAG for current thread (thread-safe)."""
+        self._local.last_dag = value
 
     def _configure_dspy_cache(self, cache_config: "CacheConfig") -> None:
         """
@@ -576,7 +588,11 @@ class RecursiveSolver:
         priority_fn: Optional[Callable[[TaskNode], int]] = None,
         concurrency: int = 1,
     ) -> TaskNode:
-        """Synchronous wrapper around the event-driven scheduler."""
+        """Synchronous wrapper around the event-driven scheduler.
+
+        Thread-safe: Works correctly when called from DSPy's ParallelExecutor worker threads.
+        Ensures proper cleanup of database connections before event loop closes.
+        """
 
         try:
             loop = asyncio.get_running_loop()
@@ -586,15 +602,30 @@ class RecursiveSolver:
         if loop and loop.is_running():
             raise RuntimeError("event_solve() cannot be called from a running event loop")
 
-        return asyncio.run(
-            self.async_event_solve(
-                task=task,
-                dag=dag,
-                depth=depth,
-                priority_fn=priority_fn,
-                concurrency=concurrency,
-            )
-        )
+        # Wrap execution with proper cleanup for worker threads
+        async def _run_with_cleanup():
+            try:
+                result = await self.async_event_solve(
+                    task=task,
+                    dag=dag,
+                    depth=depth,
+                    priority_fn=priority_fn,
+                    concurrency=concurrency,
+                )
+                return result
+            finally:
+                # Critical: Shutdown PostgresStorage before event loop closes
+                # This prevents "RuntimeError: Event loop is closed" when cleaning up
+                # database connections in DSPy's worker threads
+                if self.postgres_storage and self.postgres_storage._local.initialized:
+                    try:
+                        await self.postgres_storage.shutdown()
+                        logger.debug("PostgresStorage shutdown complete before event loop closure")
+                    except Exception as e:
+                        # Non-fatal: log but don't fail the task
+                        logger.debug(f"PostgresStorage shutdown error (non-fatal): {e}")
+
+        return asyncio.run(_run_with_cleanup())
 
     # ==================== Initialization ====================
 

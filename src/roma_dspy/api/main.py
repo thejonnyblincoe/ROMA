@@ -178,7 +178,6 @@ def create_app(enable_rate_limit: bool = True) -> FastAPI:
         health,
         executions,
         checkpoints,
-        visualizations,
         metrics,
         traces,
     )
@@ -186,7 +185,6 @@ def create_app(enable_rate_limit: bool = True) -> FastAPI:
     app.include_router(health.router, tags=["health"])
     app.include_router(executions.router, prefix="/api/v1", tags=["executions"])
     app.include_router(checkpoints.router, prefix="/api/v1", tags=["checkpoints"])
-    app.include_router(visualizations.router, prefix="/api/v1", tags=["visualizations"])
     app.include_router(metrics.router, prefix="/api/v1", tags=["metrics"])
     app.include_router(traces.router, prefix="/api/v1", tags=["traces"])
 

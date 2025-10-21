@@ -55,30 +55,57 @@ class FileToolkit(BaseToolkit):
         return True
 
     def _get_full_path(self, file_path: str) -> Path:
-        """Get full path relative to base directory with security validation."""
+        """Get full path with security validation (supports both relative and absolute paths).
+
+        Accepts:
+        - Relative paths: resolved relative to base_directory
+        - Absolute paths: validated to be within base_directory
+
+        Security checks:
+        - Path traversal prevention (..)
+        - Null byte detection
+        - Base directory containment validation
+        """
         # Additional security checks on the input path
         if not file_path or not file_path.strip():
             raise ValueError("File path cannot be empty")
-
-        # Check for obvious path traversal attempts
-        if '..' in file_path or file_path.startswith('/'):
-            raise ValueError(f"Invalid file path (path traversal detected): '{file_path}'")
 
         # Check for null bytes (security issue)
         if '\x00' in file_path:
             raise ValueError(f"File path contains null byte: '{file_path}'")
 
-        full_path = Path(self.base_directory) / file_path
-        resolved_path = full_path.resolve()
+        # Check for path traversal attempts
+        if '..' in file_path:
+            raise ValueError(f"Invalid file path (path traversal detected): '{file_path}'")
+
+        # Resolve base directory once
         base_resolved = Path(self.base_directory).resolve()
 
-        # Ensure the resolved path is within base directory (security check)
-        try:
-            resolved_path.relative_to(base_resolved)
-        except ValueError:
-            raise ValueError(f"File path '{file_path}' resolves outside base directory")
+        # Handle absolute vs relative paths
+        path_obj = Path(file_path)
+        if path_obj.is_absolute():
+            # Absolute path: validate it's within base directory
+            resolved_path = path_obj.resolve()
+            try:
+                resolved_path.relative_to(base_resolved)
+            except ValueError:
+                raise ValueError(
+                    f"Invalid file path (path traversal detected): '{file_path}'"
+                )
+            # Return the resolved absolute path
+            return resolved_path
+        else:
+            # Relative path: resolve relative to base directory
+            full_path = Path(self.base_directory) / file_path
+            resolved_path = full_path.resolve()
 
-        return full_path
+            # Ensure the resolved path is within base directory (security check)
+            try:
+                resolved_path.relative_to(base_resolved)
+            except ValueError:
+                raise ValueError(f"File path '{file_path}' resolves outside base directory")
+
+            return full_path
 
     def save_file(self, file_path: str, content: str, overwrite: bool = False) -> str:
         """

@@ -147,24 +147,30 @@ class MLflowManager:
             if target:
                 lifecycle = getattr(target, "lifecycle_stage", "").lower()
                 if lifecycle == "deleted":
-                    # Restore then set as active
-                    client.restore_experiment(target.experiment_id)
-                    mlflow_mod.set_experiment(name)
-                    logger.info(f"Restored deleted MLflow experiment and set active: {name}")
-                    return
+                    # Permanently delete soft-deleted experiment and recreate with S3 storage
+                    logger.info(f"Found soft-deleted experiment '{name}' (ID: {target.experiment_id}). Permanently deleting to recreate with S3 storage...")
+                    try:
+                        # Permanently delete from database
+                        client.delete_experiment(target.experiment_id)
+                        logger.info(f"Permanently deleted experiment '{name}' (ID: {target.experiment_id})")
+                    except Exception as del_err:
+                        logger.warning(f"Could not permanently delete experiment: {del_err}. Will try to create anyway.")
+                    # Fall through to create new experiment below
                 else:
-                    # Exists but set_experiment failed for another reason – re-raise for visibility
+                    # Exists and is active but set_experiment failed – re-raise for visibility
                     raise RuntimeError(
                         f"Experiment '{name}' exists (stage={lifecycle}) but could not be activated."
                     )
 
-            # Not found: create with HTTP-served artifact root if possible
-            safe = name.replace(" ", "_")
-            artifact_location = f"mlflow-artifacts:/{safe}"
+            # Not found or was deleted: create with S3 artifact root (uses MinIO for local dev, AWS S3 for prod)
+            # Explicitly set artifact_location to ensure S3 storage is used
+            import os
+            artifact_root = os.environ.get("MLFLOW_DEFAULT_ARTIFACT_ROOT", "s3://mlflow")
             try:
-                client.create_experiment(name, artifact_location=artifact_location)
+                exp_id = client.create_experiment(name, artifact_location=artifact_root)
+                experiment = client.get_experiment(exp_id)
                 logger.info(
-                    f"Created MLflow experiment '{name}' at {artifact_location} and set active"
+                    f"Created MLflow experiment '{name}' at {experiment.artifact_location} and set active"
                 )
             except Exception as ce:
                 logger.warning(f"create_experiment failed for '{name}': {ce}. Falling back to set_experiment")

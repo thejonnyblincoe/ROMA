@@ -44,7 +44,7 @@ async def execution_to_detail_response(
     dag: Optional[TaskDAG] = None
 ) -> ExecutionDetailResponse:
     """
-    Convert Execution model to ExecutionDetailResponse with DAG data.
+    Convert Execution model to ExecutionDetailResponse with statistics.
 
     Args:
         execution: Execution model from database
@@ -52,15 +52,13 @@ async def execution_to_detail_response(
         dag: Optional live TaskDAG (fallback if no checkpoint available)
 
     Returns:
-        ExecutionDetailResponse with DAG snapshot and statistics
+        ExecutionDetailResponse with statistics
     """
     base = execution_to_response(execution)
 
-    # Get DAG snapshot from checkpoint (preferred) or live DAG (fallback)
-    dag_snapshot = None
     statistics = None
 
-    # Try to get latest checkpoint first (modern approach)
+    # Try to get latest checkpoint first
     if storage:
         try:
             checkpoint = await storage.get_latest_checkpoint(execution.execution_id, valid_only=True)
@@ -84,12 +82,10 @@ async def execution_to_detail_response(
                         is_complete=stats_data.get('is_complete', False),
                     )
         except Exception:
-            # Checkpoint fetch failed - fall through to legacy/live DAG
             pass
 
     # Fallback to live DAG if checkpoint not available
-    if not dag_snapshot and dag:
-        dag_snapshot = dag.export_to_dict()
+    if not statistics and dag:
         stats = dag.get_statistics()
         statistics = DAGStatisticsResponse(
             dag_id=stats['dag_id'],
@@ -102,7 +98,6 @@ async def execution_to_detail_response(
 
     return ExecutionDetailResponse(
         **base.model_dump(),
-        dag_snapshot=dag_snapshot,
         statistics=statistics,
     )
 
