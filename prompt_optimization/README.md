@@ -10,7 +10,12 @@ prompt_optimization/
 ├── datasets.py            # Dataset loaders (AIMO, AIME)
 ├── solver_setup.py        # Solver factory with instruction constants
 ├── judge.py              # LLM judge for component evaluation
-├── metrics.py            # Evaluation metrics (basic + with feedback)
+├── metrics/              # Metric implementations (basic, search, number, feedback)
+│   ├── __init__.py
+│   ├── base.py
+│   ├── metric_with_feedback.py
+│   ├── number_metric.py
+│   └── search_metric.py
 ├── selectors.py          # Component selector strategies
 ├── optimizer.py          # GEPA optimizer factory
 └── run_optimization.py   # Main CLI script
@@ -74,10 +79,15 @@ solver = create_solver_module(config)
 
 # Create judge and metric
 judge = ComponentJudge(config.judge_lm)
+# Wrap a scoring metric (defaults to basic integer comparison if omitted)
 metric = MetricWithFeedback(judge)
 
 # Create optimizer
 optimizer = create_optimizer(config, metric, component_selector="planner_only")
+
+# Alternative: plug in a custom scoring metric (e.g., search accuracy)
+# from prompt_optimization.metrics import NumberMetric
+# metric = MetricWithFeedback(judge, scoring_metric=NumberMetric())
 
 # Run optimization
 optimized = optimizer.compile(solver, trainset=train, valset=val)
@@ -120,7 +130,7 @@ metric = MetricWithFeedback(judge)
 
 # Async metric evaluation
 async def evaluate_metric():
-    result = await metric.__acall__(
+    result = await metric.aforward(
         example=example,
         prediction=prediction,
         pred_name="planner",
@@ -154,7 +164,7 @@ usage: run_optimization.py [-h] [--train-size TRAIN_SIZE] [--val-size VAL_SIZE]
 
 - ✅ **No global state** - All components properly initialized and passed as dependencies
 - ✅ **Uses AsyncParallelExecutor** - Leverages existing async utilities from `roma_dspy.utils`
-- ✅ **Async support** - Judge and metrics support both sync (`__call__`) and async (`__acall__`) execution
+- ✅ **Async support** - Judge and metrics support both sync (`forward`) and async (`aforward`) execution
 - ✅ **Fully configurable** - Dataclass-based configuration with CLI overrides
 - ✅ **Modular** - Each component is independently testable and reusable
 - ✅ **Type-safe** - Proper typing throughout
@@ -171,7 +181,7 @@ The refactoring extracts all logic from `prompt_optimization.ipynb`:
 | Instructions | `solver_setup.py` (constants) |
 | Dataset loading | `datasets.py:load_aimo_datasets()` |
 | Judge setup | `judge.py:ComponentJudge` |
-| Metrics | `metrics.py:basic_metric`, `metrics.py:MetricWithFeedback` |
+| Metrics | `metrics/__init__.py:basic_metric`, `metrics/metric_with_feedback.py:MetricWithFeedback` |
 | Selectors | `selectors.py:*_selector` |
 | GEPA optimizer | `optimizer.py:create_optimizer()` |
 | Execution | `run_optimization.py:main()` |

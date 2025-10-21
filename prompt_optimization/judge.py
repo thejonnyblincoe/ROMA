@@ -2,7 +2,7 @@
 
 import dspy
 from .config import LMConfig
-from .grader_prompt import GRADER_PROMPT
+from .prompts import GRADER_PROMPT
 
 
 judge_config = LMConfig("openrouter/anthropic/claude-sonnet-4.5", temperature=0.75, max_tokens=128000, cache=True)
