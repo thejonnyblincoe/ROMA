@@ -78,6 +78,7 @@ htmlcov/
 
 # Sensitive files
 *.key
+
 *.pem
 *.crt
 secrets/
