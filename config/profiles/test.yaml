@@ -7,7 +7,7 @@ environment: development
 agents:
   atomizer:
     llm:
-      model: "openrouter/google/gemini-2.5-flash-preview-09-2025"
+      model: "openrouter/google/gemini-2.5-flash-lite-preview-09-2025"
       temperature: 0.7
       max_tokens: 128000
       timeout: 30
@@ -50,7 +50,7 @@ agents:
 
   executor:
     llm:
-      model: "cerebras/gpt-oss-120b"
+      model: "fireworks_ai/accounts/fireworks/models/kimi-k2-instruct-0905"
       temperature: 0.75
       max_tokens: 128000
       timeout: 30
@@ -71,7 +71,7 @@ agents:
 
   aggregator:
     llm:
-      model: "cerebras/gpt-oss-120b"
+      model: "fireworks_ai/accounts/fireworks/models/kimi-k2-instruct-0905"
       temperature: 0.75
       max_tokens: 128000
       timeout: 30
@@ -158,7 +158,7 @@ agent_mapping:
   # Required: keep an enabled default executor as fallback and to satisfy registry
   default_executor:
     llm:
-      model: "cerebras/gpt-oss-120b"
+      model: "fireworks_ai/accounts/fireworks/models/gpt-oss-120b"
       temperature: 0.7
       max_tokens: 128000
       timeout: 30
@@ -216,7 +216,7 @@ runtime:
   timeout: 30
   verbose: false
   max_depth: 1
-  enable_logging: true
+  enable_logging: false
   log_level: DEBUG
 
   cache:
@@ -304,8 +304,8 @@ observability:
     max_goal_length: 200
 
 logging:
-  level: DEBUG
-  log_dir: null
+  level: ERROR
+  log_dir: logs/test/
   console_format: default      # default | minimal | detailed
   file_format: detailed        # default | detailed | json
   colorize: true

@@ -4,7 +4,7 @@ from .config import OptimizationConfig, get_default_config, LMConfig, patch_roma
 from .datasets import load_aimo_datasets, load_frames_dataset, load_seal0_dataset, load_simpleqa_verified_dataset
 from .solver_setup import create_solver_module
 from .judge import ComponentJudge, JudgeSignature
-from .metrics import basic_metric, MetricWithFeedback
+from .metrics import MetricWithFeedback, SearchMetric
 from .selectors import (
     SELECTORS,
     planner_only_selector,
