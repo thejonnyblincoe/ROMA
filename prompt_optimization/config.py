@@ -8,7 +8,7 @@ from dspy import ChatAdapter, Adapter
 
 from roma_dspy.config.schemas.root import ROMAConfig
 
-from .seed_prompts import AGGREGATOR_PROMPT, ATOMIZER_PROMPT, PLANNER_PROMPT
+from .prompts import AGGREGATOR_PROMPT, ATOMIZER_PROMPT, PLANNER_PROMPT
 
 
 @dataclass

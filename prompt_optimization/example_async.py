@@ -10,7 +10,7 @@ from prompt_optimization import (
     load_aimo_datasets,
     create_solver_module,
 )
-from prompt_optimization.grader_prompt import GRADER_PROMPT
+from prompt_optimization.prompts import GRADER_PROMPT
 
 
 async def example_async_judge():
@@ -71,7 +71,7 @@ async def example_async_metric():
     print(f"\nEvaluating {len(examples)} examples in parallel...")
 
     async def eval_one(example, prediction, idx):
-        result = await metric.__acall__(
+        result = await metric.aforward(
             example=example,
             prediction=prediction,
             pred_name="planner",

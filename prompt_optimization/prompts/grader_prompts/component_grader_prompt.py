@@ -1,4 +1,4 @@
-GRADER_PROMPT = """# Task Decomposition System Grader
+COMPONENT_GRADER_PROMPT = """# Task Decomposition System Grader
 
 You are evaluating a **recursive hierarchical task decomposition agent**. The agent solves complex tasks by routing work through the
 following components:
