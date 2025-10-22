@@ -1,6 +1,139 @@
-# ROMA DSPy Modules
+<div align="center">
+    <img src="./assets/sentient-logo-new-M.png" alt="alt text" width="60%"/>
+    <h1>ROMA: Recursive Open Meta-Agents</h1>
+</div>
 
-> Building reusable large-language-model agents on top of [DSPy](https://github.com/stanfordnlp/dspy) with a pragmatic set of task-focused modules. This document explains how every module under `roma_dspy.core.modules` fits together, how to configure them, and how to compose them into production-grade pipelines.
+<p align="center">
+  <strong>Building hierarchical high-performance multi-agent systems made easy! (Beta) </strong>
+</p>
+
+<p align="center">
+<a href="https://trendshift.io/repositories/14848" target="_blank"><img src="https://trendshift.io/api/badge/repositories/14848" alt="sentient-agi%2FROMA | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+</p>
+
+<p align="center">
+  <a href="https://sentient.xyz/" target="_blank" style="margin: 2px;">
+    <img alt="Homepage" src="https://img.shields.io/badge/Sentient-Homepage-%23EAEAEA?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIzNDEuMzMzIiBoZWlnaHQ9IjM0MS4zMzMiIHZlcnNpb249IjEuMCIgdmlld0JveD0iMCAwIDI1NiAyNTYiPjxwYXRoIGQ9Ik0xMzIuNSAyOC40Yy0xLjUgMi4yLTEuMiAzLjkgNC45IDI3LjIgMy41IDEzLjcgOC41IDMzIDExLjEgNDIuOSAyLjYgOS45IDUuMyAxOC42IDYgMTkuNCAzLjIgMy4zIDExLjctLjggMTMuMS02LjQuNS0xLjktMTcuMS03Mi0xOS43LTc4LjYtMS4yLTMtNy41LTYuOS0xMS4zLTYuOS0xLjYgMC0zLjEuOS00LjEgMi40ek0xMTAgMzBjLTEuMSAxLjEtMiAzLjEtMiA0LjVzLjkgMy40IDIgNC41IDMuMSAyIDQuNSAyIDMuNC0uOSA0LjUtMiAyLTMuMSAyLTQuNS0uOS0zLjQtMi00LjUtMy4xLTItNC41LTItMy40LjktNC41IDJ6TTgxLjUgNDYuMWMtMi4yIDEuMi00LjYgMi44LTUuMiAzLjctMS44IDIuMy0xLjYgNS42LjUgNy40IDEuMyAxLjIgMzIuMSAxMC4yIDQ1LjQgMTMuMyAzIC44IDYuOC0yLjIgNi44LTUuMyAwLTMuNi0yLjItOS4yLTMuOS0xMC4xQzEyMy41IDU0LjIgODcuMiA0NCA4NiA0NGMtLjMuMS0yLjMgMS00LjUgMi4xek0xNjUgNDZjLTEuMSAxLjEtMiAyLjUtMiAzLjIgMCAyLjggMTEuMyA0NC41IDEyLjYgNDYuNS45IDEuNSAyLjQgMi4zIDQuMiAyLjMgMy44IDAgOS4yLTUuNiA5LjItOS40IDAtMS41LTIuMS0xMC45LTQuNy0yMC44bC00LjctMTguMS00LjUtMi44Yy01LjMtMy40LTcuNC0zLjYtMTAuMS0uOXpNNDguNyA2NS4xYy03LjcgNC4xLTYuOSAxMC43IDEuNSAxMyAyLjQuNiAyMS40IDUuOCA0Mi4yIDExLjYgMjIuOCA2LjIgMzguOSAxMC4yIDQwLjMgOS44IDMuNS0uOCA0LjYtMy44IDMuMi04LjgtMS41LTUuNy0yLjMtNi41LTguMy04LjJDOTQuMiA3My4xIDU2LjYgNjMgNTQuOCA2M2MtMS4zLjEtNCAxLTYuMSAyLjF6TTE5OC4yIDY0LjdjLTMuMSAyLjgtMy41IDUuNi0xLjEgOC42IDQgNS4xIDEwLjkgMi41IDEwLjktNC4xIDAtNS4zLTUuOC03LjktOS44LTQuNXpNMTgxLjggMTEzLjFjLTI3IDI2LjQtMzEuOCAzMS41LTMxLjggMzMuOSAwIDEuNi43IDMuNSAxLjUgNC40IDEuNyAxLjcgNy4xIDMgMTAuMiAyLjQgMi4xLS4zIDU2LjktNTMuNCA1OS01Ny4xIDEuNy0zLjEgMS42LTkuOC0uMy0xMi41LTMuNi01LjEtNC45LTQuMi0zOC42IDI4Ljl6TTM2LjYgODguMWMtNSA0LTIuNCAxMC45IDQuMiAxMC45IDMuMyAwIDYuMi0yLjkgNi4yLTYuMyAwLTIuMS00LjMtNi43LTYuMy02LjctLjggMC0yLjYuOS00LjEgMi4xek02My40IDk0LjVjLTEuNi43LTguOSA3LjMtMTYuMSAxNC43TDM0IDEyMi43djUuNmMwIDYuMyAxLjYgOC43IDUuOSA4LjcgMi4xIDAgNi0zLjQgMTkuOS0xNy4zIDkuNS05LjUgMTcuMi0xOCAxNy4yLTE4LjkgMC00LjctOC40LTguNi0xMy42LTYuM3pNNjIuOSAxMzAuNiAzNCAxNTkuNXY1LjZjMCA2LjIgMS44IDguOSA2IDguOSAzLjIgMCA2Ni02Mi40IDY2LTY1LjYgMC0zLjMtMy41LTUuNi05LjEtNi4ybC01LS41LTI5IDI4Ljl6TTE5Ni4zIDEzNS4yYy05IDktMTYuNiAxNy4zLTE2LjkgMTguNS0xLjMgNS4xIDIuNiA4LjMgMTAgOC4zIDIuOCAwIDUuMi0yIDE3LjktMTQuOCAxNC41LTE0LjcgMTQuNy0xNC45IDE0LjctMTkuMyAwLTUuOC0yLjItOC45LTYuMi04LjktMi42IDAtNS40IDIuMy0xOS41IDE2LjJ6TTk2IDEzNi44Yy0yLjkuOS04IDYuNi04IDkgMCAxLjMgMi45IDEzLjQgNi40IDI3IDMuNiAxMy42IDcuOSAzMC4zIDkuNyAzNy4yIDEuNyA2LjkgMy42IDEzLjMgNC4xIDE0LjIuNSAxIDIuNiAyLjcgNC44IDMuOCA2LjggMy41IDExIDIuMyAxMS0zLjIgMC0zLTIwLjYtODMuMS0yMi4xLTg1LjktLjktMS45LTMuNi0yLjgtNS45LTIuMXpNMTIwLjUgMTU4LjRjLTEuOSAyLjktMS4yIDguNSAxLjQgMTEuNiAxLjEgMS40IDEyLjEgNC45IDM5LjYgMTIuNSAyMC45IDUuOCAzOC44IDEwLjUgMzkuOCAxMC41czMuNi0xIDUuNy0yLjJjOC4xLTQuNyA3LjEtMTAuNi0yLjMtMTMuMi0yOC4yLTguMS03OC41LTIxLjYtODAuMy0yMS42LTEuNCAwLTMgMS0zLjkgMi40ek0yMTAuNyAxNTguOGMtMS44IDEuOS0yLjIgNS45LS45IDcuOCAxLjUgMi4zIDUgMy40IDcuNiAyLjQgNi40LTIuNCA1LjMtMTEuMi0xLjUtMTEuOC0yLjQtLjItNCAuMy01LjIgMS42ek02OS42IDE2MmMtMiAyLjItMy42IDQuMy0zLjYgNC44LjEgMi42IDEwLjEgMzguNiAxMS4xIDM5LjkgMi4yIDIuNiA5IDUuNSAxMS41IDQuOSA1LTEuMyA0LjktMy0xLjUtMjcuNy0zLjMtMTIuNy02LjUtMjMuNy03LjItMjQuNS0yLjItMi43LTYuNC0xLjctMTAuMyAyLjZ6TTQ5LjYgMTgxLjVjLTIuNCAyLjUtMi45IDUuNC0xLjIgOEM1MiAxOTUgNjAgMTkzIDYwIDE4Ni42YzAtMS45LS44LTQtMS44LTQuOS0yLjMtMi4xLTYuNi0yLjItOC42LS4yek0xMjguNSAxODdjLTIuMyAyLjUtMS4zIDEwLjMgMS42IDEyLjggMi4yIDEuOSAzNC44IDExLjIgMzkuNCAxMS4yIDMuNiAwIDEwLjEtNC4xIDExLTcgLjYtMS45LTEuNy03LTMuMS03LS4yIDAtMTAuMy0yLjctMjIuMy02cy0yMi41LTYtMjMuMy02Yy0uOCAwLTIuMy45LTMuMyAyek0xMzYuNyAyMTYuOGMtMy40IDMuOC0xLjUgOS41IDMuNSAxMC43IDMuOSAxIDguMy0zLjQgNy4zLTcuMy0xLjItNS4xLTcuNS03LjEtMTAuOC0zLjR6Ii8%2BPC9zdmc%2B&link=https%3A%2F%2Fhuggingface.co%2FSentientagi" style="display: inline-block; vertical-align: middle;"/>
+  </a>
+  <a href="https://github.com/sentient-agi" target="_blank" style="margin: 2px;">
+    <img alt="GitHub" src="https://img.shields.io/badge/Github-sentient_agi-181717?logo=github" style="display: inline-block; vertical-align: middle;"/>
+  </a>
+  <a href="https://huggingface.co/Sentientagi" target="_blank" style="margin: 2px;">
+    <img alt="Hugging Face" src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-SentientAGI-ffc107?color=ffc107&logoColor=white" style="display: inline-block; vertical-align: middle;"/>
+  </a>
+</div>
+
+<div align="center" style="line-height: 1;">
+  <a href="https://discord.gg/sentientfoundation" target="_blank" style="margin: 2px;">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord-SentientAGI-7289da?logo=discord&logoColor=white&color=7289da" style="display: inline-block; vertical-align: middle;"/>
+  </a>
+  <a href="https://x.com/SentientAGI" target="_blank" style="margin: 2px;">
+    <img alt="Twitter Follow" src="https://img.shields.io/badge/-SentientAGI-grey?logo=x&link=https%3A%2F%2Fx.com%2FSentientAGI%2F" style="display: inline-block; vertical-align: middle;"/>
+  </a>
+</p>
+<p align="center">
+  <a href="https://www.sentient.xyz/blog/recursive-open-meta-agent">Technical Blog</a> •
+  <a href="docs/">Paper (Coming soon)</a> •
+  <a href="https://www.sentient.xyz/">Build Agents for $$$</a>
+</p>
+
+
+
+</div>
+
+## 📑 Table of Contents
+- [🧠 Conceptual Overview](#-conceptual-overview)
+- [📦 Installation & Setup](#-installation--setup)
+- [⚡ Quickstart: End-to-End Workflow](#-quickstart-end-to-end-workflow)
+- [⚙️ Configuration & Storage](#-configuration--storage)
+- [🧰 Toolkits](#-toolkits)
+- [🌐 REST API & CLI](#-rest-api--cli)
+- [🏗️ Core Building Block: `BaseModule`](#-core-building-block-basemodule)
+- [📚 Module Reference](#-module-reference)
+  - [⚛️ Atomizer](#-atomizer)
+  - [📋 Planner](#-planner)
+  - [⚙️ Executor](#-executor)
+  - [🔀 Aggregator](#-aggregator)
+  - [✅ Verifier](#-verifier)
+- [🎯 Advanced Patterns](#-advanced-patterns)
+- [🧪 Testing](#-testing)
+- [💡 Troubleshooting & Tips](#-troubleshooting--tips)
+- [📖 Glossary](#-glossary)
+
+---
+
+## 🎯 What is ROMA?
+
+<div align="center">
+    <img src="./assets/roma_run.gif" alt="alt text" width="80%"/>
+</div>
+<br>
+
+**ROMA** is a **meta-agent framework** that uses recursive hierarchical structures to solve complex problems. By breaking down tasks into parallelizable components, ROMA enables agents to tackle sophisticated reasoning challenges while maintaining transparency that makes context-engineering and iteration straightforward. The framework offers **parallel problem solving** where agents work simultaneously on different parts of complex tasks, **transparent development** with a clear structure for easy debugging, and **proven performance** demonstrated through our search agent's strong benchmark results. We've shown the framework's effectiveness, but this is just the beginning. As an **open-source and extensible** platform, ROMA is designed for community-driven development, allowing you to build and customize agents for your specific needs while benefiting from the collective improvements of the community.
+
+## 🏗️ How It Works
+
+
+**ROMA** framework processes tasks through a recursive **plan–execute loop**:
+
+```python
+def solve(task):
+    if is_atomic(task):                 # Step 1: Atomizer
+        return execute(task)            # Step 2: Executor
+    else:
+        subtasks = plan(task)           # Step 2: Planner
+        results = []
+        for subtask in subtasks:
+            results.append(solve(subtask))  # Recursive call
+        return aggregate(results)       # Step 3: Aggregator
+
+# Entry point:
+answer = solve(initial_request)
+```
+1. **Atomizer** – Decides whether a request is **atomic** (directly executable) or requires **planning**.  
+2. **Planner** – If planning is needed, the task is broken into smaller **subtasks**. Each subtask is fed back into the **Atomizer**, making the process recursive.  
+3. **Executors** – Handle atomic tasks. Executors can be **LLMs, APIs, or even other agents** — as long as they implement an `agent.execute()` interface.  
+4. **Aggregator** – Collects and integrates results from subtasks. Importantly, the Aggregator produces the **answer to the original parent task**, not just raw child outputs.  
+
+
+
+#### 📐 Information Flow  
+- **Top-down:** Tasks are decomposed into subtasks recursively.  
+- **Bottom-up:** Subtask results are aggregated upwards into solutions for parent tasks.  
+- **Left-to-right:** If a subtask depends on the output of a previous one, it waits until that subtask completes before execution.  
+
+This structure makes the system flexible, recursive, and dependency-aware — capable of decomposing complex problems into smaller steps while ensuring results are integrated coherently. 
+
+<details>
+<summary>Click to view the system flow diagram</summary>
+
+```mermaid
+flowchart TB
+    A[Your Request] --> B{Atomizer}
+    B -->|Plan Needed| C[Planner]
+    B -->|Atomic Task| D[Executor]
+
+    %% Planner spawns subtasks
+    C --> E[Subtasks]
+    E --> G[Aggregator]
+
+    %% Recursion
+    E -.-> B  
+
+    %% Execution + Aggregation
+    D --> F[Final Result]
+    G --> F
+
+    style A fill:#e1f5fe
+    style F fill:#c8e6c9
+    style B fill:#fff3e0
+    style C fill:#ffe0b2
+    style D fill:#d1c4e9
+    style G fill:#c5cae9
+
+```
+
+</details><br>
 
 ## 🚀 Quick Start
 
@@ -48,29 +181,10 @@ just docker-up-full      # With MLflow observability
 
 See [Quick Start Guide](docs/QUICKSTART.md) and [Deployment Guide](docs/DEPLOYMENT.md) for details.
 
-## Table of Contents
-- [Conceptual Overview](#conceptual-overview)
-- [Installation & Setup](#installation--setup)
-- [Quickstart: End-to-End Workflow](#quickstart-end-to-end-workflow)
-- [Configuration & Storage](#configuration--storage)
-- [Toolkits](#toolkits)
-- [REST API & CLI](#rest-api--cli)
-- [Core Building Block: `BaseModule`](#core-building-block-basemodule)
-- [Module Reference](#module-reference)
-  - [Atomizer](#atomizer)
-  - [Planner](#planner)
-  - [Executor](#executor)
-  - [Aggregator](#aggregator)
-  - [Verifier](#verifier)
-- [Advanced Patterns](#advanced-patterns)
-- [Testing](#testing)
-- [Troubleshooting & Tips](#troubleshooting--tips)
-- [Glossary](#glossary)
-
 ---
 
-## Conceptual Overview
-ROMA’s module layer wraps canonical DSPy patterns into purpose-built components that reflect the lifecycle of complex task execution:
+## 🧠 Conceptual Overview
+ROMA's module layer wraps canonical DSPy patterns into purpose-built components that reflect the lifecycle of complex task execution:
 
 1. **Atomizer** decides whether a request can be handled directly or needs decomposition.
 2. **Planner** breaks non-atomic goals into an ordered graph of subtasks.
@@ -82,7 +196,7 @@ Every module shares the same ergonomics: instantiate it with a language model (L
 
 All modules ultimately delegate to DSPy signatures defined in `roma_dspy.core.signatures`. This keeps interfaces stable even as the internals evolve.
 
-## Installation & Setup
+## 📦 Installation & Setup
 
 ### Docker Deployment (Recommended)
 
@@ -139,7 +253,7 @@ pip install -e ".[api]"
 
 > **Recommendation**: Use Docker deployment for production features (persistence, API, observability). Local installation is suitable for module development and testing only.
 
-## Quickstart: End-to-End Workflow
+## ⚡ Quickstart: End-to-End Workflow
 The following example mirrors a typical orchestration loop. It uses three different providers to showcase how easily each module can work with distinct models and strategies.
 
 ```python
@@ -223,7 +337,7 @@ Highlights:
 
 ---
 
-## Configuration & Storage
+## ⚙️ Configuration & Storage
 
 ROMA-DSPy uses **OmegaConf** for layered configuration with **Pydantic** validation, and provides **execution-scoped storage** for complete task isolation.
 
@@ -260,7 +374,7 @@ result = solve("Analyze blockchain transactions")
 
 ---
 
-## Toolkits
+## 🧰 Toolkits
 
 ROMA-DSPy includes 9 built-in toolkits that extend agent capabilities:
 
@@ -287,7 +401,7 @@ agents:
 
 ---
 
-## REST API & CLI
+## 🌐 REST API & CLI
 
 ROMA-DSPy provides both a REST API and CLI for production use.
 
@@ -330,7 +444,7 @@ roma-dspy --help
 
 ---
 
-## Core Building Block: `BaseModule`
+## 🏗️ Core Building Block: `BaseModule`
 All modules inherit from `BaseModule`, located at `roma_dspy/core/modules/base_module.py`. It standardizes:
 - signature binding via DSPy prediction strategies,
 - LM instantiation and context management,
@@ -387,9 +501,9 @@ Every module offers an `aforward()` method. When the underlying DSPy predictor s
 result = await executor.aforward("Download the latest sales report")
 ```
 
-## Module Reference
+## 📚 Module Reference
 
-### Atomizer
+### ⚛️ Atomizer
 **Location**: `roma_dspy/core/modules/atomizer.py`
 
 **Purpose**: Decide whether a goal is atomic or needs planning.
@@ -432,7 +546,7 @@ atomizer.forward(
 )
 ```
 
-### Planner
+### 📋 Planner
 **Location**: `roma_dspy/core/modules/planner.py`
 
 **Purpose**: Break a goal into ordered subtasks with optional dependency graph.
@@ -455,7 +569,7 @@ for subtask in plan.subtasks:
 
 `SubTask.task_type` is a `TaskType` enum that follows the ROMA MECE framework (Retrieve, Write, Think, Code Interpret, Image Generation).
 
-### Executor
+### ⚙️ Executor
 **Location**: `roma_dspy/core/modules/executor.py`
 
 **Purpose**: Resolve atomic goals, optionally calling tools/functions through DSPy's ReAct, CodeAct, or similar strategies.
@@ -487,7 +601,7 @@ execution = executor.forward(
 )
 ```
 
-### Aggregator
+### 🔀 Aggregator
 **Location**: `roma_dspy/core/modules/aggregator.py`
 
 **Purpose**: Combine multiple subtask results into a final narrative or decision.
@@ -515,7 +629,7 @@ print(aggregated.synthesized_result)
 
 Because it inherits `BaseModule`, you can still attach tools (e.g., a knowledge-base retrieval function) if your aggregation strategy requires external calls.
 
-### Verifier
+### ✅ Verifier
 **Location**: `roma_dspy/core/modules/verifier.py`
 
 **Purpose**: Validate that the synthesized output satisfies the original goal.
@@ -538,7 +652,7 @@ if not verdict.verdict:
     print("Needs revision:", verdict.feedback)
 ```
 
-## Advanced Patterns
+## 🎯 Advanced Patterns
 
 ### Swapping Models at Runtime
 Use `replace_lm()` to reuse the same module with a different LM (useful for A/B testing or fallbacks).
@@ -575,7 +689,7 @@ executor = Executor(
 
 ROMA will ensure both constructor and per-call tools are available to the strategy.
 
-## Testing
+## 🧪 Testing
 
 ```bash
 # Run all tests
@@ -588,14 +702,14 @@ pytest tests/integration/ -v
 
 **See**: `justfile` for all available test commands.
 
-## Troubleshooting & Tips
+## 💡 Troubleshooting & Tips
 - **`ValueError: Either provide an existing lm`** — supply `lm=` or `model=` when constructing the module.
 - **`Invalid prediction strategy`** — check spelling; strings are case-insensitive but must match a known alias.
 - **Caching** — pass `cache=True` on your LM or set it in `model_config` to reutilize previous completions.
 - **Async contexts** — when mixing sync and async calls, ensure your event loop is running (e.g., use `asyncio.run`).
 - **Tool duplicates** — tools are deduplicated by identity; create distinct functions if you need variations.
 
-## Glossary
+## 📖 Glossary
 
 ### Core Concepts
 - **DSPy**: Stanford's declarative framework for prompting, planning, and tool integration.
@@ -638,3 +752,86 @@ Happy building! If you extend or customize a module, keep the signatures aligned
 - [E2B Setup](docs/E2B_SETUP.md) - Code execution toolkit setup
 - [Observability](docs/OBSERVABILITY.md) - MLflow tracking and monitoring
 - [Configuration System](config/README.md) - Configuration profiles and examples
+
+
+## 📊 Benchmarks
+
+We evaluate our simple implementation of a search system using ROMA, called ROMA-Search across three benchmarks: **SEAL-0**, **FRAMES**, and **SimpleQA**.  
+Below are the performance graphs for each benchmark.
+
+### [SEAL-0](https://huggingface.co/datasets/vtllms/sealqa)
+SealQA is a new challenging benchmark for evaluating Search-Augmented Language models on fact-seeking questions where web search yields conflicting, noisy, or unhelpful results.  
+
+![SEAL-0 Results](assets/seal-0-full.001.jpeg)
+
+---
+
+### [FRAMES](https://huggingface.co/datasets/google/frames-benchmark)
+<details>
+<summary>View full results</summary>
+
+A comprehensive evaluation dataset designed to test the capabilities of Retrieval-Augmented Generation (RAG) systems across factuality, retrieval accuracy, and reasoning.  
+
+![FRAMES Results](assets/FRAMES-full.001.jpeg)
+
+</details>
+
+---
+
+### [SimpleQA](https://openai.com/index/introducing-simpleqa/)
+<details>
+<summary>View full results</summary>
+
+Factuality benchmark that measures the ability for language models to answer short, fact-seeking questions.  
+
+![SimpleQA Results](assets/simpleQAFull.001.jpeg)
+
+</details>
+
+## 🙏 Acknowledgments
+
+This framework would not have been possible if it wasn't for these amazing open-source contributions!
+- Inspired by the hierarchical planning approach described in ["Beyond Outlining: Heterogeneous Recursive Planning"](https://arxiv.org/abs/2503.08275) by Xiong et al.
+- [Pydantic](https://github.com/pydantic/pydantic) - Data validation using Python type annotations
+- [DSPy]([https://dspy.ai/)) - Framework for programming AI agents
+- [E2B](https://github.com/e2b-dev/e2b) - Cloud runtime for AI agents
+
+## 📚 Citation
+
+If you use the ROMA repo in your research, please cite:
+
+```bibtex
+@software{al_zubi_2025_17052592,
+  author       = {Al-Zubi, Salah and
+                  Nama, Baran and
+                  Kaz, Arda and
+                  Oh, Sewoong},
+  title        = {SentientResearchAgent: A Hierarchical AI Agent
+                   Framework for Research and Analysis
+                  },
+  month        = sep,
+  year         = 2025,
+  publisher    = {Zenodo},
+  version      = {ROMA},
+  doi          = {10.5281/zenodo.17052592},
+  url          = {https://doi.org/10.5281/zenodo.17052592},
+  swhid        = {swh:1:dir:69cd1552103e0333dd0c39fc4f53cb03196017ce
+                   ;origin=https://doi.org/10.5281/zenodo.17052591;vi
+                   sit=swh:1:snp:f50bf99634f9876adb80c027361aec9dff97
+                   3433;anchor=swh:1:rel:afa7caa843ce1279f5b4b29b5d3d
+                   5e3fe85edc95;path=salzubi401-ROMA-b31c382
+                  },
+}
+```
+
+## 🌟 Star History
+
+<div align="center">
+
+[![Star History Chart](https://api.star-history.com/svg?repos=sentient-agi/roma&type=Date)](https://www.star-history.com/#sentient-agi/roma&Date)
+
+</div>
+
+## 📄 License
+
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
