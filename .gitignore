@@ -12,7 +12,7 @@ old_projects/
 # Runtime directory (contains all runtime files)
 runtime/
 experiments/
-#notebooks/
+notebooks/
 
 # Agent runtime data and cache (legacy - to be migrated)
 .agent_cache/
@@ -227,3 +227,5 @@ docs/roma_v2_architecture_decision_records/*
 docs/roma_v2_implementation_plan/*
 docs/roma_v2_implementation_details/*
 docs/roma_v2_implementation_details/*
+
+roma/outputs/*

@@ -421,7 +421,7 @@ agents:
           default_market_type: "spot"
           symbols: ['ICPUSD', 'POLUSD', 'LTCUSD', 'IOTAUSD', 'CRVUSDT', 'MKRUSDT', 'WBTCBTC', 'ASTRUSDT', 'OPUSDT', 'MASKUSDT', 'CHZUSDT', 'SHIBUSD', 'ARBUSDT', 'JTOUSDT', 'TUSDT', 'BTCUSD', 'RENDERUSD', 'ONGUSDT', 'PEPEUSD', 'FILUSDT', 'VTHOUSDT', 'XRPUSD', 'FORTUSDT', 'AIXBTUSDT', 'NEARUSDT', 'TRUMPUSDT', 'XRPUSDT', 'OPUSD', 'MEUSDT', 'POLUSDT', 'ORCAUSDT', 'BOSONUSDT', 'GUSDT', 'SOLBTC', 'ONEUSD', 'ADABTC', 'FLOWUSDT', 'OCEANUSDT', 'ENSUSD', 'SUIUSD', 'SUSDT', 'STMXUSDT', 'ETHUSD', 'ALPINEUSDT', 'BNBUSD', 'PEPEUSDT', 'AVAXUSD', 'CRVUSD', 'YFIUSDT', 'FLOKIUSD', 'CTSIUSDT', 'ENAUSDT', 'SUSHIUSDT', 'JAMUSDT', 'ICPUSDT', 'ALGOUSDT', 'GTCUSDT', 'XECUSDT', 'FLUXUSDT', '1INCHUSDT', 'NMRUSDT', 'CELRUSDT', 'KDAUSDT', 'XLMUSD', 'MEUSD', 'IOSTUSDT', 'ADAUSDT', 'BONKUSD', 'ACHUSDT', 'STORJUSDT', 'ZECUSDT', 'FILUSD', 'MANAUSD', 'ALGOUSD', 'DGBUSDT', 'PORTOUSDT', 'MANAUSDT', 'FLOKIUSDT', 'ONEUSDT', 'LINKUSD', 'JUPUSDT', 'OGNUSDT', 'EOSUSDT', 'WIFUSDT', 'ETHBTC', 'GALAUSDT', 'LDOUSDT', 'PONDUSDT', 'SUSD', 'LAYERUSDT', 'VIRTUALUSDT', 'APEUSDT', 'ICXUSDT', 'FETUSD', 'LTCUSDT', 'BANDUSDT', 'TLMUSDT', 'FETUSDT', 'DASHUSDT', 'LTOUSDT', 'CELOUSDT', 'EGLDUSDT', 'BCHUSD', 'TRUMPUSD', 'HBARUSDT', 'RLCUSDT', 'REEFUSDT', 'SANDUSD', 'PROMUSDT', 'SOLUSDC', 'TFUELUSDT', 'ETCUSD', 'GALAUSD', 'METISUSD', 'XNOUSDT', 'XTZUSDT', 'LRCUSDT', 'EIGENUSD', 'VETUSD', 'LPTUSD', 'NEOUSDT', 'BONKUSDT', 'RAREUSDT', 'DOGEUSDT', 'XLMUSDT', 'EIGENUSDT', 'LAZIOUSDT', 'AAVEUSD', 'HYPEUSDT', 'HBARUSD', 'ZENUSDT', 'POLYXUSDT', 'SUIUSDT', 'KNCUSDT', 'BNBBTC', 'SHIBUSDT', 'COTIUSDT', 'SANDUSDT', 'AUDIOUSDT', 'SOLUSDT', 'ONTUSDT', 'QTUMUSDT', 'RVNUSD', 'VOXELUSDT', 'ENSUSDT', 'UNIUSDT', 'DAIUSDT', 'SNXUSDT', 'KDAUSD', 'BATUSDT', 'GLMUSDT', 'ZILUSD', 'ENJUSDT', 'COMPUSDT', 'BTCUSDC', 'SYSUSDT', 'ALICEUSDT', 'SKLUSDT', 'TURBOUSDT', 'BCHUSDT', 'ORBSUSDT', 'SUSHIUSD', 'BTRSTUSDT', 'FARTCOINUSDT', 'BLURUSDT', 'IMXUSDT', 'ZILUSDT', 'DATAUSDT', 'AVAXUSDT', 'SANTOSUSDT', 'DOTUSDT', 'MAGICUSDT', 'DUSDT', 'BNBUSDT', 'GRTUSD', 'SOLUSD', 'OXTUSDT', 'PNUTUSDT', 'KAVAUSDT', 'BICOUSDT', 'ETHUSDT', 'LPTUSDT', 'FORTHUSDT', 'LOOMUSDT', 'APTUSDT', 'TRACUSDT', 'QNTUSDT', 'ADAUSD', 'ILVUSDT', 'RVNUSDT', 'HYPEUSD', 'SPXUSDT', 'ADXUSDT', 'ETCUSDT', 'ZRXUSDT', 'LOKAUSDT', 'LINKUSDT', 'ATOMUSD', 'AXLUSDT', 'ROSEUSDT', 'CLVUSDT', 'PAXGUSDT', 'VETUSDT', 'BNTUSDT', 'IOTAUSDT', 'ATOMUSDT', 'USDTUSD', 'DGBUSD', 'RENDERUSDT', 'AXSUSDT', 'DOTUSD', 'REQUSDT', 'USDCUSDT', 'METISUSDT', 'DOGEUSD', 'API3USDT', 'APTUSD', 'KAITOUSDT', 'THETAUSD', 'WAXPUSDT', 'LSKUSDT', 'AAVEUSDT', 'GRTUSDT', 'THETAUSDT', 'NEIROUSDT', 'KSMUSDT', 'SLPUSDT', 'STGUSDT', 'DIAUSDT', 'UNIUSD', 'IOTXUSDT', 'JUPUSD', 'ANKRUSDT', 'NEARUSD', 'ADAUSDC', 'ETHUSDC', 'PENGUUSDT', 'BALUSDT', 'VTHOUSD', 'USDCUSD', 'RADUSDT', 'BTCUSDT']
           data_dir: "./data/binance"
-          parquet_threshold: 10
+          parquet_threshold: 1
         available_tools:
           - "get_current_price"
           - "get_klines"
@@ -431,7 +431,7 @@ agents:
       - name: "CoingeckoToolkit"
         params:
           data_dir: "./data/coingecko"
-          parquet_threshold: 10
+          parquet_threshold: 1
         available_tools:
           - "get_coin_info"
           - "get_coin_price"
@@ -449,7 +449,7 @@ agents:
           data_dir: "./data/defillama"
           base_url: "https://api.llama.fi"
           pro_base_url: "https://pro-api.llama.fi"
-          parquet_threshold: 10
+          parquet_threshold: 1
         available_tools:
           - "get_protocols"
           - "get_protocol_tvl"
@@ -465,7 +465,7 @@ agents:
         params:
           default_chain: "ethereum"
           data_dir: "./data/arkham"
-          parquet_threshold: 10
+          parquet_threshold: 1
           supported_chains: ["ethereum", "bitcoin", "polygon", "avalanche", "bsc"]
           include_entity_data: true
         available_tools:
