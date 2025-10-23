@@ -16,6 +16,16 @@ cache:
   ttl_seconds: 7200  # 2 hours (longer for complex reasoning)
   max_size: 500  # Fewer but larger responses
 
+storage:
+  results_dir: /app/project_results
+  autosave: true
+  autosave_interval_s: 10
+
+execution:
+  checkpoints:
+    enabled: true
+    save_node_artifacts: true
+
 # Execution Framework
 execution:
   max_concurrent_nodes: 10  # Increased from 3 for better parallelization

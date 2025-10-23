@@ -13,6 +13,8 @@ services:
       - SENTIENT_CONFIG_PATH=/app/sentient.yaml
       - FLASK_ENV=${FLASK_ENV:-development}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY?missing}
+      - OPENROUTER_API_BASE=${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}
     env_file:
       - ../.env
     volumes:
@@ -39,7 +41,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - VITE_API_URL=http://localhost:5000
+      - VITE_API_URL=http://127.0.0.1:5000
+      - VITE_SOCKET_URL=http://127.0.0.1:5000
       - DOCKER_ENV=true
     volumes:
       - ../frontend/src:/app/src:ro
@@ -49,5 +52,7 @@ services:
       - ../frontend/tsconfig.json:/app/tsconfig.json:ro
       - ../frontend/tailwind.config.js:/app/tailwind.config.js:ro
       - ../frontend/postcss.config.js:/app/postcss.config.js:ro
+      - ../runtime_cache:/app/runtime/cache
+
     depends_on:
       - backend

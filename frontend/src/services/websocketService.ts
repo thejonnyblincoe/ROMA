@@ -1,4 +1,18 @@
 import { io, Socket } from 'socket.io-client'
+
+const SOCKET_URL =
+  import.meta.env.VITE_SOCKET_URL ??
+  import.meta.env.VITE_API_URL ??
+  "http://127.0.0.1:5000";
+
+export const socket = io(SOCKET_URL, {
+  path: "/socket.io",
+  // Werkzeug does not serve real websockets; keep it to polling in dev
+  transports: ["polling"],
+  // avoid CORS credential requirements (no cookies)
+  withCredentials: false,
+});
+
 import { useTaskGraphStore } from '@/stores/taskGraphStore'
 import type { APIResponse, HITLRequest, HITLResponse } from '@/types'
 import { useProjectStore } from '@/stores/projectStore'
