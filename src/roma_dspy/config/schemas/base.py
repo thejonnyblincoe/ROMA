@@ -54,6 +54,7 @@ class LLMConfig:
     timeout: int = 30
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    api_base: Optional[str] = None
 
     # DSPy-native retry and caching
     num_retries: int = 3

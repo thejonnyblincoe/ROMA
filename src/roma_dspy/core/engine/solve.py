@@ -181,10 +181,12 @@ class RecursiveSolver:
         # Recreate threading.local
         self._local = threading.local()
 
-        # Recreate registry from config
+        # Recreate registry from config with debug logging
         self.registry = AgentRegistry()
         if self.config:
             factory = AgentFactory()
+            logger.debug(f"Recreating registry from config: {self.config}")
+            logger.debug(f"Agent mapping: {self.config.agent_mapping}")
             self.registry.initialize_from_config(self.config, factory)
 
         # Recreate PostgresStorage if it was enabled

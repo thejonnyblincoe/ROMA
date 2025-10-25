@@ -1,0 +1,5 @@
+#!/bin/bash
+# Quick run script
+profile="${1:-general}"
+task="${2:-Analyze market trends}"
+docker exec -it roma-dspy-api roma-dspy solve --profile "$profile" "$task"

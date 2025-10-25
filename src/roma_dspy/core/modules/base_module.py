@@ -50,6 +50,13 @@ class BaseModule(dspy.Module):
         context_defaults: Optional[Dict[str, Any]] = None,
         **strategy_kwargs: Any,
     ) -> None:
+        
+        # Debug logging to understand initialization path
+        logger.debug(f"BaseModule.__init__ called with:")
+        logger.debug(f"  config: {config}")
+        logger.debug(f"  model: {model}")
+        logger.debug(f"  lm: {lm}")
+        logger.debug(f"  prediction_strategy: {prediction_strategy}")
         super().__init__()
 
         # Assign unique instance ID for debugging (thread-safe)
@@ -95,9 +102,15 @@ class BaseModule(dspy.Module):
             lm_kwargs["api_key"] = llm_config.api_key
         if llm_config.base_url:
             lm_kwargs["base_url"] = llm_config.base_url
+        if llm_config.api_base:
+            lm_kwargs["api_base"] = llm_config.api_base
         if llm_config.rollout_id is not None:
             lm_kwargs["rollout_id"] = llm_config.rollout_id
 
+        # Debug logging to verify parameters
+        logger.debug(f"Creating DSPy LM with model: {llm_config.model}")
+        logger.debug(f"LM kwargs: {lm_kwargs}")
+        
         self._lm = dspy.LM(llm_config.model, **lm_kwargs)
 
         # Build predictor

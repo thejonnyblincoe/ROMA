@@ -1,0 +1,72 @@
+# Simple test profile using only Anthropic Claude
+# This should work reliably for testing
+
+description: "Simple test profile using only Anthropic Claude"
+
+# Agent configurations using only Claude
+agents:
+  atomizer:
+    llm:
+      model: claude-sonnet-3.5
+      temperature: 0.0
+      max_tokens: 2000
+      api_key: ${oc.env:ANTHROPIC_API_KEY,null}
+    prediction_strategy: chain_of_thought
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.atomizer_seed:ATOMIZER_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.atomizer_seed:ATOMIZER_DEMOS"
+
+  planner:
+    llm:
+      model: claude-sonnet-3.5
+      temperature: 0.1
+      max_tokens: 8000
+      api_key: ${oc.env:ANTHROPIC_API_KEY,null}
+    prediction_strategy: chain_of_thought
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.planner_seed:PLANNER_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.planner_seed:PLANNER_DEMOS"
+
+  executor:
+    llm:
+      model: claude-sonnet-3.5
+      temperature: 0.2
+      max_tokens: 16000
+      api_key: ${oc.env:ANTHROPIC_API_KEY,null}
+    prediction_strategy: react
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_seed:EXECUTOR_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.executor_seed:EXECUTOR_DEMOS"
+    toolkits:
+      - class_name: E2BToolkit
+        enabled: true
+      - class_name: FileToolkit
+        enabled: true
+      - class_name: CalculatorToolkit
+        enabled: true
+
+  aggregator:
+    llm:
+      model: claude-sonnet-3.5
+      temperature: 0.0
+      max_tokens: 12000
+      api_key: ${oc.env:ANTHROPIC_API_KEY,null}
+    prediction_strategy: chain_of_thought
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.aggregator_seed:AGGREGATOR_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.aggregator_seed:AGGREGATOR_DEMOS"
+
+  verifier:
+    llm:
+      model: claude-sonnet-3.5
+      temperature: 0.0
+      max_tokens: 8000
+      api_key: ${oc.env:ANTHROPIC_API_KEY,null}
+    prediction_strategy: chain_of_thought
+    signature_instructions: "prompt_optimization.prompts.seed_prompts.verifier_seed:VERIFIER_PROMPT"
+    demos: "prompt_optimization.prompts.seed_prompts.verifier_seed:VERIFIER_DEMOS"
+
+# Runtime configuration
+runtime:
+  max_concurrency: 3
+  timeout: 300
+  verbose: true
+  max_depth: 3
+  enable_logging: true
+  log_level: INFO

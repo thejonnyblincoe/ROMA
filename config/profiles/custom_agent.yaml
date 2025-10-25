@@ -1,15 +1,15 @@
-# General Agent Profile
-# A versatile configuration for general-purpose agent task execution
-# Includes web browsing, code execution, file operations, and fundamental tools
+# Custom Agent Profile for Software Development Tasks
+# Optimized for complex software development and analysis tasks
+# Uses OpenRouter for all models with task-aware agent mapping
 
-# Default agent configurations
+# Default agent configurations (used for Atomizer, Planner, Aggregator, Verifier)
 agents:
   # Atomizer: Fast decision-making with Gemini Flash
   atomizer:
     llm:
       model: openrouter/google/gemini-2.5-flash
       temperature: 0.0
-      max_tokens: 8000
+      max_tokens: 1000
       api_key: ${oc.env:OPENROUTER_API_KEY,null}
       api_base: https://openrouter.ai/api/v1
     # Load atomizer seed prompt and demos for improved task classification
@@ -21,7 +21,7 @@ agents:
     llm:
       model: openrouter/google/gemini-2.5-flash
       temperature: 0.1
-      max_tokens: 32000
+      max_tokens: 4000
       api_key: ${oc.env:OPENROUTER_API_KEY,null}
       api_base: https://openrouter.ai/api/v1
     # Load planner seed prompt and demos for improved task decomposition
@@ -35,7 +35,7 @@ agents:
     llm:
       model: openrouter/anthropic/claude-sonnet-4.5
       temperature: 0.2
-      max_tokens: 32000
+      max_tokens: 16000
       api_key: ${oc.env:OPENROUTER_API_KEY,null}
       api_base: https://openrouter.ai/api/v1
     prediction_strategy: react
@@ -45,7 +45,7 @@ agents:
     agent_config:
       max_executions: 10
 
-    # Default fundamental toolkits
+    # Core toolkits for software development
     toolkits:
       - class_name: E2BToolkit
         enabled: true
@@ -53,19 +53,6 @@ agents:
           timeout: 600
           max_lifetime_hours: 23.5
           auto_reinitialize: true
-
-      - class_name: MCPToolkit
-        enabled: true
-        toolkit_config:
-          server_name: exa
-          server_type: http
-          url: https://mcp.exa.ai/mcp
-          headers:
-            Authorization: Bearer ${oc.env:EXA_API_KEY}
-          transport_type: streamable
-          # Available tools: web_search_exa, get_code_context_exa
-          use_storage: false
-          tool_timeout: 60
 
       - class_name: FileToolkit
         enabled: true
@@ -76,12 +63,24 @@ agents:
       - class_name: CalculatorToolkit
         enabled: true
 
+      - class_name: MCPToolkit
+        enabled: true
+        toolkit_config:
+          server_name: exa
+          server_type: http
+          url: https://mcp.exa.ai/mcp
+          headers:
+            Authorization: Bearer ${oc.env:EXA_API_KEY}
+          transport_type: streamable
+          use_storage: false
+          tool_timeout: 60
+
   # Aggregator: Synthesis with Gemini Flash
   aggregator:
     llm:
       model: openrouter/google/gemini-2.5-flash
       temperature: 0.0
-      max_tokens: 32000
+      max_tokens: 5000
       api_key: ${oc.env:OPENROUTER_API_KEY,null}
       api_base: https://openrouter.ai/api/v1
     # Load aggregator seed prompt for improved result synthesis
@@ -93,7 +92,7 @@ agents:
     llm:
       model: openrouter/google/gemini-2.5-flash
       temperature: 0.0
-      max_tokens: 16000
+      max_tokens: 3000
       api_key: ${oc.env:OPENROUTER_API_KEY,null}
       api_base: https://openrouter.ai/api/v1
     # Load verifier seed prompt and demos for improved output validation
@@ -103,21 +102,21 @@ agents:
 # Task-aware agent mapping for executor
 agent_mapping:
   executors:
-    # RETRIEVE: Fast data fetching and web research
-    # Use cases: "search for information", "fetch documentation", "find code examples"
+    # RETRIEVE: Fast data fetching and research
+    # Use cases: "search for documentation", "find code examples", "research best practices"
     RETRIEVE:
       llm:
-        model: openrouter/google/gemini-2.5-flash
-        temperature: 0.0
-        max_tokens: 16000
+        model: openrouter/google/gemini-2.5-flash  # Fast & cheap for simple queries
+        temperature: 0.0  # Deterministic data retrieval
+        max_tokens: 4000  # Sufficient for data responses
       prediction_strategy: react
       # Load RETRIEVE-specific seed prompt and demos
       signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_retrieve_seed:EXECUTOR_RETRIEVE_PROMPT"
       demos: "prompt_optimization.prompts.seed_prompts.executor_retrieve_seed:EXECUTOR_RETRIEVE_DEMOS"
       agent_config:
-        max_executions: 6
+        max_executions: 6  # Fewer iterations for simple retrievals
 
-      # Web research and file tools
+      # Research and documentation tools
       toolkits:
         - class_name: MCPToolkit
           enabled: true
@@ -137,62 +136,39 @@ agent_mapping:
             enable_delete: false
             max_file_size: 10485760
 
-    # CODE_INTERPRET: Code execution, analysis, and calculations
-    # Use cases: "run this code", "analyze data", "calculate statistics"
+    # CODE_INTERPRET: Code execution, analysis, and development
+    # Use cases: "implement this feature", "debug this code", "analyze performance"
     CODE_INTERPRET:
       llm:
-        model: openrouter/anthropic/claude-sonnet-4.5
-        temperature: 0.1
-        max_tokens: 32000
+        model: openrouter/anthropic/claude-sonnet-4.5  # Best for code generation
+        temperature: 0.1  # Slightly creative for problem-solving
+        max_tokens: 16000  # Large context for complex code
       prediction_strategy: react
       # Load CODE_INTERPRET-specific seed prompt and demos
       signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_code_seed:EXECUTOR_CODE_PROMPT"
       demos: "prompt_optimization.prompts.seed_prompts.executor_code_seed:EXECUTOR_CODE_DEMOS"
       agent_config:
-        max_executions: 15
+        max_executions: 15  # More iterations for debugging code
 
-      # Code execution + file I/O + calculator
+      # Code execution + file I/O + research
       toolkits:
-        - class_name: E2BToolkit
+        - class_name: E2BToolkit  # PRIMARY: Code execution
           enabled: true
           toolkit_config:
             timeout: 600
             max_lifetime_hours: 23.5
             auto_reinitialize: true
 
-        - class_name: FileToolkit
+        - class_name: FileToolkit  # Save code and results
           enabled: true
           toolkit_config:
             enable_delete: false
             max_file_size: 10485760
 
-        - class_name: CalculatorToolkit
+        - class_name: CalculatorToolkit  # Mathematical calculations
           enabled: true
 
-    # THINK: Deep reasoning and analysis
-    # Use cases: "analyze this problem", "reason about the solution", "compare approaches"
-    THINK:
-      llm:
-        model: openrouter/anthropic/claude-sonnet-4.5
-        temperature: 0.2
-        max_tokens: 32000
-      prediction_strategy: react
-      # Load THINK-specific seed prompt and demos
-      signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_think_seed:EXECUTOR_THINK_PROMPT"
-      demos: "prompt_optimization.prompts.seed_prompts.executor_think_seed:EXECUTOR_THINK_DEMOS"
-      agent_config:
-        max_executions: 12
-
-      # All tools for comprehensive analysis
-      toolkits:
-        - class_name: E2BToolkit
-          enabled: true
-          toolkit_config:
-            timeout: 600
-            max_lifetime_hours: 23.5
-            auto_reinitialize: true
-
-        - class_name: MCPToolkit
+        - class_name: MCPToolkit  # Research and documentation
           enabled: true
           toolkit_config:
             server_name: exa
@@ -204,38 +180,73 @@ agent_mapping:
             use_storage: false
             tool_timeout: 60
 
-        - class_name: FileToolkit
+    # THINK: Deep reasoning and analysis
+    # Use cases: "analyze this architecture", "compare design patterns", "reason about trade-offs"
+    THINK:
+      llm:
+        model: openrouter/anthropic/claude-sonnet-4.5  # Best reasoning
+        temperature: 0.2  # Balanced creativity + accuracy
+        max_tokens: 16000  # Large context for complex reasoning
+      prediction_strategy: react
+      # Load THINK-specific seed prompt and demos
+      signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_think_seed:EXECUTOR_THINK_PROMPT"
+      demos: "prompt_optimization.prompts.seed_prompts.executor_think_seed:EXECUTOR_THINK_DEMOS"
+      agent_config:
+        max_executions: 12  # Multiple iterations for deep analysis
+
+      # All tools for comprehensive analysis
+      toolkits:
+        - class_name: E2BToolkit  # Code execution for analysis
+          enabled: true
+          toolkit_config:
+            timeout: 600
+            max_lifetime_hours: 23.5
+            auto_reinitialize: true
+
+        - class_name: MCPToolkit  # Research and context
+          enabled: true
+          toolkit_config:
+            server_name: exa
+            server_type: http
+            url: https://mcp.exa.ai/mcp
+            headers:
+              Authorization: Bearer ${oc.env:EXA_API_KEY}
+            transport_type: streamable
+            use_storage: false
+            tool_timeout: 60
+
+        - class_name: FileToolkit  # Save analysis results
           enabled: true
           toolkit_config:
             enable_delete: false
             max_file_size: 10485760
 
-        - class_name: CalculatorToolkit
+        - class_name: CalculatorToolkit  # Mathematical analysis
           enabled: true
 
-    # WRITE: Content creation and documentation
-    # Use cases: "write a report", "create documentation", "summarize findings"
+    # WRITE: Documentation, reports, and content creation
+    # Use cases: "write documentation", "create README", "summarize findings"
     WRITE:
       llm:
-        model: openrouter/anthropic/claude-sonnet-4.5
-        temperature: 0.3
-        max_tokens: 32000
+        model: openrouter/anthropic/claude-sonnet-4.5  # Best writing quality
+        temperature: 0.3  # More creative for engaging writing
+        max_tokens: 16000  # Long-form content
       prediction_strategy: react
       # Load WRITE-specific seed prompt and demos
       signature_instructions: "prompt_optimization.prompts.seed_prompts.executor_write_seed:EXECUTOR_WRITE_PROMPT"
       demos: "prompt_optimization.prompts.seed_prompts.executor_write_seed:EXECUTOR_WRITE_DEMOS"
       agent_config:
-        max_executions: 8
+        max_executions: 8  # Moderate iterations for refinement
 
       # File I/O + research tools
       toolkits:
-        - class_name: FileToolkit
+        - class_name: FileToolkit  # PRIMARY: Save documents
           enabled: true
           toolkit_config:
             enable_delete: false
             max_file_size: 10485760
 
-        - class_name: MCPToolkit
+        - class_name: MCPToolkit  # Research and context
           enabled: true
           toolkit_config:
             server_name: exa
@@ -249,7 +260,7 @@ agent_mapping:
 
 # Runtime configuration
 runtime:
-  max_depth: 6
+  max_depth: 6  # Deep recursion for complex software tasks
   verbose: true
   enable_logging: true
   log_level: INFO
@@ -294,7 +305,7 @@ observability:
   mlflow:
     enabled: ${oc.env:MLFLOW_ENABLED,false}
     tracking_uri: ${oc.env:MLFLOW_TRACKING_URI,http://mlflow:5000}
-    experiment_name: ROMA-General-Agent
+    experiment_name: ROMA-Custom-Software-Agent
     log_traces: true
     log_compiles: true
     log_evals: true
@@ -311,3 +322,4 @@ logging:
   colorize: true
   backtrace: true
   diagnose: false
+

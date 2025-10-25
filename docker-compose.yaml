@@ -106,6 +106,7 @@ services:
       # Persistent data
       - ./logs:/app/logs
       - ./executions:/app/executions
+      
       - checkpoints_data:/app/.checkpoints
       - cache_data:/app/.cache
 
